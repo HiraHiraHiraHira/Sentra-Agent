@@ -1,0 +1,59 @@
+{
+  "name": "suno_music_generate",
+  "description": "使用AI生成音乐，支持自定义标题、标签和歌词，流式生成并发送音乐卡片",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "description": "音乐标题（必需）"
+      },
+      "tags": {
+        "type": "string",
+        "description": "音乐风格标签，例如：二次元风格，日式歌曲，女音，流行音乐（必需）"
+      },
+      "lyrics": {
+        "type": "string",
+        "description": "歌词内容，支持多行文本和Verse/Chorus等标记（必需），尽量写的内容丰富一些，也可以直接使用用户提供的歌词"
+      },
+      "user_id": {
+        "type": "string",
+        "description": "私聊对象的 user_id（与 group_id 二选一）"
+      },
+      "group_id": {
+        "type": "string",
+        "description": "群聊对象的 group_id（与 user_id 二选一）"
+      },
+      "schedule": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "延迟反馈：'5分钟后'、'30秒后'、'明天09:00' 或 ISO"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "when": { "type": "string" },
+              "language": { "type": "string" },
+              "timezone": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        ],
+        "description": "可选：延迟反馈时间控制"
+      }
+    },
+    "oneOf": [
+      { "required": ["user_id"], "not": { "required": ["group_id"] } },
+      { "required": ["group_id"], "not": { "required": ["user_id"] } }
+    ],
+    "required": ["title", "tags", "lyrics"],
+    "additionalProperties": true
+  },
+  "timeoutMs": 300000,
+  "meta": {
+    "realWorldAction": "AI生成音乐并发送卡片",
+    "responseStyle": "结构化 JSON（中文键）",
+    "streamSupport": true
+  }
+}

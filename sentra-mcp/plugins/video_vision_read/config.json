@@ -54,6 +54,7 @@
   "meta": {
     "realWorldAction": "识别视频内容",
     "responseStyle": "纯文本",
-    "responseExample": "视频中包含：一个人在跑步，背景是公园，时长约30秒..."
+    "responseExample": "视频中包含：一个人在跑步，背景是公园，时长约30秒...",
+    "streamSupport": true
   }
 }

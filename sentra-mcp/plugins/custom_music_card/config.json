@@ -18,7 +18,7 @@
       },
       "cover_url": {
         "type": "string",
-        "description": "封面图片链接（可选，优先使用此参数，其次使用env配置）"
+        "description": "封面图片链接，必须使用在线链接"
       },
       "user_id": {
         "type": "string",
