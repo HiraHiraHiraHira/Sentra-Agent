@@ -13,20 +13,11 @@ export function getReplyableMessageId(msg) {
   const conversationKey = msg.type === 'private' ? msg.sender_id : `group_${msg.group_id}_${msg.sender_id}`;
   const history = conversationHistory.get(conversationKey) || { userMessages: [], botMessages: [] };
   
-  // 优先引用用户的最新消息
+  // 始终引用用户的最新一条消息（确定性，无随机）
   if (history.userMessages.length > 0) {
     const lastUserMsg = history.userMessages[history.userMessages.length - 1];
-    if (Math.random() > 0.3) { // 70%概率引用用户消息
-      return lastUserMsg.message_id;
-    }
+    return lastUserMsg.message_id;
   }
-  
-  // 30%概率引用机器人自己的消息（如果有的话）
-  if (history.botMessages.length > 0) {
-    const lastBotMsg = history.botMessages[history.botMessages.length - 1];
-    return lastBotMsg.message_id;
-  }
-  
   // 兜底：引用当前用户消息
   return msg.message_id;
 }

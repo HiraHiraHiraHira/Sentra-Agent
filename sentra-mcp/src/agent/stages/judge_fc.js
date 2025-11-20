@@ -110,43 +110,53 @@ export async function judgeToolNecessityFC(objective, manifest, conversation, co
     // 获取 FC 模式的模型配置
     const model = getStageModel('judge');
     const useOmit = Number(config?.fcLlm?.maxTokens ?? -1) <= 0;
-    
-    const res = await chatCompletion({
-      messages: msgs,
-      omitMaxTokens: useOmit,
-      max_tokens: useOmit ? undefined : Number(config.fcLlm.maxTokens),
-      temperature: Number(config.fcLlm.temperature ?? 0.2),
-      apiKey: config.fcLlm.apiKey,
-      baseURL: config.fcLlm.baseURL,
-      model,
+    const timeoutMs = Math.max(0, Number(config?.judge?.raceTimeoutMs ?? 12000));
+    const withTimeout = (p, ms) => new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('judge_timeout')), ms);
+      p.then((v) => { clearTimeout(t); resolve(v); })
+       .catch((err) => { clearTimeout(t); reject(err); });
     });
-
-    const content = res?.choices?.[0]?.message?.content || '';
-    const calls = parseFunctionCalls(String(content), {});
-    const call = calls.find((c) => String(c.name) === 'emit_decision') || calls[0];
     
-    let parsed;
+    const attempt = async () => {
+      const res = await chatCompletion({
+        messages: msgs,
+        omitMaxTokens: useOmit,
+        max_tokens: useOmit ? undefined : Number(config.fcLlm.maxTokens),
+        temperature: Number(config.fcLlm.temperature ?? 0.2),
+        apiKey: config.fcLlm.apiKey,
+        baseURL: config.fcLlm.baseURL,
+        model,
+      });
+      const content = res?.choices?.[0]?.message?.content || '';
+      const calls = parseFunctionCalls(String(content), {});
+      const call = calls.find((c) => String(c.name) === 'emit_decision') || calls[0];
+      let parsed;
+      try {
+        parsed = call?.arguments || null;
+      } catch {
+        parsed = null;
+      }
+      if (!parsed) throw new Error('judge_fc_parse_failed');
+      const need = !!parsed.need_tools;
+      const summary = String(parsed.summary || '').trim();
+      const operations = Array.isArray(parsed.operations) ? parsed.operations.filter(Boolean) : [];
+      logger.info?.('Judge结果（FC模式）', { need, summary, operations: operations.length > 0 ? operations : '(无)', model, label: 'JUDGE' });
+      return { need, summary, operations, ok: true };
+    };
+
     try {
-      parsed = call?.arguments || { need_tools: true };
-    } catch {
-      parsed = { need_tools: true };
+      const attemptWithTimeout = () => (timeoutMs > 0 ? withTimeout(attempt(), timeoutMs) : attempt());
+      const winner = await Promise.any([
+        attemptWithTimeout(),
+        attemptWithTimeout(),
+      ]);
+      return winner;
+    } catch (e) {
+      logger.error?.('Judge阶段异常（FC模式）', { label: 'JUDGE', error: String(e) });
+      return { need: false, summary: 'Judge阶段异常（FC）', operations: [], ok: false };
     }
-
-    const need = !!parsed.need_tools;
-    const summary = String(parsed.summary || '').trim();
-    const operations = Array.isArray(parsed.operations) ? parsed.operations.filter(Boolean) : [];
-    
-    logger.info?.('Judge结果（FC模式）', { 
-      need, 
-      summary, 
-      operations: operations.length > 0 ? operations : '(无)',
-      model,
-      label: 'JUDGE' 
-    });
-
-    return { need, summary, operations };
   } catch (e) {
     logger.error?.('Judge阶段异常（FC模式）', { label: 'JUDGE', error: String(e) });
-    return { need: true, summary: 'Judge阶段异常，默认需要工具', operations: [] };
+    return { need: false, summary: 'Judge阶段异常（FC）', operations: [], ok: false };
   }
 }

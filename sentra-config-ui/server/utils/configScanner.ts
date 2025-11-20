@@ -10,7 +10,7 @@ const MODULES = [
   'sentra-prompts',
   'sentra-mcp',
   'sentra-emo',
-  'sentra-adapter',
+  'sentra-adapter/napcat',
 ];
 
 /**
@@ -24,7 +24,11 @@ function scanModule(moduleName: string): ModuleConfig {
   const hasEnv = existsSync(envPath);
   const hasExample = existsSync(examplePath);
 
-  const variables = hasEnv ? readEnvFile(envPath) : [];
+  // 如果没有 .env 但有 .env.example，则使用 example 作为预览
+  const variables = hasEnv
+    ? readEnvFile(envPath)
+    : (hasExample ? readEnvFile(examplePath) : []);
+    
   const exampleVariables = hasExample ? readEnvFile(examplePath) : undefined;
 
   return {
@@ -65,7 +69,11 @@ function scanPlugins(): PluginConfig[] {
     const hasExample = existsSync(examplePath);
     const hasConfigJson = existsSync(configPath);
 
-    const variables = hasEnv ? readEnvFile(envPath) : [];
+    // 如果没有 .env 但有 .env.example，则使用 example 作为预览
+    const variables = hasEnv
+      ? readEnvFile(envPath)
+      : (hasExample ? readEnvFile(examplePath) : []);
+
     const exampleVariables = hasExample ? readEnvFile(examplePath) : undefined;
 
     let configJson = undefined;

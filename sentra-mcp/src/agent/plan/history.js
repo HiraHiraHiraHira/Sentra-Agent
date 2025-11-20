@@ -32,37 +32,46 @@ export async function buildDependentContextText(runId, dependsOn = [], useFC = f
     if (indices.length === 0) return '';
     const history = await HistoryStore.list(runId, 0, -1);
     const plan = await HistoryStore.getPlan(runId);
+    // 取每个索引的“最新” tool_result
+    const lastByIndex = new Map();
+    for (const h of history) {
+      if (h.type !== 'tool_result') continue;
+      const idx = Number(h.plannedStepIndex);
+      if (!Number.isFinite(idx)) continue;
+      lastByIndex.set(idx, h);
+    }
     const items = [];
     for (const idx of indices) {
-      const h = history.find((x) => x.type === 'tool_result' && Number(x.plannedStepIndex) === idx);
+      const h = lastByIndex.get(idx);
       if (!h) continue;
       const r = (plan?.steps && plan.steps[Number(idx)]) ? plan.steps[Number(idx)].reason : '';
-      items.push({
-        plannedStepIndex: idx,
-        aiName: h.aiName,
-        reason: clip(r),
-        argsPreview: clip(h.args),
-        resultPreview: clip(h.result?.data ?? h.result),
-      });
+      items.push({ idx, h, reason: r });
     }
     if (!items.length) return '';
-    
-    // FC 模式：使用 Sentra XML 格式（仅返回 XML，不附加中文标题或前缀）
+
+    // FC 模式：使用 Sentra XML 格式（返回完整的上游参数与结果，避免信息丢失）
     if (useFC) {
-      const xmlResults = items.map(item => 
+      const xmlResults = items.map(({ idx, h, reason }) =>
         formatSentraResult({
-          stepIndex: item.plannedStepIndex,  // XML 中仍使用 step 属性
-          aiName: item.aiName,
-          reason: item.reason,
-          args: item.argsPreview,
-          result: { success: true, data: item.resultPreview }
+          stepIndex: idx, // XML 中仍使用 step 属性
+          aiName: h.aiName,
+          reason,
+          args: h.args,
+          result: h.result
         })
       ).join('\n\n');
       return `${xmlResults}`;
     }
     
     // 默认：JSON 格式
-    return `\n依赖结果(JSON):\n${JSON.stringify(items, null, 2)}`;
+    const jsonItems = items.map(({ idx, h, reason }) => ({
+      plannedStepIndex: idx,
+      aiName: h.aiName,
+      reason: clip(reason),
+      argsPreview: clip(h.args),
+      resultPreview: clip(h.result?.data ?? h.result),
+    }));
+    return `\n依赖结果(JSON):\n${JSON.stringify(jsonItems, null, 2)}`;
   } catch {
     return '';
   }
@@ -105,18 +114,33 @@ export async function buildToolDialogueMessages(runId, upToStepIndex, useFC = fa
       }
     });
     
-    // 只获取依赖链上的步骤历史
-    // 重试模式下，includeCurrentStep=true 可以包含当前步骤的失败记录
-    const prev = history
-      .filter((h) => {
-        if (h.type !== 'tool_result') return false;
-        const idx = Number(h.plannedStepIndex);
-        // 重试模式：包含当前步骤的历史（之前失败的尝试）
-        if (includeCurrentStep && idx === upToStepIndex) return true;
-        // 正常模式：只包含依赖链上的步骤
-        return idx < upToStepIndex && dependencyChain.has(idx);
-      })
-      .sort((a, b) => (Number(a.plannedStepIndex) - Number(b.plannedStepIndex)));
+    // 选择策略：
+    // - 若声明了 dependsOn（dependencyChain 非空），仅包含依赖链上的“最新”步骤历史
+    // - 若未声明 dependsOn（dependencyChain 为空），回退到包含所有之前步骤（idx < upToStepIndex）的“最新”历史
+    // 先构建每个索引的“最新” tool_result 映射
+    const lastByIndex = new Map();
+    for (const h of history) {
+      if (h.type !== 'tool_result') continue;
+      const idx = Number(h.plannedStepIndex);
+      if (!Number.isFinite(idx)) continue;
+      lastByIndex.set(idx, h);
+    }
+    const allowed = new Set();
+    for (let i = 0; i < upToStepIndex; i++) {
+      if (dependencyChain.size > 0) {
+        if (dependencyChain.has(i)) allowed.add(i);
+      } else {
+        allowed.add(i);
+      }
+    }
+    // includeCurrentStep=true 时，允许加入当前索引（用于重试上下文）
+    if (includeCurrentStep && Number.isFinite(upToStepIndex)) allowed.add(upToStepIndex);
+    const orderedIdx = Array.from(allowed).sort((a, b) => a - b);
+    const prev = [];
+    for (const idx of orderedIdx) {
+      const h = lastByIndex.get(idx);
+      if (h) prev.push(h);
+    }
     
     const msgs = [];
     for (const h of prev) {

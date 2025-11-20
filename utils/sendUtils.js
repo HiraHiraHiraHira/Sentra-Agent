@@ -9,21 +9,26 @@ import { parseSentraResponse } from './protocolUtils.js';
 import { parseTextSegments, buildSegmentMessage } from './messageUtils.js';
 import { getReplyableMessageId, updateConversationHistory } from './conversationUtils.js';
 import { createLogger } from './logger.js';
+import { replySendQueue } from './replySendQueue.js';
 
 const logger = createLogger('SendUtils');
 
 /**
- * 智能发送消息（完全拟人化，只从AI的resources中提取文件）
+ * 智能发送消息内部实现（完全拟人化，只从AI的resources中提取文件）
+ * @private
  * @param {Object} msg - 消息对象
  * @param {string} response - AI响应内容
  * @param {Function} sendAndWaitResult - 发送函数
  * @param {boolean} allowReply - 是否允许引用回复（默认true），同一任务中只有第一次发送应设置为true
  */
-export async function smartSend(msg, response, sendAndWaitResult, allowReply = true) {
+async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply = true) {
   const parsed = parseSentraResponse(response);
   const textSegments = parsed.textSegments || [response];
   const protocolResources = parsed.resources || [];
   const emoji = parsed.emoji || null;
+  const replyMode = parsed.replyMode || 'none';
+  const mentions = Array.isArray(parsed.mentions) ? parsed.mentions : [];
+  const hasSendDirective = typeof response === 'string' && response.includes('<send>');
   
   logger.debug(`文本段落数: ${textSegments.length}`);
   logger.debug(`协议资源数: ${protocolResources.length}`);
@@ -109,18 +114,16 @@ export async function smartSend(msg, response, sendAndWaitResult, allowReply = t
   // 决定发送策略
   const isPrivateChat = msg.type === 'private';
   const isGroupChat = msg.type === 'group';
+  const selfId = msg?.self_id;
+  const userAtSelf = isGroupChat && Array.isArray(msg?.at_users) && typeof selfId === 'number' && msg.at_users.includes(selfId);
+  const finalReplyMode = hasSendDirective ? replyMode : 'none';
+  const mentionsToUse = hasSendDirective ? mentions : [];
   
-  // 群聊专属策略
-  const shouldAt = isGroupChat && Math.random() > 0.75; // 25%概率@用户
+  // 获取要引用的消息ID（仅当允许引用时）
+  const replyMessageId = allowReply ? getReplyableMessageId(msg) : null;
+  let usedReply = false;
   
-  // 回复策略：多段落时第一段有概率回复，单段落时随机回复
-  const replyProbability = segments.length > 1 ? 0.6 : 0.5;
-  const shouldReplyFirst = allowReply && (Math.random() < replyProbability);  // 只有 allowReply=true 时才可能引用
-  
-  // 获取要引用的消息ID
-  const replyMessageId = shouldReplyFirst ? getReplyableMessageId(msg) : null;
-  
-  logger.debug(`发送策略: ${segments.length}段分别发送, At用户: ${shouldAt}, 允许引用: ${allowReply}, 回复消息: ${shouldReplyFirst}, 引用ID: ${replyMessageId}`);
+  logger.debug(`发送策略: 段落=${segments.length}, replyMode=${finalReplyMode}(${hasSendDirective ? 'by_send' : 'fallback'}), mentions=[${mentionsToUse.join(',')}], allowReply=${allowReply}, replyId=${replyMessageId}`);
   
   // 发送文本段落
   if (segments.length > 0) {
@@ -132,10 +135,16 @@ export async function smartSend(msg, response, sendAndWaitResult, allowReply = t
       
       logger.debug(`发送第${i+1}段: ${messageParts.map(p => p.type).join(', ')}`);
       
-      // 第一段可能需要@用户（仅群聊）
-      if (i === 0 && shouldAt && isGroupChat) {
+      // 第一段根据协议/回退进行 @ 提及（仅群聊）
+      if (i === 0 && isGroupChat && mentionsToUse.length > 0) {
+        const atParts = mentionsToUse.map(mid => {
+          const raw = String(mid).trim();
+          const qq = (raw.toLowerCase && (raw.toLowerCase() === 'all' || raw.toLowerCase() === '@all')) ? 'all' : raw;
+        
+          return { type: 'at', data: { qq } };
+        });
         messageParts = [
-          { type: 'at', data: { qq: msg.sender_id } },
+          ...atParts,
           { type: 'text', data: { text: ' ' } },
           ...messageParts
         ];
@@ -143,8 +152,11 @@ export async function smartSend(msg, response, sendAndWaitResult, allowReply = t
       
       let sentMessageId = null;
       
-      // 第一段可能使用回复
-      if (i === 0 && shouldReplyFirst && replyMessageId) {
+      // 根据协议选择是否使用引用回复
+      const wantReply = replyMessageId && allowReply && (
+        (finalReplyMode === 'always') || (finalReplyMode === 'first' && i === 0)
+      );
+      if (wantReply) {
         if (isPrivateChat) {
           const result = await sendAndWaitResult({
             type: "sdk",
@@ -162,6 +174,7 @@ export async function smartSend(msg, response, sendAndWaitResult, allowReply = t
           });
           sentMessageId = result?.data?.message_id;
         }
+        usedReply = true;
       } else {
         // 普通发送
         if (isPrivateChat) {
@@ -224,19 +237,32 @@ export async function smartSend(msg, response, sendAndWaitResult, allowReply = t
     });
     
     if (mediaMessageParts.length > 0) {
+      // 如果没有文本段且需要 @ 提及，则在媒体前插入 @
+      if (segments.length === 0 && isGroupChat && mentionsToUse.length > 0) {
+        const atParts = mentionsToUse.map(mid => {
+          const raw = String(mid).trim();
+          const qq = (raw.toLowerCase && (raw.toLowerCase() === 'all' || raw.toLowerCase() === '@all')) ? 'all' : raw;
+          return { type: 'at', data: { qq } };
+        });
+        mediaMessageParts.unshift(...atParts);
+      }
+
+      const replyForMedia = replyMessageId && allowReply && (
+        finalReplyMode === 'always' || (finalReplyMode === 'first' && !usedReply)
+      );
       if (isPrivateChat) {
         const result = await sendAndWaitResult({
           type: "sdk",
-          path: "send.private",
-          args: [msg.sender_id, mediaMessageParts],
+          path: replyForMedia ? "send.privateReply" : "send.private",
+          args: replyForMedia ? [msg.sender_id, replyMessageId, mediaMessageParts] : [msg.sender_id, mediaMessageParts],
           requestId: `private-media-${Date.now()}`
         });
         logger.debug(`媒体发送结果: ${result?.ok ? 'OK' : 'FAIL'}`);
       } else if (isGroupChat) {
         const result = await sendAndWaitResult({
           type: "sdk",
-          path: "send.group",
-          args: [msg.group_id, mediaMessageParts],
+          path: replyForMedia ? "send.groupReply" : "send.group",
+          args: replyForMedia ? [msg.group_id, replyMessageId, mediaMessageParts] : [msg.group_id, mediaMessageParts],
           requestId: `group-media-${Date.now()}`
         });
         logger.debug(`媒体发送结果: ${result?.ok ? 'OK' : 'FAIL'}`);
@@ -317,4 +343,23 @@ export async function smartSend(msg, response, sendAndWaitResult, allowReply = t
   }
   
   logger.success('发送完成');
+}
+
+/**
+ * 智能发送消息（队列控制版本）
+ * 通过队列确保回复按顺序发送，避免多个任务同时完成时消息交错
+ * @param {Object} msg - 消息对象
+ * @param {string} response - AI响应内容
+ * @param {Function} sendAndWaitResult - 发送函数
+ * @param {boolean} allowReply - 是否允许引用回复（默认true），同一任务中只有第一次发送应设置为true
+ * @returns {Promise} 发送完成的 Promise
+ */
+export async function smartSend(msg, response, sendAndWaitResult, allowReply = true) {
+  const groupId = msg?.group_id ? `G:${msg.group_id}` : `U:${msg.sender_id}`;
+  const taskId = `${groupId}-${Date.now()}`;
+  
+  // 将发送任务加入队列
+  return replySendQueue.enqueue(async () => {
+    return await _smartSendInternal(msg, response, sendAndWaitResult, allowReply);
+  }, taskId);
 }

@@ -97,39 +97,50 @@ export async function judgeToolNecessity(objective, manifest, conversation, cont
     ]);
 
     const useOmit = Number(config?.judge?.maxTokens ?? -1) <= 0;
-    const res = await chatCompletion({
-      messages: msgs,
-      tools,
-      tool_choice: { type: 'function', function: { name: 'emit_decision' } },
-      omitMaxTokens: useOmit,
-      max_tokens: useOmit ? undefined : Number(config.judge.maxTokens),
-      temperature: Number(config.judge.temperature ?? 0.1),
-      apiKey: config.judge.apiKey,
-      baseURL: config.judge.baseURL,
-      model: config.judge.model,
+    const timeoutMs = Math.max(0, Number(config?.judge?.raceTimeoutMs ?? 12000));
+    const withTimeout = (p, ms) => new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('judge_timeout')), ms);
+      p.then((v) => { clearTimeout(t); resolve(v); })
+       .catch((err) => { clearTimeout(t); reject(err); });
     });
+    const attempt = async () => {
+      const res = await chatCompletion({
+        messages: msgs,
+        tools,
+        tool_choice: { type: 'function', function: { name: 'emit_decision' } },
+        omitMaxTokens: useOmit,
+        max_tokens: useOmit ? undefined : Number(config.judge.maxTokens),
+        temperature: Number(config.judge.temperature ?? 0.1),
+        apiKey: config.judge.apiKey,
+        baseURL: config.judge.baseURL,
+        model: config.judge.model,
+      });
+      const call = res?.choices?.[0]?.message?.tool_calls?.[0];
+      let parsed;
+      try {
+        parsed = call?.function?.arguments ? JSON.parse(call.function.arguments) : null;
+      } catch {
+        parsed = null;
+      }
+      if (!parsed) throw new Error('judge_parse_failed');
+      const need = !!parsed.need_tools;
+      const summary = String(parsed.summary || '').trim();
+      const operations = Array.isArray(parsed.operations) ? parsed.operations.filter(Boolean) : [];
+      logger.info?.('Judge结果', { need, summary, operations: operations.length > 0 ? operations : '(无)', label: 'JUDGE' });
+      return { need, summary, operations, ok: true };
+    };
 
-    const call = res?.choices?.[0]?.message?.tool_calls?.[0];
-    let parsed;
     try {
-      parsed = call?.function?.arguments ? JSON.parse(call.function.arguments) : { need_tools: true };
-    } catch {
-      parsed = { need_tools: true };
+      const attemptWithTimeout = () => (timeoutMs > 0 ? withTimeout(attempt(), timeoutMs) : attempt());
+      const winner = await Promise.any([
+        attemptWithTimeout(),
+        attemptWithTimeout(),
+      ]);
+      return winner;
+    } catch (e) {
+      return { need: false, summary: 'Judge阶段异常', operations: [], ok: false };
     }
-
-    const need = !!parsed.need_tools;
-    const summary = String(parsed.summary || '').trim();
-    const operations = Array.isArray(parsed.operations) ? parsed.operations.filter(Boolean) : [];
-    
-    logger.info?.('Judge结果', { 
-      need, 
-      summary, 
-      operations: operations.length > 0 ? operations : '(无)',
-      label: 'JUDGE' 
-    });
-
-    return { need, summary, operations };
   } catch (e) {
-    return { need: true, summary: 'Judge阶段异常，默认需要工具', operations: [] };
+    return { need: false, summary: 'Judge阶段异常', operations: [], ok: false };
   }
 }

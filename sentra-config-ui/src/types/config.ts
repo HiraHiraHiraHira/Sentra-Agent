@@ -2,6 +2,7 @@ export interface EnvVariable {
   key: string;
   value: string;
   comment?: string;
+  isNew?: boolean;
 }
 
 export interface ModuleConfig {

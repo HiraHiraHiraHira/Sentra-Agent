@@ -9,6 +9,7 @@ module.exports = {
       name: 'sentra-agent',
       script: './Main.js',
       interpreter: 'node',
+      cwd: __dirname,
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
@@ -16,13 +17,25 @@ module.exports = {
       max_memory_restart: '1G',
       env: {
         NODE_ENV: 'production',
+        // Force color output for chalk/colorette under PM2 non-TTY
+        FORCE_COLOR: '3',
+        TERM: 'xterm-256color',
+        COLORTERM: 'truecolor',
+      },
+      env_production: {
+        NODE_ENV: 'production',
+        FORCE_COLOR: '3',
+        TERM: 'xterm-256color',
+        COLORTERM: 'truecolor',
       },
       env_development: {
         NODE_ENV: 'development',
+        FORCE_COLOR: '3',
+        TERM: 'xterm-256color',
+        COLORTERM: 'truecolor',
       },
       error_file: './logs/pm2-error.log',
       out_file: './logs/pm2-out.log',
-      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       merge_logs: true,
       min_uptime: '10s',
       max_restarts: 10,
@@ -31,7 +44,8 @@ module.exports = {
       wait_ready: false,
       listen_timeout: 3000,
       instance_var: 'INSTANCE_ID',
-      time: true,
+      // Do not let PM2 add timestamps; the app already prints time
+      // time: false (unset),
       append_env_to_name: false,
     }
   ]

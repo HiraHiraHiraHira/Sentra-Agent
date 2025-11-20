@@ -3,7 +3,8 @@ import { ConfigData, EnvVariable } from '../types/config';
 const API_BASE = '/api';
 
 export async function fetchConfigs(): Promise<ConfigData> {
-  const response = await fetch(`${API_BASE}/configs`);
+  // Add timestamp to prevent caching
+  const response = await fetch(`${API_BASE}/configs?t=${Date.now()}`);
   if (!response.ok) {
     throw new Error('Failed to fetch configurations');
   }

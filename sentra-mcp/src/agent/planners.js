@@ -569,7 +569,8 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     groups.push({ id: gid, nodes, flushed: false });
   }
   const groupPending = new Map(groups.map((g) => [g.id, g.nodes.length])); // 组内尚未完成的步数
-  const groupBuffers = new Map(); // gid -> Map(stepIndex -> event)
+  const groupBuffers = new Map(); // gid -> Map(stepIndex -> tool_result event)
+  const groupArgsBuffers = new Map(); // gid -> Map(stepIndex -> args event)
   const topoOrderForGroup = (gid) => {
     const nodes = groups[gid]?.nodes || [];
     const inSet = new Set(nodes);
@@ -617,6 +618,16 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     // 若同一步骤多次重试，仅保留最新一次结果
     groupBuffers.get(gid).set(plannedStepIndex, ev);
   };
+  const emitArgsGrouped = (argsEv, plannedStepIndex) => {
+    const gid = groupOf[plannedStepIndex];
+    if (gid === null || gid === undefined) {
+      // 孤立步骤：args 事件即时发送
+      emitRunEvent(runId, argsEv);
+      return;
+    }
+    if (!groupArgsBuffers.has(gid)) groupArgsBuffers.set(gid, new Map());
+    groupArgsBuffers.get(gid).set(plannedStepIndex, argsEv);
+  };
   const flushGroupIfReady = (gid) => {
     if (gid === null || gid === undefined) return;
     const g = groups.find((x) => x.id === gid);
@@ -625,11 +636,44 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     if (left > 0) return;
     const order = topoOrderForGroup(gid);
     const buf = groupBuffers.get(gid) || new Map();
+    const bufArgs = groupArgsBuffers.get(gid) || new Map();
+
+    // 先合并并发送 args_group（若存在）
+    const argsItems = [];
+    for (const idx of order) {
+      const a = bufArgs.get(idx);
+      if (a) argsItems.push(a);
+    }
+    if (argsItems.length > 0) {
+      const argsGroupEvent = {
+        type: 'args_group',
+        groupId: gid,
+        groupSize: (g.nodes?.length || 0),
+        orderIndices: order,
+        items: argsItems,
+      };
+      emitRunEvent(runId, argsGroupEvent);
+    }
+
+    // 再按拓扑顺序一次性发送 tool_result_group
+    const resultEvents = [];
     for (const idx of order) {
       const ev = buf.get(idx);
-      if (ev) emitRunEvent(runId, ev);
+      if (ev) resultEvents.push(ev);
     }
+    if (resultEvents.length > 0) {
+      const resultGroupEvent = {
+        type: 'tool_result_group',
+        groupId: gid,
+        groupSize: (g.nodes?.length || 0),
+        orderIndices: order,
+        events: resultEvents,
+      };
+      emitRunEvent(runId, resultGroupEvent);
+    }
+
     groupBuffers.delete(gid);
+    groupArgsBuffers.delete(gid);
     g.flushed = true;
   };
   // 中文：标记已完成的步骤
@@ -817,8 +861,24 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     if (config.flags.enableVerboseSteps) logger.info(`参数确定`, { label: 'ARGS', aiName, toolArgsPreview: clip(toolArgs) });
     // 将最终用于调用的参数写入历史，并通过事件总线实时分发
     try {
-      emitRunEvent(runId, { type: 'args', stepIndex: i, aiName, args: toolArgs, reused });
-      await HistoryStore.append(runId, { type: 'args', stepIndex: i, aiName, args: toolArgs, reused });
+      const depOnA = depsArr[i] || [];
+      const depByA = revDepsArr[i] || [];
+      const gidA = groupOf[i];
+      const argsEv = {
+        type: 'args',
+        stepIndex: i,
+        plannedStepIndex: i,
+        aiName,
+        args: toolArgs,
+        reused,
+        dependsOn: depOnA,
+        dependedBy: depByA,
+        dependsNote: buildDependsNote(i),
+        groupId: (gidA ?? null),
+        groupSize: (gidA != null && groups[gidA]?.nodes?.length) ? groups[gidA].nodes.length : 1,
+      };
+      emitArgsGrouped(argsEv, i);
+      await HistoryStore.append(runId, argsEv);
     } catch {}
 
     // === schedule 延迟反馈机制：仅当插件 schema 中定义了 schedule 参数时启用 ===
@@ -1114,7 +1174,18 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
   // 步骤2：判断是否需要工具（使用原始工具列表）
   const judgeFunc = (config.llm?.toolStrategy || 'auto') === 'fc' ? judgeToolNecessityFC : judgeToolNecessity;
   const judge = await judgeFunc(objective, manifest0, conversation, context);
-  await HistoryStore.append(runId, { type: 'judge', need: judge.need, summary: judge.summary, operations: judge.operations });
+  await HistoryStore.append(runId, { type: 'judge', need: judge.need, summary: judge.summary, operations: judge.operations, ok: judge.ok !== false });
+  if (judge && judge.ok === false) {
+    const plan = { manifest: manifest0, steps: [] };
+    await HistoryStore.setPlan(runId, plan);
+    await HistoryStore.append(runId, { type: 'plan', plan });
+    const exec = { used: [], attempted: 0, succeeded: 0, successRate: 0 };
+    await HistoryStore.append(runId, { type: 'done', exec });
+    const summary = String(judge.summary || 'Judge阶段失败');
+    try { await HistoryStore.setSummary(runId, summary); } catch {}
+    await HistoryStore.append(runId, { type: 'summary', summary });
+    return fail('JUDGE_FAILED', 'JUDGE_FAILED', { runId, plan, exec, eval: { success: false, summary }, summary });
+  }
   if (!judge.need) {
     const plan = { manifest: manifest0, steps: [] };
     await HistoryStore.setPlan(runId, plan);
@@ -1136,7 +1207,8 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
   let evalObj = await evaluateRun(objective, plan, exec, runId, context);
 
   // Global repair loop (circuit breaker): limit the number of repair cycles
-  const maxRepairs = Math.max(0, Number(config.runner?.maxRepairs ?? 1));
+  const enableRepair = !(config.runner?.enableRepair === false);
+  const maxRepairs = enableRepair ? Math.max(0, Number(config.runner?.maxRepairs ?? 1)) : 0;
   let repairs = 0;
   while (!evalObj.success && repairs < maxRepairs) {
     // 收集所有失败的步骤（不只是第一个）
@@ -1262,8 +1334,22 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
       // 步骤2：判断是否需要工具（使用原始工具列表）
       const judgeFunc = (config.llm?.toolStrategy || 'auto') === 'fc' ? judgeToolNecessityFC : judgeToolNecessity;
       const judge = await judgeFunc(objective, manifest0, conversation, context);
-      emitRunEvent(runId, { type: 'judge', need: judge.need, summary: judge.summary, operations: judge.operations });
-      await HistoryStore.append(runId, { type: 'judge', need: judge.need, summary: judge.summary, operations: judge.operations });
+      emitRunEvent(runId, { type: 'judge', need: judge.need, summary: judge.summary, operations: judge.operations, ok: judge.ok !== false });
+      await HistoryStore.append(runId, { type: 'judge', need: judge.need, summary: judge.summary, operations: judge.operations, ok: judge.ok !== false });
+      if (judge && judge.ok === false) {
+        const plan = { manifest: manifest0, steps: [] };
+        await HistoryStore.setPlan(runId, plan);
+        emitRunEvent(runId, { type: 'plan', plan });
+        await HistoryStore.append(runId, { type: 'plan', plan });
+        const exec = { used: [], attempted: 0, succeeded: 0, successRate: 0 };
+        emitRunEvent(runId, { type: 'done', exec });
+        await HistoryStore.append(runId, { type: 'done', exec });
+        const summary = String(judge.summary || 'Judge阶段失败');
+        try { await HistoryStore.setSummary(runId, summary); } catch {}
+        emitRunEvent(runId, { type: 'summary', summary });
+        await HistoryStore.append(runId, { type: 'summary', summary });
+        return;
+      }
       if (!judge.need) {
         const plan = { manifest: manifest0, steps: [] };
         await HistoryStore.setPlan(runId, plan);
@@ -1291,8 +1377,11 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
       // Evaluate
       let evalObj = await evaluateRun(objective, plan, exec, runId, context); // evaluation event emitted inside
 
-      // Retry once if failed
-      if (!evalObj.success) {
+      // Retry loop if enabled and within global limits
+      const enableRepair = !(config.runner?.enableRepair === false);
+      const maxRepairs = enableRepair ? Math.max(0, Number(config.runner?.maxRepairs ?? 1)) : 0;
+      let repairs = 0;
+      while (!evalObj.success && repairs < maxRepairs) {
         // 收集所有失败的步骤
         const failedSteps = Array.isArray(evalObj.failedSteps) && evalObj.failedSteps.length
           ? evalObj.failedSteps.filter((f) => Number.isFinite(f.index))
@@ -1368,6 +1457,7 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
 
           evalObj = await evaluateRun(objective, plan, exec, runId, context);
         }
+        repairs++;
       }
 
       // Done + summary

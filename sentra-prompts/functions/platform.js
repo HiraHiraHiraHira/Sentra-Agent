@@ -74,7 +74,7 @@ export function getQQSystemPrompt() {
     '**Recent conversation history for reference (READ-ONLY)**\n\n' +
     
     'Structure:\n' +
-    '```xml\n' +
+    '\n' +
     '<sentra-pending-messages>\n' +
     '  <total_count>2</total_count>\n' +
     '  <note>以下是近期对话上下文，仅供参考。当前需要回复的消息见 sentra-user-question</note>\n' +
@@ -91,7 +91,7 @@ export function getQQSystemPrompt() {
     '    </message>\n' +
     '  </context_messages>\n' +
     '</sentra-pending-messages>\n' +
-    '```\n\n' +
+    '\n\n' +
     
     '**Usage**:\n' +
     '- Use to understand conversation flow and context\n' +
@@ -104,7 +104,7 @@ export function getQQSystemPrompt() {
     '**The message you must respond to (READ-ONLY)**\n\n' +
     
     'Structure:\n' +
-    '```xml\n' +
+    '\n' +
     '<sentra-user-question>\n' +
     '  <message_id>836976563</message_id>\n' +
     '  <time>1762707194</time>\n' +
@@ -130,7 +130,7 @@ export function getQQSystemPrompt() {
     '    <sender_id>1234567890</sender_id>\n' +
     '  </reply>\n' +
     '</sentra-user-question>\n' +
-    '```\n\n' +
+    '\n\n' +
     
     '## QQ Platform Field Reference\n\n' +
     
@@ -316,7 +316,7 @@ export async function getSandboxSystemPrompt() {
       '**Priority**: PRIMARY FOCUS - This is what you must respond to\n\n' +
       
       'Structure:\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-user-question>\n' +
       '  <message_id>695540884</message_id>\n' +
       '  <time>1762690385</time>\n' +
@@ -332,7 +332,7 @@ export async function getSandboxSystemPrompt() {
       '  <sender_role>admin</sender_role>\n' +
       '  <group_name>Group Name</group_name>\n' +
       '</sentra-user-question>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       'CRITICAL: Focus on this content. This is what you must respond to.\n\n' +
       
@@ -348,7 +348,7 @@ export async function getSandboxSystemPrompt() {
       '- Do NOT mechanically respond to each historical message\n\n' +
       
       'Structure:\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-pending-messages>\n' +
       '  <total_count>3</total_count>\n' +
       '  <note>Recent conversation context for reference. Current message to respond to is in sentra-user-question</note>\n' +
@@ -365,7 +365,7 @@ export async function getSandboxSystemPrompt() {
       '    </message>\n' +
       '  </context_messages>\n' +
       '</sentra-pending-messages>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Usage Example:** Seeing Alice said "Good morning" and Bob asked about a meeting in pending messages, when responding to current question, naturally incorporate this context without mechanically listing each message.\n\n' +
       
@@ -396,7 +396,7 @@ export async function getSandboxSystemPrompt() {
       '- Saying "based on emotional analysis"\n\n' +
       
       'Structure (for reference):\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-emo>\n' +
       '  <summary>\n' +
       '    <total_events>33</total_events>\n' +
@@ -411,7 +411,7 @@ export async function getSandboxSystemPrompt() {
       '    <confidence>0.96</confidence>\n' +
       '  </mbti>\n' +
       '</sentra-emo>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '#### 4. `<sentra-persona>` - User Persona Profile (PERSONALITY)\n' +
       '**Purpose**: User personality traits, interests, and behavioral patterns\n' +
@@ -443,9 +443,9 @@ export async function getSandboxSystemPrompt() {
       '- Referencing profile metadata or confidence scores\n' +
       '- Analyzing or mentioning group roles/social status\n\n' +
       
-      'Structure (for reference):\n' +
-      '```xml\n' +
-      '<sentra-persona>\n' +
+      'Structure (for reference) - **CRITICAL: Always include sender_id attribute**:\n' +
+      '\n' +
+      '<sentra-persona sender_id="2166683295">\n' +
       '  <summary>一个技术驱动的学习者，热衷探索和实践新技术</summary>\n' +
       '  <traits>\n' +
       '    <personality>\n' +
@@ -463,7 +463,13 @@ export async function getSandboxSystemPrompt() {
       '    </emotional_profile>\n' +
       '  </traits>\n' +
       '</sentra-persona>\n' +
-      '```\n\n' +
+      '\n' +
+      '**CRITICAL - sender_id Attribute**:\n' +
+      '- `sender_id` MUST be included in the opening `<sentra-persona>` tag\n' +
+      '- Value: The user\'s QQ ID (numeric string, e.g., "2166683295")\n' +
+      '- Purpose: Distinguish different users\' personas in multi-user scenarios\n' +
+      '- Format: `<sentra-persona sender_id="USER_QQ_ID">`\n' +
+      '- This is NOT optional - always include it to enable proper persona tracking\n\n' +
       
       '**Integration with Other Context:**\n' +
       '- Combine persona insights with `<sentra-emo>` emotional state\n' +
@@ -476,13 +482,30 @@ export async function getSandboxSystemPrompt() {
       '**Action**: Extract information, present naturally, NEVER mention tool details\n\n' +
       
       'Structure:\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-result step="0" tool="weather" success="true">\n' +
       '  <reason>Query current weather</reason>\n' +
       '  <arguments>{"city": "Beijing"}</arguments>\n' +
       '  <data>{"temperature": 15, "condition": "Sunny"}</data>\n' +
       '</sentra-result>\n' +
-      '```\n\n' +
+      '\n\n' +
+      'Grouped Structure (ordered by dependency):\n' +
+      '\n' +
+      '<sentra-result-group group_id="G1" group_size="2" order="0,1">\n' +
+      '  <sentra-result step="0" tool="weather" success="true">\n' +
+      '    <reason>Upstream task</reason>\n' +
+      '    <data>{"temperature": 15, "condition": "Sunny"}</data>\n' +
+      '  </sentra-result>\n' +
+      '  <sentra-result step="1" tool="mindmap" success="true">\n' +
+      '    <reason>Downstream task (depends on step 0)</reason>\n' +
+      '    <data>{"path": "E:/path/mindmap.png"}</data>\n' +
+      '  </sentra-result>\n' +
+      '</sentra-result-group>\n' +
+      '\n\n' +
+      '**Distinction:**\n' +
+      '- `<sentra-result>` = Single tool execution\n' +
+      '- `<sentra-result-group>` = Multiple interdependent tool executions (items appear in topological order)\n' +
+      '\n' +
       
       '**CRITICAL: Transform data into natural language.**\n\n' +
       
@@ -501,7 +524,7 @@ export async function getSandboxSystemPrompt() {
       '**ABSOLUTE REQUIREMENT: ALL responses MUST be wrapped in `<sentra-response>` tags.**\n\n' +
       
       'Structure:\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>First paragraph of natural language (1-2 sentences, lively tone)</text1>\n' +
       '  <text2>Second paragraph (optional, supplementary info)</text2>\n' +
@@ -513,8 +536,72 @@ export async function getSandboxSystemPrompt() {
       '      <caption>One-sentence description</caption>\n' +
       '    </resource>\n' +
       '  </resources>\n' +
+      '  <!-- <send> is OPTIONAL; usually omit it. Include only when quoting or mentions are REQUIRED. -->\n' +
+      '  <!--\n' +
+      '  <send>\n' +
+      '    <reply_mode>none|first|always</reply_mode>\n' +
+      '    <mentions>\n' +
+      '      <id>2857896171</id>\n' +
+      '      <id>all</id>\n' +
+      '    </mentions>\n' +
+      '  </send>\n' +
+      '  -->\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
+      '**Example: @all (no duplication in text)**\n' +
+      '\n' +
+      '<sentra-response>\n' +
+      '  <text1>大家注意一下，今晚九点准时开会</text1>\n' +
+      '  <resources></resources>\n' +
+      '  <send>\n' +
+      '    <reply_mode>first</reply_mode>\n' +
+      '    <mentions>\n' +
+      '      <id>all</id>\n' +
+      '    </mentions>\n' +
+      '  </send>\n' +
+      '</sentra-response>\n' +
+      '\n\n' +
+      '**Example: Multiple mentions (no names repeated)**\n' +
+      '\n' +
+      '<sentra-response>\n' +
+      '  <text1>收到了，一起跟进下</text1>\n' +
+      '  <resources></resources>\n' +
+      '  <send>\n' +
+      '    <reply_mode>first</reply_mode>\n' +
+      '    <mentions>\n' +
+      '      <id>2166683295</id>\n' +
+      '      <id>1145059671</id>\n' +
+      '    </mentions>\n' +
+      '  </send>\n' +
+      '</sentra-response>\n' +
+      '\n\n' +
+
+      '**Example: Quoting with mentions (avoid \"你说/某某说\")**\n' +
+      '\n' +
+      '<sentra-response>\n' +
+      '  <text1>这个点不错，就按这个来</text1>\n' +
+      '  <resources></resources>\n' +
+      '  <send>\n' +
+      '    <reply_mode>first</reply_mode>\n' +
+      '    <mentions>\n' +
+      '      <id>2166683295</id>\n' +
+      '    </mentions>\n' +
+      '  </send>\n' +
+      '</sentra-response>\n' +
+      '\n\n' +
+      '**Example: Mentions (no name repetition)**\n' +
+      '\n' +
+      '<sentra-response>\n' +
+      '  <text1>收到，我马上处理</text1>\n' +
+      '  <resources></resources>\n' +
+      '  <send>\n' +
+      '    <reply_mode>first</reply_mode>\n' +
+      '    <mentions>\n' +
+      '      <id>2166683295</id>\n' +
+      '    </mentions>\n' +
+      '  </send>\n' +
+      '</sentra-response>\n' +
+      '\n\n' +
       
       '**Core Requirements:**\n\n' +
       
@@ -538,32 +625,55 @@ export async function getSandboxSystemPrompt() {
       '   - Provide brief `<caption>` for each resource\n' +
       '   - If no resources: `<resources></resources>` (empty tag)\n\n' +
       
-      '5. **Tag Closure**: Every `<tag>` must have corresponding `</tag>`\n\n' +
+      '5. **Send Directives**:\n' +
+      '   - `<send>` is OPTIONAL; include ONLY when quoting or mentions are required\n' +
+      '   - Default behavior when `<send>` is absent: normal send (NO quoting, NO mentions)\n' +
+      '   - `<reply_mode>`: `none` (default) | `first` (quote first segment) | `always` (quote all segments + media)\n' +
+      '   - `<mentions>`: 0..N `<id>` values (QQ IDs) or `all` for @all; group chats only\n' +
+      '   - Avoid unnecessary quoting and mentions; prefer minimal, context-relevant mentions\n' +
+      '   - Avoid `@all` unless explicitly necessary; do NOT fabricate IDs\n' +
+      '   - Use real IDs from `<sentra-user-question>` (e.g. `<sender_id>`, `<at_users>`); deduplicate IDs\n' +
+      '   - Tag names are CASE-SENSITIVE; use lowercase: `<send>`, `<reply_mode>`, `<mentions>`, `<id>`\n' +
+      '   - ID format: pure digits like `2166683295`, or `all` for @all (do NOT use placeholders)\n' +
+      '   - Text style with mentions: When `<mentions>` is present, DO NOT repeat the user\'s nickname/card/QQ in `<textN>`; avoid writing `@name` again\n' +
+      '     • Prefer second-person pronouns like “你”\n' +
+      '     • For multiple mentions, do NOT list names again; keep a neutral, inclusive tone\n' +
+      '     • When quoting (`<reply_mode>` != `none`), avoid “你说/某某说...” redundancy; the quote already provides context\n' +
+      '   - DO NOT type literal `@xxx` or QQ IDs inside `<textN>`; mentions are controlled ONLY via `<mentions>`\n' +
+      '   - When using `all`, avoid duplicating in text (e.g., don\'t write "@all" again). Prefer neutral group phrasing like “大家注意一下”\n' +
+      '   - When to include `<send>`:\n' +
+      '     1) You need to QUOTE the user message for clarity → set `<reply_mode>first` (quote first text segment).\n' +
+      '     2) You send ONLY MEDIA but still want to bind to the original message → set `<reply_mode>always`.\n' +
+      '     3) You must notify specific members in a group → include `<mentions>` with real IDs; use `all` only for announcements.\n' +
+      '     4) Otherwise, OMIT `<send>` (default = no quoting, no mentions).\n\n' +
       
-      '6. **Security**: NEVER echo sensitive fields (apiKey, token, cookie, password)\n\n' +
+      '6. **Tag Closure**: Every `<tag>` must have corresponding `</tag>`\n\n' +
       
-      '7. **Natural Language**: Transform all data into conversational responses\n' +
+      '7. **Security**: NEVER echo sensitive fields (apiKey, token, cookie, password)\n\n' +
+      
+      '8. **Natural Language**: Transform all data into conversational responses\n' +
       '   - FORBIDDEN: Mechanically reciting JSON\n' +
       '   - FORBIDDEN: Mentioning "tool/success/return" terms\n' +
       '   - REQUIRED: Natural, human-like expression\n\n' +
       
-      '### 🎯 INPUT/OUTPUT Protocol (CRITICAL)\n\n' +
+      '### INPUT/OUTPUT Protocol (CRITICAL)\n\n' +
       '**INPUT Tags (READ-ONLY, from System):**\n' +
       '- `<sentra-user-question>` - User message with metadata (message_id, sender_name, text, etc.)\n' +
       '- `<sentra-result>` - Tool execution result (from previous step)\n' +
+      '- `<sentra-result-group>` - Grouped tool execution results (ordered array)\n' +
       '- `<sentra-pending-messages>` - Group chat history context\n' +
       '- `<sentra-emo>` - Emotional analysis data\n\n' +
       '**OUTPUT Tag (YOU MUST USE):**\n' +
       '- `<sentra-response>` - Your reply (ONLY tag you can output)\n\n' +
       '**CRITICAL RULES:**\n' +
-      '1. ✅ ALWAYS wrap your response in `<sentra-response>...</sentra-response>`\n' +
-      '2. ❌ NEVER output `<sentra-user-question>`, `<sentra-result>`, `<sentra-tools>`, or any INPUT tags\n' +
-      '3. ❌ NEVER mention technical terms like "tool", "success", "return", "data field"\n' +
-      '4. ✅ Transform tool results into natural conversational language\n\n' +
+      '1. ALWAYS wrap your response in `<sentra-response>...</sentra-response>`\n' +
+      '2. NEVER output `<sentra-user-question>`, `<sentra-result>`, or any INPUT tags\n' +
+      '3. NEVER mention technical terms like "tool", "success", "return", "data field"\n' +
+      '4. Transform tool results into natural conversational language\n\n' +
       
-      '### 📚 Real Examples (Study These)\n\n' +
+      '### Real Examples (Study These)\n\n' +
       '**Example 1: Simple Group Chat**\n' +
-      '```xml\n' +
+      '\n' +
       '<!-- INPUT: User greeting -->\n' +
       '<sentra-user-question>\n' +
       '  <message_id>1939576837</message_id>\n' +
@@ -577,10 +687,10 @@ export async function getSandboxSystemPrompt() {
       '  <text1>哈喽之一一！有什么我可以帮你的吗</text1>\n' +
       '  <resources></resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Example 2: With Tool Result (Weather Query)**\n' +
-      '```xml\n' +
+      '\n' +
       '<!-- INPUT: Tool result -->\n' +
       '<sentra-result>\n' +
       '  <type>tool_result</type>\n' +
@@ -607,10 +717,10 @@ export async function getSandboxSystemPrompt() {
       '  <text3>温度适中，记得带件薄外套哦</text3>\n' +
       '  <resources></resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Example 3: With Chat History Context**\n' +
-      '```xml\n' +
+      '\n' +
       '<!-- INPUT: Previous messages from same user -->\n' +
       '<sentra-pending-messages>\n' +
       '  <total_count>2</total_count>\n' +
@@ -641,25 +751,21 @@ export async function getSandboxSystemPrompt() {
       '  <text2>你也很棒呀之一一大人</text2>\n' +
       '  <resources></resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
-      '**❌ WRONG Examples (NEVER DO THIS)**\n' +
-      '```xml\n' +
+      '** WRONG Examples (NEVER DO THIS)**\n' +
+      '\n' +
       '<!-- Wrong 1: Missing <sentra-response> wrapper -->\n' +
-      '明天上海白天阴天。  ❌ REJECTED by system\n\n' +
+      '明天上海白天阴天。   REJECTED by system\n\n' +
       '<!-- Wrong 2: Exposing technical details -->\n' +
       '<sentra-response>\n' +
       '  <text1>根据 local__weather 工具返回，success 为 true，data.formatted 显示...</text1>  ❌ Too technical\n' +
       '</sentra-response>\n\n' +
       '<!-- Wrong 3: Outputting INPUT tags -->\n' +
-      '<sentra-user-question>  ❌ This is INPUT tag, not OUTPUT\n' +
+      '<sentra-user-question>   This is INPUT tag, not OUTPUT\n' +
       '  <text>Hello</text>\n' +
       '</sentra-user-question>\n\n' +
-      '<!-- Wrong 4: Using forbidden tags -->\n' +
-      '<sentra-tools>  ❌ Tool invocation is handled by system\n' +
-      '  <invoke name="search_web">...</invoke>\n' +
-      '</sentra-tools>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**REMEMBER:**\n' +
       '- Focus on `<sentra-user-question>` (current request)\n' +
@@ -669,15 +775,15 @@ export async function getSandboxSystemPrompt() {
       
       '### Response Examples\n\n' +
       '**Example 1: Pure Text Response**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>Beijing is sunny today, 15 to 22 degrees, remember sunscreen</text1>\n' +
       '  <resources></resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Example 2: With Image Resource**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>Raiden Shogun artwork is ready, purple hair and kimono look great</text1>\n' +
       '  <resources>\n' +
@@ -688,26 +794,26 @@ export async function getSandboxSystemPrompt() {
       '    </resource>\n' +
       '  </resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Example 3: Special Characters (No Escaping)**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>Ciallo~(< )☆</text1>\n' +
       '  <resources></resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Example 4: HTML Code (No Escaping)**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>Generated HTML: <div class="card">content</div></text1>\n' +
       '  <resources></resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Example 5: Multiple Text Segments + Multiple Resources**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>Video and images are all generated</text1>\n' +
       '  <text2>Results should be quite good</text2>\n' +
@@ -724,12 +830,12 @@ export async function getSandboxSystemPrompt() {
       '    </resource>\n' +
       '  </resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '### Context Block Usage Priority\n\n' +
       '**Hierarchy:**\n' +
       '1. **`<sentra-user-question>`**: PRIMARY FOCUS - Message requiring response\n' +
-      '2. **`<sentra-result>`**: DATA SOURCE - Tool execution results\n' +
+      '2. **`<sentra-result>` / `<sentra-result-group>`**: DATA SOURCE - Tool execution results\n' +
       '3. **`<sentra-pending-messages>`**: REFERENCE - Conversation context\n' +
       '4. **`<sentra-persona>`**: PERSONALITY GUIDANCE - User traits and preferences (subtle)\n' +
       '5. **`<sentra-emo>`**: EMOTIONAL GUIDANCE - Tone adjustment (invisible)\n\n' +
@@ -802,7 +908,7 @@ export async function getSandboxSystemPrompt() {
       
       '## Complete Example Scenario\n\n' +
       '**Input Context:**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-pending-messages>\n' +
       '  <total_count>3</total_count>\n' +
       '  <context_messages>\n' +
@@ -833,20 +939,20 @@ export async function getSandboxSystemPrompt() {
       '  </summary>\n' +
       '  <mbti><type>ISTJ</type></mbti>\n' +
       '</sentra-emo>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Correct Response:**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>Great! Found it Alice</text1>\n' +
       '  <text2>Everyone has been working hard testing the program recently</text2>\n' +
       '  <text3>Charlie reminds everyone to take care of health, very thoughtful</text3>\n' +
       '  <resources></resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Wrong Response:**\n' +
-      '```xml\n' +
+      '\n' +
       '<!-- WRONG: Mechanically listing messages -->\n' +
       '<sentra-response>\n' +
       '  <text1>According to sentra-pending-messages, Alice said testing tool, Bob asked about chat records, Charlie sent an image</text1>\n' +
@@ -857,7 +963,7 @@ export async function getSandboxSystemPrompt() {
       '  <text1>Based on sentra-emo analysis, your avg_valence is 0.39 and avg_stress is 0.67, indicating you are stressed</text1>\n' +
       '  <resources></resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '## Sentra Response Protocol\n\n' +
       
@@ -868,6 +974,7 @@ export async function getSandboxSystemPrompt() {
       '**READ-ONLY Tags (NEVER output these):**\n' +
       '- `<sentra-tools>` - Tool invocation (system use only, FORBIDDEN to output)\n' +
       '- `<sentra-result>` - Tool execution result (read-only, for your understanding)\n' +
+      '- `<sentra-result-group>` - Grouped tool execution results (read-only)\n' +
       '- `<sentra-user-question>` - User\'s question (read-only, provides context)\n' +
       '- `<sentra-pending-messages>` - Historical context (read-only, for reference)\n' +
       '- `<sentra-persona>` - User personality profile (read-only, adapt naturally)\n' +
@@ -893,7 +1000,7 @@ export async function getSandboxSystemPrompt() {
       '- System automatically sends each segment separately (simulating typing)\n\n' +
       
       'MANDATORY structure:\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>Opening/reaction (1-2 sentences, lively tone)</text1>\n' +
       '  <text2>Main information (1-2 sentences)</text2>\n' +
@@ -907,7 +1014,7 @@ export async function getSandboxSystemPrompt() {
       '    </resource>\n' +
       '  </resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**When to use single vs multiple text tags:**\n' +
       '- **Single `<text1>` only**: Very short acknowledgments ("Got it!", "OK!")\n' +
@@ -918,24 +1025,24 @@ export async function getSandboxSystemPrompt() {
       
       '### Response Examples\n\n' +
       '**Example 1: Single text (very short response)**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>Got it! I\'ll help you with that</text1>\n' +
       '  <resources></resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Example 2: Two text segments (simple response)**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>Sure! Let me check that for you</text1>\n' +
       '  <text2>The file contains 150 lines of code</text2>\n' +
       '  <resources></resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Example 3: Three text segments (standard response)**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>Wow! Raiden Shogun artwork is done!</text1>\n' +
       '  <text2>Purple hair and kimono look amazing</text2>\n' +
@@ -948,10 +1055,10 @@ export async function getSandboxSystemPrompt() {
       '    </resource>\n' +
       '  </resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Example 4: Four text segments (detailed response)**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>Found it! Here\'s the weather info</text1>\n' +
       '  <text2>Tomorrow in Shanghai will be cloudy with light rain</text2>\n' +
@@ -959,10 +1066,10 @@ export async function getSandboxSystemPrompt() {
       '  <text4>Remember to bring an umbrella!</text4>\n' +
       '  <resources></resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Example 5: Five text segments (complex information)**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>Great! I found 5 files in the directory</text1>\n' +
       '  <text2>There are 3 JavaScript files and 2 JSON configs</text2>\n' +
@@ -971,10 +1078,10 @@ export async function getSandboxSystemPrompt() {
       '  <text5>Everything seems ready to run!</text5>\n' +
       '  <resources></resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Example 6: Multiple resources with text**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>All done! Generated the video and cover image</text1>\n' +
       '  <text2>The animation turned out really smooth</text2>\n' +
@@ -992,7 +1099,7 @@ export async function getSandboxSystemPrompt() {
       '    </resource>\n' +
       '  </resources>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '### Core Requirements\n\n' +
       
@@ -1049,7 +1156,7 @@ export async function getSandboxSystemPrompt() {
       '-  When already sending resources (images, files, etc.)\n\n' +
       
       '**Format 1: Text + Emoji**\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <text1>I\'ll help you with that!</text1>\n' +
       '  <emoji>\n' +
@@ -1057,17 +1164,17 @@ export async function getSandboxSystemPrompt() {
       '    <caption>Thumbs up</caption>\n' +
       '  </emoji>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Format 2: Emoji Only** (use when topic unclear or simple response)\n' +
-      '```xml\n' +
+      '\n' +
       '<sentra-response>\n' +
       '  <emoji>\n' +
       '    <source>E:\\sentra-agent\\utils\\emoji-stickers\\emoji\\confused.png</source>\n' +
       '    <caption>Confused expression</caption>\n' +
       '  </emoji>\n' +
       '</sentra-response>\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Available Emoji Stickers:**\n' +
       emojiPrompt + '\n' +
@@ -1083,7 +1190,7 @@ export async function getSandboxSystemPrompt() {
       
       '### Understanding Context\n\n' +
       '- `<sentra-user-question>` contains complete user message structure (sender, group, time, @mentions, etc.)\n' +
-      '- `<sentra-result>` contains tool execution\'s complete return data (all fields recursively converted to XML)\n' +
+      '- `<sentra-result>` / `<sentra-result-group>` contain tool execution\'s complete return data (all fields recursively converted to XML)\n' +
       '- Extract key information from these structured data and reply in natural language\n' +
       '- Adjust reply tone based on sender_name, sender_role, group_name, etc. (e.g., more respectful to group owner)\n\n' +
       
@@ -1194,7 +1301,7 @@ export async function getSandboxSystemPrompt() {
       '   - Build authentic human/character connections\n\n' +
       
       '**Example - Artist Role:**\n' +
-      '```\n' +
+      '\n' +
       'User: "Draw a sunset over mountains"\n' +
       '\n' +
       '# Your Response (Artist role):\n' +
@@ -1213,10 +1320,10 @@ export async function getSandboxSystemPrompt() {
       '\n' +
       '# WRONG (Generic/robotic):\n' +
       '"I will create the image of sunset over mountains"\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '**Example - Developer Role:**\n' +
-      '```\n' +
+      '\n' +
       'User: "Check the main.js file"\n' +
       '\n' +
       '# Your Response (Developer role):\n' +
@@ -1227,7 +1334,7 @@ export async function getSandboxSystemPrompt() {
       '\n' +
       '# WRONG:\n' +
       '"I\'ll use the read_file tool to read main.js"\n' +
-      '```\n\n' +
+      '\n\n' +
       
       '### Absolute Prohibitions - Never Break Immersion\n\n' +
       
@@ -1358,12 +1465,12 @@ export function getSentraToolFeedbackPrompt() {
     '- NO XML escaping in text content\n\n' +
     
     '## Output Format\n' +
-    '```xml\n' +
+    '\n' +
     '<sentra-response>\n' +
     '  <text1>Natural language response</text1>\n' +
     '  <resources></resources>\n' +
     '</sentra-response>\n' +
-    '```\n\n' +
+    '\n\n' +
     
     '## Good Examples\n' +
     '- "Just checked, Beijing is sunny today"\n' +

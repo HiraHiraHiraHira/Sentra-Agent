@@ -21,9 +21,9 @@ export function buildToolDoc(t) {
  */
 function buildRerankUrl(baseURL) {
   const root = String(baseURL || 'https://api.siliconflow.cn').replace(/\/+$/, '');
-  if (/\/rerank$/i.test(root)) return root;                // e.g. https://yuanplus.cloud/v1/rerank
-  if (/\/v\d+$/i.test(root)) return root + '/rerank';     // e.g. https://yuanplus.cloud/v1 -> +/rerank
-  return root + '/v1/rerank';                               // e.g. https://yuanplus.cloud -> +/v1/rerank
+  if (/\/rerank$/i.test(root)) return root;                // e.g. https://yuanplus.chat/v1/rerank
+  if (/\/v\d+$/i.test(root)) return root + '/rerank';     // e.g. https://yuanplus.chat/v1 -> +/rerank
+  return root + '/v1/rerank';                               // e.g. https://yuanplus.chat -> +/v1/rerank
 }
 
 /**

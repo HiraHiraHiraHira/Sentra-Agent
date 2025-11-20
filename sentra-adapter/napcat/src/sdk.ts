@@ -163,7 +163,19 @@ export type SdkInvoke = ((action: string, params?: any) => Promise<OneBotRespons
         videos: Array<{ file?: string; url?: string; size?: string | number }>;
         files: Array<{ name?: string; url?: string; size?: string | number }>;
         records: Array<{ file?: string; format?: string }>;
-        forwards: Array<{ id?: string | number; count?: number; preview?: string[] }>;
+        forwards: Array<{ 
+          id?: string | number; 
+          count?: number; 
+          preview?: string[];
+          nodes?: Array<{
+            sender_id?: number;
+            sender_name?: string;
+            time?: number;
+            message?: any[];
+            message_text?: string;
+          }>;
+        }>;
+        cards: Array<{ type: string; title?: string; url?: string; content?: string; image?: string; raw?: any; preview?: string }>;
         faces: Array<{ id?: string; text?: string }>;
       };
     }>;
@@ -535,6 +547,40 @@ export function createSDK(init?: SDKInit): SdkInvoke {
           else if (s.type === 'record') parts.push('[语音]');
           else if (s.type === 'face') parts.push(`[表情${s.data?.id ? ':' + s.data.id : ''}]`);
           else if (s.type === 'at') parts.push(s.data?.qq === 'all' ? '[@全体成员]' : `[@${s.data?.qq ?? ''}]`);
+          else if (s.type === 'json') {
+            const raw = s.data?.data ?? s.data?.content ?? s.data?.json ?? '';
+            try {
+              const obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+              const preview = obj?.prompt || obj?.desc || obj?.meta?.detail_1?.desc || obj?.meta?.news?.desc || obj?.view || obj?.title || '';
+              parts.push(preview || '[卡片]');
+            } catch {
+              parts.push('[卡片]');
+            }
+          }
+          else if (s.type === 'xml') {
+            const raw = s.data?.data ?? s.data?.xml ?? '';
+            if (typeof raw === 'string') {
+              const m = raw.match(/<title>([^<]{1,100})<\/title>/i);
+              parts.push(m?.[1] || '[卡片]');
+            } else {
+              parts.push('[卡片]');
+            }
+          }
+          else if (s.type === 'share') {
+            const title = s.data?.title || s.data?.url || '';
+            parts.push(title ? `[分享]${title}` : '[分享链接]');
+          }
+          else if (s.type === 'app') {
+            const raw = s.data?.content ?? s.data?.data ?? '';
+            try {
+              const obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+              const title = obj?.meta?.news?.title || obj?.meta?.detail_1?.title || obj?.prompt || obj?.meta?.title || obj?.title || '';
+              parts.push(title ? `[应用]${title}` : '[应用卡片]');
+            } catch {
+              parts.push('[应用卡片]');
+            }
+          }
+          else if (s.type === 'forward') parts.push('[转发消息]');
           else parts.push(`[${String(s.type)}]`);
         }
         return parts.join('');
@@ -626,6 +672,7 @@ export function createSDK(init?: SDKInit): SdkInvoke {
         const records: any[] = [];
         const forwards: any[] = [];
         const faces: any[] = [];
+        const cards: any[] = [];
         if (Array.isArray(segs)) {
           for (const s of segs) {
             if (!s || !s.type) continue;
@@ -641,10 +688,42 @@ export function createSDK(init?: SDKInit): SdkInvoke {
               forwards.push({ id: s.data.id });
             } else if (s.type === 'face' && s.data) {
               faces.push({ id: s.data.id, text: s.data.text });
+            } else if (s.type === 'json') {
+              const raw = s.data?.data ?? s.data?.content ?? s.data?.json ?? '';
+              let preview = '';
+              try {
+                const obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                // 尝试提取有意义的字段：prompt/desc/title/view 等
+                preview = obj?.prompt || obj?.desc || obj?.meta?.detail_1?.desc || obj?.meta?.news?.desc || obj?.view || obj?.title || '';
+                if (!preview && obj?.config?.type) preview = `类型: ${obj.config.type}`;
+                if (!preview) preview = typeof raw === 'string' ? raw.slice(0, 100) : JSON.stringify(raw).slice(0, 100);
+              } catch {
+                preview = typeof raw === 'string' ? raw.slice(0, 100) : '';
+              }
+              cards.push({ type: 'json', raw, preview });
+            } else if (s.type === 'xml') {
+              const raw = s.data?.data ?? s.data?.xml ?? '';
+              const m = typeof raw === 'string' ? raw.match(/<title>([^<]{1,64})<\/title>/i) : null;
+              const preview = m?.[1] || (typeof raw === 'string' ? raw.slice(0, 300) : '');
+              cards.push({ type: 'xml', raw, preview });
+            } else if (s.type === 'share') {
+              cards.push({ type: 'share', title: s.data?.title, url: s.data?.url, content: s.data?.content, image: s.data?.image, preview: s.data?.title || s.data?.url });
+            } else if (s.type === 'app') {
+              const raw = s.data?.content ?? s.data?.data ?? '';
+              let title: string | undefined; let url: string | undefined; let image: string | undefined; let content: string | undefined;
+              try {
+                const obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                title = obj?.meta?.news?.title || obj?.meta?.detail_1?.title || obj?.prompt || obj?.meta?.title || obj?.title;
+                content = obj?.meta?.news?.desc || obj?.meta?.detail_1?.desc || obj?.desc || obj?.meta?.desc;
+                url = obj?.meta?.news?.jumpUrl || obj?.meta?.detail_1?.qqdocurl || obj?.meta?.news?.url || obj?.url;
+                image = obj?.meta?.news?.preview || obj?.meta?.detail_1?.preview || obj?.meta?.preview || obj?.cover;
+              } catch {}
+              const preview = title || (typeof raw === 'string' ? raw.slice(0, 300) : '');
+              cards.push({ type: 'app', title, url, image, content, raw, preview });
             }
           }
         }
-        return { images, videos, files, records, forwards, faces };
+        return { images, videos, files, records, forwards, faces, cards };
       };
 
       const media = referred?.message ? collectMedia(referred.message as any[]) : collectMedia(reply?.message as any[]);
@@ -743,20 +822,38 @@ export function createSDK(init?: SDKInit): SdkInvoke {
         return await Promise.all(tasks);
       };
 
+      const enrichCards = async (items: any[]) => {
+        const limit = items.slice(0, 5);
+        return limit.map((c: any) => {
+          if (c.type === 'share') {
+            return { type: 'share', title: c.title, url: c.url, content: c.content, image: c.image, preview: c.preview || c.title || c.url };
+          } else if (c.type === 'json') {
+            return { type: 'json', preview: c.preview, raw: c.raw };
+          } else if (c.type === 'xml') {
+            return { type: 'xml', preview: c.preview, raw: c.raw };
+          } else if (c.type === 'app') {
+            return { type: 'app', title: c.title, url: c.url, image: c.image, content: c.content, preview: c.preview, raw: c.raw };
+          }
+          return c;
+        });
+      };
+
       const msgType = ev.message_type;
       const targetId = (msgType === 'group' ? ev.group_id : ev.user_id) as number | undefined;
 
       try {
-        const [enrichedImages, enrichedRecords, enrichedFiles, enrichedForwards] = await Promise.all([
+        const [enrichedImages, enrichedRecords, enrichedFiles, enrichedForwards, enrichedCards] = await Promise.all([
           media.images.length ? enrichImages(media.images) : Promise.resolve([]),
           media.records.length ? enrichRecords(media.records) : Promise.resolve([]),
           media.files.length ? enrichFiles(media.files, msgType, targetId) : Promise.resolve([]),
           media.forwards.length ? enrichForwards(media.forwards) : Promise.resolve([]),
+          media.cards && media.cards.length ? enrichCards(media.cards) : Promise.resolve([]),
         ]);
         media.images = enrichedImages;
         media.records = enrichedRecords;
         media.files = enrichedFiles;
         media.forwards = enrichedForwards;
+        media.cards = enrichedCards;
       } catch {}
 
       return { reply, referred, referredPlain, currentPlain, media };
@@ -771,6 +868,10 @@ export function createSDK(init?: SDKInit): SdkInvoke {
     messageStream = new MessageStream({
       port: cfg.streamPort,
       includeRaw: cfg.streamIncludeRaw,
+      skipAnimatedEmoji: cfg.streamSkipAnimatedEmoji,
+      rpcRetryEnabled: cfg.streamRpcRetryEnabled,
+      rpcRetryIntervalMs: cfg.streamRpcRetryIntervalMs,
+      rpcRetryMaxAttempts: cfg.streamRpcRetryMaxAttempts,
     });
     
     // 设置群名称解析器

@@ -7,8 +7,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "set MODE=reverse&& set ENABLE_TEST_PLUGIN=true&& ts-node src/main.ts",
-    "dev": "set ENABLE_TEST_PLUGIN=true&& ts-node src/main.ts"
+    "start": "set MODE=reverse&& set ENABLE_TEST_PLUGIN=true&& ts-node src/main.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

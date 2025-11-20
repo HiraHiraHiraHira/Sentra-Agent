@@ -3,7 +3,7 @@ import SentraMcpSDK from 'sentra-mcp';
 import SentraPromptsSDK from 'sentra-prompts';
 import { Agent } from "./agent.js";
 import fs from "fs";
-import WebSocket from 'ws';
+import { createWebSocketClient } from './components/WebSocketClient.js';
 import { buildSentraResultBlock, buildSentraUserQuestionBlock, convertHistoryToMCPFormat } from './utils/protocolUtils.js';
 import { smartSend } from './utils/sendUtils.js';
 import { saveMessageCache, cleanupExpiredCache } from './utils/messageCache.js';
@@ -25,10 +25,15 @@ await cleanupExpiredCache();
 const WS_HOST = process.env.WS_HOST || 'localhost';
 const WS_PORT = process.env.WS_PORT || '6702';
 const WS_TIMEOUT = parseInt(process.env.WS_TIMEOUT || '10000');
+const WS_RECONNECT_INTERVAL_MS = parseInt(process.env.WS_RECONNECT_INTERVAL_MS || '10000');
+const WS_MAX_RECONNECT_ATTEMPTS = parseInt(process.env.WS_MAX_RECONNECT_ATTEMPTS || '60');
 const WS_URL = `ws://${WS_HOST}:${WS_PORT}`;
 
-const ws = new WebSocket(WS_URL);
-const send = (obj) => ws.send(JSON.stringify(obj));
+const socket = createWebSocketClient(WS_URL, {
+  reconnectIntervalMs: WS_RECONNECT_INTERVAL_MS,
+  maxReconnectAttempts: WS_MAX_RECONNECT_ATTEMPTS
+});
+const send = (obj) => socket.send(obj);
 
 const logger = createLogger('Main');
 logger.info(`连接到 WebSocket 服务: ${WS_URL}`);
@@ -79,8 +84,6 @@ function loadAgentPreset() {
   }
 }
 
-const systems = loadAgentPreset();
-
 const SENTRA_EMO_TIMEOUT = parseInt(process.env.SENTRA_EMO_TIMEOUT || '60000');
 const emo = new SentraEmo({ 
   baseURL: process.env.SENTRA_EMO_URL || undefined, 
@@ -95,11 +98,18 @@ const historyManager = new GroupHistoryManager({
 // 用户画像管理器
 const ENABLE_USER_PERSONA = (process.env.ENABLE_USER_PERSONA || 'true') === 'true';
 const personaManager = ENABLE_USER_PERSONA ? new UserPersonaManager({
-  agent: agent,  // 传入 agent 实例
+  agent: agent,
   dataDir: process.env.PERSONA_DATA_DIR || './userData',
-  updateInterval: parseInt(process.env.PERSONA_UPDATE_INTERVAL || '10'),
+  updateIntervalMs: parseInt(process.env.PERSONA_UPDATE_INTERVAL_MS || '600000'),
+  minMessagesForUpdate: parseInt(process.env.PERSONA_MIN_MESSAGES || '10'),
   maxHistorySize: parseInt(process.env.PERSONA_MAX_HISTORY || '100'),
-  model: process.env.PERSONA_MODEL || 'gpt-4o-mini'
+  model: process.env.PERSONA_MODEL || 'gpt-4o-mini',
+  recentMessagesCount: parseInt(process.env.PERSONA_RECENT_MESSAGES || '40'),
+  halfLifeMs: parseInt(process.env.PERSONA_HALFLIFE_MS || '172800000'),
+  maxTraits: parseInt(process.env.PERSONA_MAX_TRAITS || '6'),
+  maxInterests: parseInt(process.env.PERSONA_MAX_INTERESTS || '8'),
+  maxPatterns: parseInt(process.env.PERSONA_MAX_PATTERNS || '6'),
+  maxInsights: parseInt(process.env.PERSONA_MAX_INSIGHTS || '6')
 }) : null;
 
 if (!ENABLE_USER_PERSONA) {
@@ -132,6 +142,7 @@ function validateResponseFormat(response) {
   const forbiddenTags = [
     '<sentra-tools>',
     '<sentra-result>',
+    '<sentra-result-group>',
     '<sentra-user-question>',
     '<sentra-pending-messages>',
     '<sentra-emo>'
@@ -165,6 +176,18 @@ function extractAndCountTokens(response) {
   return { text: combinedText, tokens };
 }
 
+function buildProtocolReminder() {
+  return [
+    'CRITICAL OUTPUT RULES:',
+    '1) 必须使用 <sentra-response>...</sentra-response> 包裹整个回复',
+    '2) 使用分段 <text1>, <text2>, <text3>, <textx>...（每段1句，语气自然）',
+    '3) 严禁输出只读输入标签：<sentra-user-question>/<sentra-result>/<sentra-result-group>/<sentra-pending-messages>/<sentra-emo>',
+    '4) 不要输出工具或技术术语（如 tool/success/return/data field 等）',
+    '5) 文本标签内部不要做 XML 转义（直接输出原始内容）',
+    '6) <resources> 可为空；若无资源，输出 <resources></resources>'
+  ].join('\n');
+}
+
 /**
  * 带重试的 AI 响应函数
  * @param {Array} conversations 对话历史
@@ -175,92 +198,94 @@ function extractAndCountTokens(response) {
 async function chatWithRetry(conversations, modelOrOptions, groupId) {
   let retries = 0;
   let lastError = null;
-  
-  // 构建完整的配置对象（确保环境变量生效）
-  const options = typeof modelOrOptions === 'string' 
+  let lastResponse = null;
+  let lastFormatReason = '';
+
+  const options = typeof modelOrOptions === 'string'
     ? { model: modelOrOptions }
     : (modelOrOptions || {});
-  
+
   while (retries <= MAX_RESPONSE_RETRIES) {
     try {
-      logger.debug(`[${groupId}] AI请求第${retries + 1}次尝试`);
-      
-      // 调用 AI（传递完整配置）
-      let response = await agent.chat(conversations, options);
-      
-      // 格式验证
+      const attemptIndex = retries + 1;
+      logger.debug(`[${groupId}] AI请求第${attemptIndex}次尝试`);
+
+      let convThisTry = conversations;
+      if (ENABLE_STRICT_FORMAT_CHECK && lastFormatReason) {
+        const allowInject = lastFormatReason.includes('缺少 <sentra-response> 标签') || lastFormatReason.includes('包含非法的只读标签');
+        if (allowInject) {
+          const reminder = buildProtocolReminder();
+          convThisTry = Array.isArray(conversations) ? [...conversations, { role: 'system', content: reminder }] : conversations;
+          logger.info(`[${groupId}] 协议复述注入: ${lastFormatReason}`);
+        }
+      }
+
+      let response = await agent.chat(convThisTry, options);
+      lastResponse = response;
+
       if (ENABLE_STRICT_FORMAT_CHECK) {
         const formatCheck = validateResponseFormat(response);
         if (!formatCheck.valid) {
+          lastFormatReason = formatCheck.reason || '';
           logger.warn(`[${groupId}] 格式验证失败: ${formatCheck.reason}`);
-          let repairedOk = false;
+
+          if (retries < MAX_RESPONSE_RETRIES) {
+            retries++;
+            logger.debug(`[${groupId}] 格式验证失败，直接重试（第${retries + 1}次）...`);
+            await sleep(1000);
+            continue;
+          }
+
           if (ENABLE_FORMAT_REPAIR && typeof response === 'string' && response.trim()) {
             try {
               const repaired = await repairSentraResponse(response, { agent, model: process.env.REPAIR_AI_MODEL });
               const repairedCheck = validateResponseFormat(repaired);
               if (repairedCheck.valid) {
-                response = repaired;
-                repairedOk = true;
                 logger.success(`[${groupId}] 格式已自动修复`);
+                return { response: repaired, retries, success: true };
               }
             } catch (e) {
               logger.warn(`[${groupId}] 格式修复失败: ${e.message}`);
             }
           }
-          if (!repairedOk) {
-            if (retries < MAX_RESPONSE_RETRIES) {
-              retries++;
-              logger.debug(`[${groupId}] 格式验证失败，直接重试（第${retries + 1}次）...`);
-              continue;
-            } else {
-              logger.error(`[${groupId}] 格式验证失败-最终: 已达最大重试次数`);
-              return { response: null, retries, success: false, reason: formatCheck.reason };
-            }
-          }
+
+          logger.error(`[${groupId}] 格式验证失败-最终: 已达最大重试次数`);
+          return { response: null, retries, success: false, reason: formatCheck.reason };
         }
       }
-      
-      // Token 门禁检查
+
       const { text, tokens } = extractAndCountTokens(response);
       logger.debug(`[${groupId}] Token统计: ${tokens} tokens, 文本长度: ${text.length}`);
-      
+
       if (tokens > MAX_RESPONSE_TOKENS) {
         logger.warn(`[${groupId}] Token超限: ${tokens} > ${MAX_RESPONSE_TOKENS}`);
-        
-        // 如果还有重试机会，直接重试
         if (retries < MAX_RESPONSE_RETRIES) {
           retries++;
           logger.debug(`[${groupId}] Token超限，直接重试（第${retries + 1}次）...`);
+          await sleep(500);
           continue;
-        } else {
-          // 没有重试机会了，返回失败
-          logger.error(`[${groupId}] Token超限-最终: 已达最大重试次数`);
-          return { response: null, retries, success: false, reason: `Token超限: ${tokens}>${MAX_RESPONSE_TOKENS}` };
         }
+        logger.error(`[${groupId}] Token超限-最终: 已达最大重试次数`);
+        return { response: null, retries, success: false, reason: `Token超限: ${tokens}>${MAX_RESPONSE_TOKENS}` };
       }
-      
-      // 所有验证通过
+
       logger.success(`[${groupId}] AI响应成功 (${tokens}/${MAX_RESPONSE_TOKENS} tokens)`);
       return { response, retries, success: true };
-      
     } catch (error) {
       logger.error(`[${groupId}] AI请求失败 - 第${retries + 1}次尝试`, error);
       lastError = error;
-      
-      // 如果是网络错误或超时，重试
+      lastFormatReason = '';
       if (retries < MAX_RESPONSE_RETRIES) {
         retries++;
-        logger.warn(`[${groupId}] 网络错误，1秒后第${retries}次重试...`);
+        logger.warn(`[${groupId}] 网络错误，1秒后第${retries + 1}次重试...`);
         await sleep(1000);
         continue;
-      } else {
-        // 没有重试机会了
-        logger.error(`[${groupId}] AI请求失败 - 已达最大重试次数${MAX_RESPONSE_RETRIES}次`);
-        return { response: null, retries, success: false, reason: lastError.message };
       }
+      logger.error(`[${groupId}] AI请求失败 - 已达最大重试次数${MAX_RESPONSE_RETRIES}次`);
+      return { response: null, retries, success: false, reason: lastError?.message };
     }
   }
-  
+
   return { response: null, retries, success: false, reason: lastError?.message || '未知错误' };
 }
 
@@ -372,15 +397,22 @@ async function handleOneMessage(msg, taskId) {
     const userObjective = buildConcatenatedContent(senderMessages);
     
     // conversation: 构建 MCP FC 协议格式的对话上下文
-    // 包含：1. 历史工具调用上下文 2. 当前用户消息
+    // 包含：1. 历史工具调用上下文 2. 当前用户消息（使用 Sentra XML 块，而非 summary 文本）
     const historyConversations = historyManager.getConversationHistory(groupId);
     const mcpHistory = convertHistoryToMCPFormat(historyConversations);
-    
+
+    // 复用构建逻辑：pending-messages（如果有） + sentra-user-question（当前消息）
+    const latestMsg = senderMessages[senderMessages.length - 1] || msg;
+    const pendingContextXml = historyManager.getPendingMessagesContext(groupId, userid);
+    const userQuestionXml = buildSentraUserQuestionBlock(latestMsg);
+    currentUserContent = pendingContextXml ? (pendingContextXml + '\n\n' + userQuestionXml) : userQuestionXml;
+
     const conversation = [
       ...mcpHistory,  // 历史上下文（user 的 sentra-user-question + assistant 的 sentra-tools）
-      { role: 'user', content: userObjective }  // 当前任务
+      { role: 'user', content: currentUserContent }  // 当前任务（XML 块）
     ];
     
+    //console.log(JSON.stringify(conversation, null, 2))
     logger.debug(`MCP上下文: ${groupId} 原始历史${historyConversations.length}条 → 转换后${mcpHistory.length}条 + 当前1条 = 总计${conversation.length}条`);
     
     // 获取用户画像（如果启用）
@@ -391,15 +423,28 @@ async function handleOneMessage(msg, taskId) {
         logger.debug(`用户画像: ${userid} 画像已加载`);
       }
     }
-    
-    // 组合系统提示词（如果有画像则添加）
-    const systemContent = personaContext ? `${system}\n\n${personaContext}` : system;
-    
+
+    // 获取近期情绪（用于 <sentra-emo>）
+    let emoXml = '';
+    try {
+      if (userid) {
+        const ua = await emo.userAnalytics(userid, { days: 7 });
+        emoXml = buildSentraEmoSection(ua);
+      }
+    } catch {}
+
+    // 动态读取预设并拼接在最后
+    const presetText = loadAgentPreset();
+
+    // 组合系统提示词：baseSystem + persona + emo + preset(最后)
+    const systemParts = [baseSystem, personaContext, emoXml, presetText].filter(Boolean);
+    const systemContent = systemParts.join('\n\n');
+
     let conversations = [
       { role: 'system', content: systemContent },
       ...historyConversations
     ];
-    const overlays = { global: systems };
+    const overlays = { global: presetText };
     const sendAndWaitWithConv = (m) => {
       const mm = m || {};
       if (!mm.requestId) {
@@ -433,13 +478,6 @@ async function handleOneMessage(msg, taskId) {
 
       if (ev.type === 'judge') {
         if (!convId) convId = randomUUID();
-        try {
-          const ua = await emo.userAnalytics(userid, { days: 7 });
-          const emoXml = buildSentraEmoSection(ua);
-          if (conversations[0] && conversations[0].role === 'system') {
-            conversations[0].content = (conversations[0].content || '') + '\n\n' + emoXml;
-          }
-        } catch {}
         if (!ev.need) {
           // 开始构建 Bot 回复
           pairId = await historyManager.startAssistantMessage(groupId);
@@ -466,10 +504,39 @@ async function handleOneMessage(msg, taskId) {
           } else {
             currentUserContent = userQuestion;
           }
+
+          // Judge 判定无需工具：为当前对话显式注入占位工具与结果，便于后续模型判断
+          try {
+            const reasonText = (latestMsg?.summary || latestMsg?.text || 'No tool required for this message.').trim();
+            const toolsXML = [
+              '<sentra-tools>',
+              '  <invoke name="none">',
+              '    <parameter name="no_tool">true</parameter>',
+              `    <parameter name="reason">${reasonText}</parameter>`,
+              '  </invoke>',
+              '</sentra-tools>'
+            ].join('\n');
+
+            const evNoTool = {
+              type: 'tool_result',
+              aiName: 'none',
+              plannedStepIndex: 0,
+              reason: reasonText,
+              result: {
+                success: true,
+                code: 'NO_TOOL',
+                provider: 'system',
+                data: { no_tool: true, reason: reasonText }
+              }
+            };
+            const resultXML = buildSentraResultBlock(evNoTool);
+            // 将占位工具+结果置于最前，保持与工具路径一致的上下文结构
+            currentUserContent = toolsXML + '\n\n' + resultXML + '\n\n' + currentUserContent;
+          } catch {}
           
           conversations.push({ role: 'user', content: currentUserContent });
           // logger.debug('Conversations', conversations);
-          
+          //console.log(JSON.stringify(conversations, null, 2))
           const result = await chatWithRetry(conversations, MAIN_AI_MODEL, groupId);
           
           if (!result.success) {
@@ -499,7 +566,7 @@ async function handleOneMessage(msg, taskId) {
           
           senderMessages = getAllSenderMessages();  
           const finalMsg = senderMessages[senderMessages.length - 1] || msg;
-          const allowReply = !hasReplied;  
+          const allowReply = true;
           logger.debug(`引用消息Judge: ${groupId} 消息${finalMsg.message_id}, sender ${finalMsg.sender_id}, 队列${senderMessages.length}条, 允许引用 ${allowReply}`);
           await smartSend(finalMsg, response, sendAndWaitWithConv, allowReply);
           hasReplied = true;  
@@ -518,7 +585,12 @@ async function handleOneMessage(msg, taskId) {
         logger.info('执行计划', ev.plan.steps);
       }
       
-      if (ev.type === 'tool_result') {
+      // 忽略 args/args_group 事件（只对 tool_result/_group 做回复）
+      if (ev.type === 'args' || ev.type === 'args_group') {
+        continue;
+      }
+
+      if (ev.type === 'tool_result' || ev.type === 'tool_result_group') {
         if (!pairId) {
           pairId = await historyManager.startAssistantMessage(groupId);
           logger.debug(`创建pairId-ToolResult: ${groupId} pairId ${pairId?.substring(0, 8)}`);
@@ -559,7 +631,7 @@ async function handleOneMessage(msg, taskId) {
         currentUserContent = fullContext;
         
         conversations.push({ role: 'user', content: fullContext });
-  
+        //console.log(JSON.stringify(conversations, null, 2))
         const result = await chatWithRetry(conversations, MAIN_AI_MODEL, groupId);
         
         if (!result.success) {
@@ -589,7 +661,7 @@ async function handleOneMessage(msg, taskId) {
         
         senderMessages = getAllSenderMessages(); 
         const finalMsg = senderMessages[senderMessages.length - 1] || msg;
-        const allowReply = !hasReplied; 
+        const allowReply = true;
         logger.debug(`引用消息ToolResult: ${groupId} 消息${finalMsg.message_id}, sender ${finalMsg.sender_id}, 队列${senderMessages.length}条, 允许引用 ${allowReply}`);
         await smartSend(finalMsg, response, sendAndWaitWithConv, allowReply);
         hasReplied = true;
@@ -680,8 +752,8 @@ async function handleOneMessage(msg, taskId) {
   }
 }
 
-const text = "{{sandbox_system_prompt}}\n{{sentra_tools_rules}}\n现在时间：{{time}}\n\n平台：\n{{qq_system_prompt}}\n\n" + systems;
-const system = await SentraPromptsSDK(text);
+const baseSystemText = "{{sandbox_system_prompt}}\n{{sentra_tools_rules}}\n现在时间：{{time}}\n\n平台：\n{{qq_system_prompt}}";
+const baseSystem = await SentraPromptsSDK(baseSystemText);
 
 function sendAndWaitResult(message) {
   return new Promise((resolve) => {
@@ -700,19 +772,19 @@ function sendAndWaitResult(message) {
         const payload = JSON.parse(data.toString());
         if (payload.type === 'result' && payload.requestId === requestId) {
           clearTimeout(timeout);
-          ws.off('message', handler);
+          socket.off('message', handler);
           resolve(payload.ok ? payload : null);
         }
       } catch (e) {
       }
     };
 
-    ws.on('message', handler);
+    socket.on('message', handler);
     send(msg);
   });
 }
 
-ws.on('message', async (data) => {
+socket.on('message', async (data) => {
   try {
     const payload = JSON.parse(data.toString());
     
@@ -799,6 +871,14 @@ ws.on('message', async (data) => {
         );
         
         if (!interventionResult.need) {
+          // 超时/失败等异常：直接视为不需要回复，不做降欲望重算
+          if (interventionResult.aborted) {
+            logger.info(`干预异常/超时: 视为不需要回复 - ${interventionResult.reason}`);
+            if (taskId) {
+              await completeTask(userid, taskId);
+            }
+            return;
+          }
           // 干预判断认为不需要回复，降低欲望值并重新计算
           logger.info(`干预判断: 不需要回复 - ${interventionResult.reason} (confidence=${interventionResult.confidence})`);
           
@@ -835,14 +915,18 @@ ws.on('message', async (data) => {
   }
 });
 
-ws.on('open', () => {
+socket.on('open', () => {
   logger.success('WebSocket 连接已建立');
 });
 
-ws.on('error', (error) => {
+socket.on('error', (error) => {
   logger.error('WebSocket 错误', error);
 });
 
-ws.on('close', () => {
+socket.on('close', () => {
   logger.warn('WebSocket 连接已关闭');
+});
+
+socket.on('reconnect_exhausted', () => {
+  logger.error(`WebSocket 重连耗尽（尝试 ${process.env.WS_MAX_RECONNECT_ATTEMPTS} 次，每次间隔 ${process.env.WS_RECONNECT_INTERVAL_MS}ms）`);
 });

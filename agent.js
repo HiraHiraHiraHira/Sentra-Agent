@@ -27,7 +27,7 @@ class Agent {
     // 配置优先级：传入参数 > 环境变量 > 默认值
     this.config = {
       apiKey: config.apiKey || process.env.API_KEY || process.env.OPENAI_API_KEY,
-      apiBaseUrl: config.apiBaseUrl || process.env.API_BASE_URL || 'https://yuanplus.cloud/v1',
+      apiBaseUrl: config.apiBaseUrl || process.env.API_BASE_URL || 'https://yuanplus.chat/v1',
       defaultModel: config.defaultModel || process.env.MODEL_NAME || 'gpt-3.5-turbo',
       temperature: parseFloat(config.temperature || process.env.TEMPERATURE || '0.7'),
       maxTokens: parseInt(config.maxTokens || process.env.MAX_TOKENS || '4096'),

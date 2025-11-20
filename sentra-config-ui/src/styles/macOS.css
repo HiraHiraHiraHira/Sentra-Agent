@@ -1,0 +1,139 @@
+:root {
+  /* Colors */
+  --mac-bg-color: url('https://images.unsplash.com/photo-1490730141103-6cac27aaab94?q=80&w=2940&auto=format&fit=crop'); /* macOS Mojave Desert or similar abstract */
+  --mac-window-bg: rgba(255, 255, 255, 0.85);
+  --mac-window-bg-dark: rgba(30, 30, 30, 0.85);
+  --mac-sidebar-bg: rgba(240, 240, 240, 0.5);
+  --mac-text-color: #333;
+  --mac-text-color-secondary: #666;
+  --mac-border-color: #d1d1d1;
+  --mac-accent-color: #007aff;
+  --mac-danger-color: #ff3b30;
+  --mac-success-color: #28cd41;
+  --mac-warning-color: #ffcc00;
+
+  /* Shadows */
+  --mac-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+  --mac-shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --mac-shadow-lg: 0 10px 20px rgba(0, 0, 0, 0.15);
+  --mac-window-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+
+  /* Typography */
+  --mac-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  
+  /* Window Controls */
+  --mac-close-btn: #ff5f56;
+  --mac-minimize-btn: #ffbd2e;
+  --mac-maximize-btn: #27c93f;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--mac-font-family);
+  background-image: var(--mac-bg-color);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  color: var(--mac-text-color);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Common Utilities */
+.mac-glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.mac-btn {
+  background: #fff;
+  border: 1px solid #d1d1d1;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #333;
+  box-shadow: 0 1px 1px rgba(0,0,0,0.05);
+}
+
+.mac-btn:hover {
+  background: #f5f5f5;
+  border-color: #c0c0c0;
+}
+
+.mac-btn:active {
+  background: #e5e5e5;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+}
+
+.mac-btn.primary {
+  background: var(--mac-accent-color);
+  color: white;
+  border-color: #0062cc;
+}
+
+.mac-btn.primary:hover {
+  background: #0069d9;
+}
+
+.mac-input {
+  background: #fff;
+  border: 1px solid #d1d1d1;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  width: 100%;
+}
+
+.mac-input:focus {
+  border-color: var(--mac-accent-color);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.2);
+}
+
+/* Ensure Context Menu is above everything */
+.contexify {
+  z-index: 10005 !important;
+  background: rgba(255, 255, 255, 0.95) !important;
+  backdrop-filter: blur(20px) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  padding: 4px !important;
+}
+
+.contexify_item {
+  border-radius: 4px !important;
+  font-size: 13px !important;
+}
+
+.contexify_item:hover {
+  background-color: var(--mac-accent-color) !important;
+  color: white !important;
+}

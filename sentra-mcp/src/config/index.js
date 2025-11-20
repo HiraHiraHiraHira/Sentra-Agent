@@ -51,7 +51,7 @@ function parseConcurrencyOverrides(prefix) {
 
 export const config = {
   llm: {
-    baseURL: process.env.OPENAI_BASE_URL || 'https://yuanplus.cloud/v1',
+    baseURL: process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
     apiKey: process.env.OPENAI_API_KEY || '',
     model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
     temperature: Number(process.env.OPENAI_TEMPERATURE || 0.2),
@@ -61,12 +61,13 @@ export const config = {
   },
   // Run-level repair / diversification controls
   runner: {
+    enableRepair: bool(process.env.RUN_ENABLE_REPAIR, true),
     maxRepairs: int(process.env.RUN_MAX_REPAIRS, 1),
     retryDiversify: bool(process.env.RETRY_DIVERSIFY, true),
   },
   // 专用于 FC (<function_call>) 模式下的提供商配置；未设置时回退到 llm 配置
   fcLlm: {
-    baseURL: process.env.FC_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.cloud/v1',
+    baseURL: process.env.FC_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
     apiKey: process.env.FC_API_KEY || process.env.OPENAI_API_KEY || '',
     model: process.env.FC_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
     temperature: Number(process.env.FC_TEMPERATURE || process.env.OPENAI_TEMPERATURE || 0.2),
@@ -96,7 +97,7 @@ export const config = {
   },
   // 向量嵌入模型配置（默认复用 OPENAI_*，也可单独配置）
   embedding: {
-    baseURL: process.env.EMBEDDING_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.cloud/v1',
+    baseURL: process.env.EMBEDDING_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
     apiKey: process.env.EMBEDDING_API_KEY || process.env.OPENAI_API_KEY || '',
     model: process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small',
   },
@@ -123,7 +124,7 @@ export const config = {
     rsEfRuntime: int(process.env.MEM_RS_EF_RUNTIME, 200),
   },
   summarizer: {
-    baseURL: process.env.SUMMARIZER_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.cloud/v1',
+    baseURL: process.env.SUMMARIZER_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
     apiKey: process.env.SUMMARIZER_API_KEY || process.env.OPENAI_API_KEY || '',
     model: process.env.SUMMARIZER_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
     temperature: Number(process.env.SUMMARIZER_TEMPERATURE || 0.1),
@@ -145,15 +146,16 @@ export const config = {
   },
   // 工具调用判定模型（在计划与执行前判断是否需要调用工具）
   judge: {
-    baseURL: process.env.JUDGE_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.cloud/v1',
+    baseURL: process.env.JUDGE_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
     apiKey: process.env.JUDGE_API_KEY || process.env.OPENAI_API_KEY || '',
     model: process.env.JUDGE_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
     temperature: Number(process.env.JUDGE_TEMPERATURE || 0.1),
     maxTokens: int(process.env.JUDGE_MAX_TOKENS, -1),
+    raceTimeoutMs: int(process.env.JUDGE_RACE_TIMEOUT_MS, 12000),
   },
   // 中文：思考/预推演专用模型（与工具调用的 LLM 分离，避免相互覆盖）
   reasoner: {
-    baseURL: process.env.REASONER_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.cloud/v1',
+    baseURL: process.env.REASONER_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
     apiKey: process.env.REASONER_API_KEY || process.env.OPENAI_API_KEY || '',
     model: process.env.REASONER_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
     temperature: Number(process.env.REASONER_TEMPERATURE || process.env.OPENAI_TEMPERATURE || 0.2),

@@ -165,3 +165,240 @@ export function shouldRepair(text) {
   if (!text.trim()) return false;
   return !text.includes('<sentra-response>');
 }
+
+export async function repairSentraDecision(rawText, opts = {}) {
+  if (!rawText || typeof rawText !== 'string') throw new Error('repairSentraDecision: rawText 无效');
+
+  const agent = opts.agent || new Agent({
+    apiKey: process.env.API_KEY,
+    apiBaseUrl: process.env.API_BASE_URL,
+    defaultModel: process.env.REPAIR_AI_MODEL || process.env.MAIN_AI_MODEL,
+    temperature: 0.2,
+    maxTokens: parseInt(process.env.MAX_TOKENS || '4096'),
+    maxRetries: parseInt(process.env.MAX_RETRIES || '3'),
+    timeout: parseInt(process.env.TIMEOUT || '60000')
+  });
+
+  const model = opts.model || process.env.REPAIR_AI_MODEL || process.env.MAIN_AI_MODEL;
+  const temperature = opts.temperature ?? 0.2;
+
+  const systemPrompt = [
+    '# Sentra Decision Repair',
+    'Return fields by calling the function tool. Do not output plain text.',
+    'Fields:',
+    '- need: boolean (true/false)',
+    '- reason: string (<= 20 Chinese chars, concise)',
+    '- confidence: number (0.0 - 1.0)'
+  ].join('\n');
+
+  const userPrompt = ['Fix assistant output into sentra-decision fields:', '<raw>', rawText, '</raw>'].join('\n');
+
+  const tools = [
+    {
+      type: 'function',
+      function: {
+        name: 'return_structured_sentra_decision',
+        description: 'Return decision fields without inventing content.',
+        parameters: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            need: { type: 'boolean' },
+            reason: { type: 'string' },
+            confidence: { type: 'number', minimum: 0, maximum: 1 }
+          },
+          required: ['need', 'reason', 'confidence']
+        }
+      }
+    }
+  ];
+  const tool_choice = { type: 'function', function: { name: 'return_structured_sentra_decision' } };
+
+  const result = await agent.chat(
+    [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ],
+    { model, temperature, tools, tool_choice }
+  );
+
+  if (!result || typeof result !== 'object') throw new Error('修复工具返回无效结果');
+  const need = Boolean(result.need);
+  const reason = String(result.reason || '').trim();
+  const confidence = Math.min(1, Math.max(0, Number(result.confidence || 0.5)));
+
+  const xml = [
+    '<sentra-decision>',
+    `  <need>${need}</need>`,
+    `  <reason>${reason}</reason>`,
+    `  <confidence>${confidence.toFixed(2)}</confidence>`,
+    '</sentra-decision>'
+  ].join('\n');
+  return xml;
+}
+
+export async function repairSentraPersona(rawText, opts = {}) {
+  if (!rawText || typeof rawText !== 'string') throw new Error('repairSentraPersona: rawText 无效');
+
+  const agent = opts.agent || new Agent({
+    apiKey: process.env.API_KEY,
+    apiBaseUrl: process.env.API_BASE_URL,
+    defaultModel: process.env.REPAIR_AI_MODEL || process.env.MAIN_AI_MODEL,
+    temperature: 0.2,
+    maxTokens: parseInt(process.env.MAX_TOKENS || '4096'),
+    maxRetries: parseInt(process.env.MAX_RETRIES || '3'),
+    timeout: parseInt(process.env.TIMEOUT || '60000')
+  });
+
+  const model = opts.model || process.env.REPAIR_AI_MODEL || process.env.MAIN_AI_MODEL;
+  const temperature = opts.temperature ?? 0.3;
+
+  const systemPrompt = [
+    '# Sentra Persona Repair',
+    'Return persona fields by calling the function tool. Do not output plain text.',
+    'Required:',
+    '- summary (string, 15-50 Chinese chars)',
+    'Optional but recommended:',
+    '- personality: string[]',
+    '- communication_style: string',
+    '- interests: string[]',
+    '- behavioral_patterns: string[]',
+    '- emotional_profile: { dominant_emotions, sensitivity_areas, expression_tendency }',
+    '- insights: { content, evidence? }[]',
+    '- metadata: { confidence?, data_quality?, update_priority? }'
+  ].join('\n');
+
+  const userPrompt = ['Fix assistant output into persona fields:', '<raw>', rawText, '</raw>'].join('\n');
+
+  const tools = [
+    {
+      type: 'function',
+      function: {
+        name: 'return_structured_sentra_persona',
+        description: 'Return persona fields without inventing content.',
+        parameters: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            summary: { type: 'string' },
+            personality: { type: 'array', items: { type: 'string' } },
+            communication_style: { type: 'string' },
+            interests: { type: 'array', items: { type: 'string' } },
+            behavioral_patterns: { type: 'array', items: { type: 'string' } },
+            emotional_profile: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                dominant_emotions: { type: 'string' },
+                sensitivity_areas: { type: 'string' },
+                expression_tendency: { type: 'string' }
+              }
+            },
+            insights: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  content: { type: 'string' },
+                  evidence: { type: 'string' }
+                },
+                required: ['content']
+              }
+            },
+            metadata: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                confidence: { type: 'string' },
+                data_quality: { type: 'string' },
+                update_priority: { type: 'string' }
+              }
+            }
+          },
+          required: ['summary']
+        }
+      }
+    }
+  ];
+  const tool_choice = { type: 'function', function: { name: 'return_structured_sentra_persona' } };
+
+  const result = await agent.chat(
+    [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ],
+    { model, temperature, tools, tool_choice }
+  );
+
+  if (!result || typeof result !== 'object') throw new Error('修复工具返回无效结果');
+
+  const lines = [];
+  lines.push('<sentra-persona>');
+  if (result.summary) lines.push(`  <summary>${String(result.summary).trim()}</summary>`);
+
+  const hasTraits =
+    (Array.isArray(result.personality) && result.personality.length) ||
+    result.communication_style ||
+    (Array.isArray(result.interests) && result.interests.length) ||
+    (Array.isArray(result.behavioral_patterns) && result.behavioral_patterns.length) ||
+    (result.emotional_profile && (result.emotional_profile.dominant_emotions || result.emotional_profile.sensitivity_areas || result.emotional_profile.expression_tendency));
+
+  if (hasTraits) {
+    lines.push('  <traits>');
+    if (Array.isArray(result.personality) && result.personality.length) {
+      lines.push('    <personality>');
+      for (const t of result.personality) lines.push(`      <trait>${String(t).trim()}</trait>`);
+      lines.push('    </personality>');
+    }
+    if (result.communication_style) {
+      lines.push('    <communication_style>' + String(result.communication_style).trim() + '</communication_style>');
+    }
+    if (Array.isArray(result.interests) && result.interests.length) {
+      lines.push('    <interests>');
+      for (const it of result.interests) lines.push(`      <interest>${String(it).trim()}</interest>`);
+      lines.push('    </interests>');
+    }
+    if (Array.isArray(result.behavioral_patterns) && result.behavioral_patterns.length) {
+      lines.push('    <behavioral_patterns>');
+      for (const p of result.behavioral_patterns) lines.push(`      <pattern>${String(p).trim()}</pattern>`);
+      lines.push('    </behavioral_patterns>');
+    }
+    if (result.emotional_profile && (result.emotional_profile.dominant_emotions || result.emotional_profile.sensitivity_areas || result.emotional_profile.expression_tendency)) {
+      lines.push('    <emotional_profile>');
+      if (result.emotional_profile.dominant_emotions) lines.push('      <dominant_emotions>' + String(result.emotional_profile.dominant_emotions).trim() + '</dominant_emotions>');
+      if (result.emotional_profile.sensitivity_areas) lines.push('      <sensitivity_areas>' + String(result.emotional_profile.sensitivity_areas).trim() + '</sensitivity_areas>');
+      if (result.emotional_profile.expression_tendency) lines.push('      <expression_tendency>' + String(result.emotional_profile.expression_tendency).trim() + '</expression_tendency>');
+      lines.push('    </emotional_profile>');
+    }
+    lines.push('  </traits>');
+  }
+
+  if (Array.isArray(result.insights) && result.insights.length) {
+    lines.push('  <insights>');
+    for (const ins of result.insights) {
+      lines.push('    <insight>');
+      lines.push('      ' + String(ins.content || '').trim());
+      lines.push('    </insight>');
+    }
+    lines.push('  </insights>');
+  }
+
+  if (result.metadata && (result.metadata.confidence || result.metadata.data_quality || result.metadata.update_priority)) {
+    lines.push('  <metadata>');
+    if (result.metadata.confidence) lines.push('    <confidence>' + String(result.metadata.confidence).trim() + '</confidence>');
+    if (result.metadata.data_quality) lines.push('    <data_quality>' + String(result.metadata.data_quality).trim() + '</data_quality>');
+    if (result.metadata.update_priority) lines.push('    <update_priority>' + String(result.metadata.update_priority).trim() + '</update_priority>');
+    lines.push('  </metadata>');
+  }
+
+  lines.push('</sentra-persona>');
+  return lines.join('\n');
+}
+
+export async function repairWithProfile(profile, rawText, opts = {}) {
+  if (profile === 'response') return repairSentraResponse(rawText, opts);
+  if (profile === 'decision') return repairSentraDecision(rawText, opts);
+  if (profile === 'persona') return repairSentraPersona(rawText, opts);
+  throw new Error(`Unknown repair profile: ${profile}`);
+}

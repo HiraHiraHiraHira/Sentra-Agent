@@ -383,20 +383,6 @@ export async function shouldReply(msg) {
     };
   }
   
-  const isExplicitMention = Array.isArray(msg.at_users) && msg.at_users.some(at => at === msg.self_id);
-  
-  if (isExplicitMention) {
-    const taskId = randomUUID();
-    addActiveTask(senderId, taskId);
-    logger.info(`明确@机器人，必须回复 (task=${taskId})`);
-    return { 
-      needReply: true, 
-      reason: '被明确@提及', 
-      mandatory: true,
-      probability: 1.0,
-      taskId
-    };
-  }
   
   const activeCount = getActiveTaskCount(senderId);
   // 优化：群聊按 group_id + sender_id 维度追踪，每个用户在群里有独立的欲望值
@@ -464,7 +450,9 @@ export async function shouldReply(msg) {
   const baseDesire = calculateDesireByLog(state, config.desireGrowthRate, config);
   
   // 2. 提及加成（注意力机制）
-  const hasBotNameMention = checkBotNameMention(msg.text, config.botNames);
+  // 显式@ 或 文本包含昵称 均视为“提及”以获得加成，但不再强制回复
+  const isExplicitMention = Array.isArray(msg.at_users) && msg.at_users.some(at => at === msg.self_id);
+  const hasBotNameMention = isExplicitMention || checkBotNameMention(msg.text, config.botNames);
   const mentionBonus = hasBotNameMention ? config.mentionBonus : 0;
   
   // 3. 连续忽略惩罚（改进的指数增长）

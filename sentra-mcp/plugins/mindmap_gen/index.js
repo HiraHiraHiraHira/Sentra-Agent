@@ -357,7 +357,7 @@ export default async function handler(args = {}, options = {}) {
     messages,
     temperature: 0.2,
     apiKey: penv.MINDMAP_API_KEY || process.env.MINDMAP_API_KEY || config.llm.apiKey,
-    baseURL: penv.MINDMAP_BASE_URL || process.env.MINDMAP_BASE_URL || config.llm.baseURL || 'https://yuanplus.cloud/v1',
+    baseURL: penv.MINDMAP_BASE_URL || process.env.MINDMAP_BASE_URL || config.llm.baseURL || 'https://yuanplus.chat/v1',
     model: penv.MINDMAP_MODEL || process.env.MINDMAP_MODEL || config.llm.model,
     omitMaxTokens: true
   });
@@ -388,7 +388,7 @@ export default async function handler(args = {}, options = {}) {
     generation_info: {
       model: resp.model,
       created: resp.created,
-      baseURL: (penv.MINDMAP_BASE_URL || process.env.MINDMAP_BASE_URL || config.llm.baseURL || 'https://yuanplus.cloud/v1')
+      baseURL: (penv.MINDMAP_BASE_URL || process.env.MINDMAP_BASE_URL || config.llm.baseURL || 'https://yuanplus.chat/v1')
     }
   };
   logger.info?.('mindmap_gen: handler returning success', { label: 'PLUGIN', hasImage: !!image });

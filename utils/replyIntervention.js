@@ -5,6 +5,7 @@
 
 import { createLogger } from './logger.js';
 import { extractXMLTag } from './xmlUtils.js';
+import { repairSentraDecision } from './formatRepair.js';
 
 const logger = createLogger('ReplyIntervention');
 
@@ -130,7 +131,10 @@ function parseDecisionXML(xmlText) {
 export async function executeIntervention(agent, msg, probability, threshold, state) {
   const model = process.env.REPLY_INTERVENTION_MODEL;
   const timeout = parseInt(process.env.REPLY_INTERVENTION_TIMEOUT || '2000');
-  const onlyNearThreshold = process.env.REPLY_INTERVENTION_ONLY_NEAR_THRESHOLD === 'true';
+  const onlyNearThresholdEnv = process.env.REPLY_INTERVENTION_ONLY_NEAR_THRESHOLD === 'true';
+  // 显式@ 提及时强制进行干预判断（无视 onlyNearThreshold 限制）
+  const isExplicitMention = Array.isArray(msg?.at_users) && msg?.self_id != null && msg.at_users.some((id) => id === msg.self_id);
+  const onlyNearThreshold = isExplicitMention ? false : onlyNearThresholdEnv;
   
   if (!model) {
     logger.warn('未配置 REPLY_INTERVENTION_MODEL，跳过干预判断');
@@ -177,8 +181,8 @@ export async function executeIntervention(agent, msg, probability, threshold, st
     const responseText = response.content || (typeof response === 'string' ? response : '');
     
     if (!responseText) {
-      logger.warn('干预判断返回内容为空，回退到原判断');
-      return { need: true, reason: '返回为空', confidence: 0.5 };
+      logger.warn('干预判断返回内容为空，判定为不需要回复');
+      return { need: false, reason: '干预返回为空', confidence: 0.0, aborted: true };
     }
     
     try {
@@ -190,18 +194,33 @@ export async function executeIntervention(agent, msg, probability, threshold, st
     } catch (xmlError) {
       logger.warn('XML 解析失败', xmlError);
     }
-    
-    // 回退：返回默认值（倾向于回复）
-    logger.warn('干预判断未返回有效结果，回退到原判断');
-    return { need: true, reason: '解析失败，回退', confidence: 0.5 };
+
+    // 尝试使用格式修复器
+    try {
+      const enableRepair = (process.env.ENABLE_FORMAT_REPAIR || 'true') === 'true';
+      if (enableRepair && typeof responseText === 'string' && responseText.trim()) {
+        const repairedXML = await repairSentraDecision(responseText, { agent, model: process.env.REPAIR_AI_MODEL });
+        const repaired = parseDecisionXML(repairedXML);
+        if (repaired) {
+          logger.info(`干预判断(修复后)完成(${elapsed}ms): need=${repaired.need}, reason="${repaired.reason}", confidence=${repaired.confidence}`);
+          return repaired;
+        }
+      }
+    } catch (repairErr) {
+      logger.warn('干预判断格式修复失败', repairErr);
+    }
+
+    // 失败：明确视为不需要回复
+    logger.warn('干预判断未返回有效结果，视为不需要回复');
+    return { need: false, reason: '干预无效结果', confidence: 0.0, aborted: true };
     
   } catch (error) {
     if (error.message === 'Timeout') {
-      logger.warn(`干预判断超时(${timeout}ms)，回退到原判断`);
+      logger.warn(`干预判断超时(${timeout}ms)，视为不需要回复`);
     } else {
-      logger.error(`干预判断失败: ${error.message}`);
+      logger.error(`干预判断失败: ${error.message}，视为不需要回复`);
     }
-    return { need: true, reason: '干预失败，回退', confidence: 0.5 };
+    return { need: false, reason: '干预超时或失败', confidence: 0.0, aborted: true };
   }
 }
 

@@ -18,6 +18,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { extractXMLTag, extractAllXMLTags } from './xmlUtils.js';
 import { createLogger } from './logger.js';
+import { repairSentraPersona } from './formatRepair.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,6 +44,12 @@ class UserPersonaManager {
     
     this.maxHistorySize = options.maxHistorySize || 100; // 最多保留历史消息数
     this.model = options.model || process.env.PERSONA_MODEL || 'gpt-4o-mini';
+    this.recentMessagesCount = options.recentMessagesCount || parseInt(process.env.PERSONA_RECENT_MESSAGES || '40');
+    this.halfLifeMs = options.halfLifeMs || parseInt(process.env.PERSONA_HALFLIFE_MS || '172800000');
+    this.maxTraits = options.maxTraits || parseInt(process.env.PERSONA_MAX_TRAITS || '6');
+    this.maxInterests = options.maxInterests || parseInt(process.env.PERSONA_MAX_INTERESTS || '8');
+    this.maxPatterns = options.maxPatterns || parseInt(process.env.PERSONA_MAX_PATTERNS || '6');
+    this.maxInsights = options.maxInsights || parseInt(process.env.PERSONA_MAX_INSIGHTS || '6');
     
     // 内存缓存 - 减少文件读写
     this.cache = new Map(); // sender_id -> { persona, messages, messageCount }
@@ -58,7 +65,10 @@ class UserPersonaManager {
       '时间间隔': `${this.updateIntervalMs / 60000} 分钟`,
       '消息阈值': `至少 ${this.minMessagesForUpdate} 条新消息`,
       '使用模型': this.model,
-      '最大历史': `${this.maxHistorySize} 条消息`
+      '最大历史': `${this.maxHistorySize} 条消息`,
+      '最近消息窗口': `${this.recentMessagesCount} 条`,
+      '半衰期(ms)': this.halfLifeMs,
+      'TopK-特征/兴趣/模式/洞察': `${this.maxTraits}/${this.maxInterests}/${this.maxPatterns}/${this.maxInsights}`
     });
   }
 
@@ -103,7 +113,13 @@ class UserPersonaManager {
         lastUpdateTime: null, // 上次更新的时间戳（毫秒）
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        version: 0 // 画像版本号
+        version: 0, // 画像版本号
+        personaStats: {
+          traits: {},
+          interests: {},
+          patterns: {},
+          insights: {}
+        }
       };
       this.cache.set(senderId, initialData);
       return initialData;
@@ -112,6 +128,9 @@ class UserPersonaManager {
     try {
       const content = fs.readFileSync(filePath, 'utf8');
       const data = JSON.parse(content);
+      if (!data.personaStats) {
+        data.personaStats = { traits: {}, interests: {}, patterns: {}, insights: {} };
+      }
       this.cache.set(senderId, data);
       return data;
     } catch (error) {
@@ -235,18 +254,20 @@ class UserPersonaManager {
       logger.info(`[画像] 开始分析用户画像 (${senderId})...`);
 
       // 准备分析数据
-      const recentMessages = userData.messages.slice(-this.updateInterval * 2); // 取最近的消息
+      const recentMessages = userData.messages.slice(-this.recentMessagesCount);
       const isFirstTime = !userData.persona; // 是否首次构建
 
       // 调用 LLM 分析
       const newPersona = await this._analyzePersona(
         recentMessages,
         userData.persona,
-        isFirstTime
+        isFirstTime,
+        senderId
       );
 
       if (newPersona) {
-        userData.persona = newPersona;
+        const merged = this._mergePersonaWithStats(userData, newPersona);
+        userData.persona = merged;
         userData.version++;
         userData.lastUpdateCount = userData.messageCount;
         userData.lastUpdateTime = Date.now(); // ✅ 记录更新时间
@@ -264,8 +285,8 @@ class UserPersonaManager {
   /**
    * 使用 LLM 分析用户画像（统一使用 XML 解析）
    */
-  async _analyzePersona(recentMessages, existingPersona, isFirstTime) {
-    const prompt = this._buildAnalysisPrompt(recentMessages, existingPersona, isFirstTime);
+  async _analyzePersona(recentMessages, existingPersona, isFirstTime, senderId) {
+    const prompt = this._buildAnalysisPrompt(recentMessages, existingPersona, isFirstTime, senderId);
     
     try {
       const response = await this.agent.chat(
@@ -294,7 +315,8 @@ class UserPersonaManager {
       }
       
       logger.debug('使用 XML 解析模式');
-      return this._parsePersonaResponse(responseText);
+      const parsed = await this._parsePersonaResponse(responseText, senderId);
+      return parsed;
       
     } catch (error) {
       logger.error('LLM 分析失败', error);
@@ -366,10 +388,9 @@ Study the user across these dimensions:
 
 ## Output Format - Sentra XML Protocol
 
-**MANDATORY Structure**:
+**MANDATORY Structure** (with sender_id attribute):
 
-\`\`\`xml
-<sentra-persona>
+<sentra-persona sender_id="USER_QQ_ID">
   <summary>一句话核心概括，捕捉此人的本质特征（15-30字）</summary>
   
   <traits>
@@ -420,7 +441,6 @@ Study the user across these dimensions:
     <update_priority>下次重点关注的分析维度</update_priority>
   </metadata>
 </sentra-persona>
-\`\`\`
 
 ## Quality Standards
 
@@ -503,10 +523,9 @@ Apply these strategies systematically:
 
 ## Output Format - Sentra XML Protocol
 
-**MANDATORY Structure with Evolution Tracking**:
+**MANDATORY Structure with Evolution Tracking** (with sender_id attribute):
 
-\`\`\`xml
-<sentra-persona>
+<sentra-persona sender_id="USER_QQ_ID">
   <summary>更新后的核心概括（可能比之前更精准）（15-30字）</summary>
   
   <traits>
@@ -569,7 +588,6 @@ Apply these strategies systematically:
     <update_priority>下次重点关注的分析维度</update_priority>
   </metadata>
 </sentra-persona>
-\`\`\`
 
 ## Quality Standards
 
@@ -613,7 +631,7 @@ Apply these strategies systematically:
   /**
    * 构建分析提示词 - 使用 Sentra XML 协议
    */
-  _buildAnalysisPrompt(recentMessages, existingPersona, isFirstTime) {
+  _buildAnalysisPrompt(recentMessages, existingPersona, isFirstTime, senderId) {
     let prompt = '';
 
     if (isFirstTime) {
@@ -623,19 +641,9 @@ Apply these strategies systematically:
       prompt += '# Persona Refinement\n\n';
       prompt += '**Existing Persona (XML Format)**:\n\n';
       
-      // 将已有画像转为 XML 格式显示
-      if (existingPersona && typeof existingPersona === 'string') {
-        // 如果已经是 XML 字符串，直接使用
-        prompt += '```xml\n';
-        prompt += existingPersona;
-        prompt += '\n```\n\n';
-      } else {
-        // 如果是对象（兼容旧数据），显示为简化版
-        prompt += '```\n';
-        prompt += JSON.stringify(existingPersona, null, 2);
-        prompt += '\n```\n\n';
-        prompt += '**Note**: Previous persona was in JSON format. Please output in XML format as specified.\n\n';
-      }
+      // 将已有画像转为 XML 格式显示（直接 XML，不用代码块）
+      prompt += this._serializePersonaToXML(existingPersona, senderId);
+      prompt += '\n\n';
       
       prompt += '**New Conversation Data**:\n\n';
     }
@@ -672,7 +680,7 @@ Apply these strategies systematically:
   /**
    * 解析 LLM 返回的画像数据 - 使用 Sentra XML 协议
    */
-  _parsePersonaResponse(content) {
+  async _parsePersonaResponse(content, senderId) {
     try {
       // 提取 <sentra-persona> 块
       let personaXML = extractXMLTag(content, 'sentra-persona');
@@ -686,17 +694,32 @@ Apply these strategies systematically:
       }
       
       if (!personaXML) {
+        // 使用格式修复器尝试修复为 <sentra-persona>
+        const enableRepair = (process.env.ENABLE_FORMAT_REPAIR || 'true') === 'true';
+        if (enableRepair && typeof content === 'string' && content.trim()) {
+          try {
+            const repaired = await repairSentraPersona(content, { agent: this.agent, model: process.env.REPAIR_AI_MODEL });
+            const extracted = extractXMLTag(repaired, 'sentra-persona');
+            if (extracted) {
+              personaXML = extracted;
+            }
+          } catch (repairErr) {
+            logger.warn('画像格式修复失败', repairErr);
+          }
+        }
+      }
+      
+      if (!personaXML) {
         logger.error('解析画像失败：未找到 <sentra-persona> 标签');
-        
-        // 降级方案：尝试 JSON 解析（兼容旧版本）
-        return this._parseLegacyJSON(content);
+        return null;
       }
       
       // 解析 XML 结构
       const persona = this._parsePersonaXML(personaXML);
       
-      // 保存原始 XML 用于后续优化
-      persona._raw_xml = `<sentra-persona>\n${personaXML}\n</sentra-persona>`;
+      // 保存原始 XML 用于后续优化（包含 sender_id 属性）
+      const senderIdAttr = senderId ? ` sender_id="${senderId}"` : '';
+      persona._raw_xml = `<sentra-persona${senderIdAttr}>\n${personaXML}\n</sentra-persona>`;
       
       return persona;
       
@@ -802,7 +825,7 @@ Apply these strategies systematically:
    */
   _extractTagsWithAttributes(xmlBlock, tagName) {
     const results = [];
-    const regex = new RegExp(`<${tagName}([^>]*)>([\\s\\S]*?)<\\/${tagName}>`, 'g');
+    const regex = new RegExp(`<${tagName}([^>]*)>([\\s\\S]*?)<\/${tagName}>`, 'g');
     let match;
     
     while ((match = regex.exec(xmlBlock)) !== null) {
@@ -826,23 +849,94 @@ Apply these strategies systematically:
     return results;
   }
   
-  /**
-   * 兼容旧版本 JSON 格式的解析
-   */
-  _parseLegacyJSON(content) {
-    try {
-      const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) || 
-                       content.match(/```\s*([\s\S]*?)\s*```/);
-      
-      const jsonStr = jsonMatch ? jsonMatch[1] : content;
-      const parsed = JSON.parse(jsonStr);
-      
-      logger.warn('使用了旧版 JSON 格式，建议迁移到 XML 格式');
-      return parsed;
-      
-    } catch (error) {
-      throw new Error(`JSON 解析也失败: ${error.message}`);
+  _serializePersonaToXML(persona, senderId) {
+    if (!persona) return '<sentra-persona></sentra-persona>';
+    // 若已是 XML 字符串或对象内含原始XML，则直接返回
+    if (typeof persona === 'string' && persona.includes('<sentra-persona')) {
+      return persona;
     }
+    if (persona._raw_xml && typeof persona._raw_xml === 'string') {
+      return persona._raw_xml;
+    }
+    
+    const lines = [];
+    const s = (v) => (v == null ? '' : String(v));
+    const arr = (a) => Array.isArray(a) ? a : (a ? [a] : []);
+    const items = (a) => arr(a).map(x => (typeof x === 'object' && x && (x.content || x.attributes)) ? x : { content: s(x), attributes: {} }).filter(i => i.content);
+    const attrs = (o, ks) => {
+      const ps = [];
+      ks.forEach(k => { if (o && o[k]) ps.push(`${k}="${o[k]}"`); });
+      return ps.length ? ' ' + ps.join(' ') : '';
+    };
+    
+    const senderAttr = senderId ? ` sender_id="${s(senderId)}"` : '';
+    lines.push(`<sentra-persona${senderAttr}>`);
+    
+    if (persona.summary) lines.push(`  <summary>${s(persona.summary)}</summary>`);
+    
+    if (persona.traits) {
+      lines.push('  <traits>');
+      const pers = items(persona.traits.personality);
+      if (pers.length) {
+        lines.push('    <personality>');
+        pers.forEach(t => lines.push(`      <trait${attrs(t.attributes, ['status'])}>${s(t.content)}</trait>`));
+        lines.push('    </personality>');
+      }
+      if (persona.traits.communication_style) {
+        lines.push(`    <communication_style>${s(persona.traits.communication_style)}</communication_style>`);
+      }
+      const ints = items(persona.traits.interests);
+      if (ints.length) {
+        lines.push('    <interests>');
+        ints.forEach(it => lines.push(`      <interest${attrs(it.attributes, ['category', 'status'])}>${s(it.content)}</interest>`));
+        lines.push('    </interests>');
+      }
+      const pats = items(persona.traits.behavioral_patterns);
+      if (pats.length) {
+        lines.push('    <behavioral_patterns>');
+        pats.forEach(p => lines.push(`      <pattern${attrs(p.attributes, ['type', 'trend'])}>${s(p.content)}</pattern>`));
+        lines.push('    </behavioral_patterns>');
+      }
+      const ep = persona.traits.emotional_profile || {};
+      if (ep.dominant_emotions || ep.sensitivity_areas || ep.expression_tendency) {
+        lines.push('    <emotional_profile>');
+        if (ep.dominant_emotions) lines.push(`      <dominant_emotions>${s(ep.dominant_emotions)}</dominant_emotions>`);
+        if (ep.sensitivity_areas) lines.push(`      <sensitivity_areas>${s(ep.sensitivity_areas)}</sensitivity_areas>`);
+        if (ep.expression_tendency) lines.push(`      <expression_tendency>${s(ep.expression_tendency)}</expression_tendency>`);
+        lines.push('    </emotional_profile>');
+      }
+      lines.push('  </traits>');
+    }
+    
+    const insights = items(persona.insights);
+    if (insights.length) {
+      lines.push('  <insights>');
+      insights.forEach(ins => lines.push(`    <insight${attrs(ins.attributes, ['evidence', 'novelty'])}>${s(ins.content)}</insight>`));
+      lines.push('  </insights>');
+    }
+    
+    if (persona.evolution) {
+      const changes = items(persona.evolution.changes);
+      const cont = persona.evolution.continuity;
+      if (changes.length || cont) {
+        lines.push('  <evolution>');
+        changes.forEach(c => lines.push(`    <change${attrs(c.attributes, ['type'])}>${s(c.content)}</change>`));
+        if (cont) lines.push(`    <continuity>${s(cont)}</continuity>`);
+        lines.push('  </evolution>');
+      }
+    }
+    
+    const md = persona.metadata || {};
+    if (md.confidence || md.data_quality || md.update_priority) {
+      lines.push('  <metadata>');
+      if (md.confidence) lines.push(`    <confidence>${s(md.confidence)}</confidence>`);
+      if (md.data_quality) lines.push(`    <data_quality>${s(md.data_quality)}</data_quality>`);
+      if (md.update_priority) lines.push(`    <update_priority>${s(md.update_priority)}</update_priority>`);
+      lines.push('  </metadata>');
+    }
+    
+    lines.push('</sentra-persona>');
+    return lines.join('\n');
   }
 
   /**
@@ -859,6 +953,88 @@ Apply these strategies systematically:
     return '  (画像数据异常)';
   }
 
+  _mergePersonaWithStats(userData, newPersona) {
+    const now = Date.now();
+    if (!userData.personaStats) {
+      userData.personaStats = { traits: {}, interests: {}, patterns: {}, insights: {} };
+    }
+    const stats = userData.personaStats;
+    const readItems = (arr) => {
+      if (!arr) return [];
+      return arr.map(x => {
+        if (typeof x === 'object' && x && (x.content || x.attributes)) return { content: (x.content || '').trim(), attributes: x.attributes || {} };
+        return { content: String(x || '').trim(), attributes: {} };
+      }).filter(it => it.content);
+    };
+    const decay = (w, lastSeen) => {
+      const delta = Math.max(0, now - (lastSeen || now));
+      if (!this.halfLifeMs || this.halfLifeMs <= 0) return w;
+      const factor = Math.pow(0.5, delta / this.halfLifeMs);
+      return w * factor;
+    };
+    const bump = (base, attrs) => {
+      let b = base;
+      const s = attrs?.status;
+      if (s === 'confirmed') b += 0.2;
+      else if (s === 'refined') b += 0.1;
+      else if (s === 'new') b += 0.15;
+      const n = attrs?.novelty;
+      if (n === 'new') b += 0.15;
+      const t = attrs?.trend;
+      if (t === '增强') b += 0.1;
+      return b;
+    };
+    const normKey = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 200);
+    const decayAll = (map) => {
+      Object.keys(map).forEach(k => { map[k].weight = decay(map[k].weight || 0, map[k].lastSeen); });
+    };
+    const upsert = (map, item, base) => {
+      const key = normKey(item.content);
+      const prev = map[key] || { content: item.content, attributes: item.attributes || {}, firstSeen: now, lastSeen: now, count: 0, weight: 0 };
+      const w = decay(prev.weight || 0, prev.lastSeen) + bump(base, item.attributes || {});
+      map[key] = { content: item.content, attributes: item.attributes || {}, firstSeen: prev.firstSeen, lastSeen: now, count: (prev.count || 0) + 1, weight: w };
+    };
+    const topN = (map, n) => {
+      return Object.values(map)
+        .sort((a, b) => (b.weight - a.weight) || (b.lastSeen - a.lastSeen) || (b.count - a.count))
+        .slice(0, Math.max(0, n))
+        .map(v => ({ content: v.content, attributes: v.attributes }));
+    };
+    decayAll(stats.traits);
+    decayAll(stats.interests);
+    decayAll(stats.patterns);
+    decayAll(stats.insights);
+    const personality = readItems(newPersona?.traits?.personality);
+    const interests = readItems(newPersona?.traits?.interests);
+    const patterns = readItems(newPersona?.traits?.behavioral_patterns);
+    const insights = readItems(newPersona?.insights);
+    personality.forEach(it => upsert(stats.traits, it, 1.0));
+    interests.forEach(it => upsert(stats.interests, it, 1.0));
+    patterns.forEach(it => upsert(stats.patterns, it, 1.0));
+    insights.forEach(it => upsert(stats.insights, it, 1.0));
+    const result = {
+      summary: (newPersona?.summary && newPersona.summary.trim()) || (userData.persona?.summary || ''),
+      traits: {
+        personality: topN(stats.traits, this.maxTraits),
+        communication_style: (newPersona?.traits?.communication_style && newPersona.traits.communication_style.trim()) || (userData.persona?.traits?.communication_style || ''),
+        interests: topN(stats.interests, this.maxInterests),
+        behavioral_patterns: topN(stats.patterns, this.maxPatterns),
+        emotional_profile: {
+          dominant_emotions: newPersona?.traits?.emotional_profile?.dominant_emotions || userData.persona?.traits?.emotional_profile?.dominant_emotions || '',
+          sensitivity_areas: newPersona?.traits?.emotional_profile?.sensitivity_areas || userData.persona?.traits?.emotional_profile?.sensitivity_areas || '',
+          expression_tendency: newPersona?.traits?.emotional_profile?.expression_tendency || userData.persona?.traits?.emotional_profile?.expression_tendency || ''
+        }
+      },
+      insights: topN(stats.insights, this.maxInsights),
+      metadata: {
+        confidence: newPersona?.metadata?.confidence || userData.persona?.metadata?.confidence || newPersona?.confidence || userData.persona?.confidence || 'medium',
+        data_quality: newPersona?.metadata?.data_quality || userData.persona?.metadata?.data_quality || '',
+        update_priority: newPersona?.metadata?.update_priority || userData.persona?.metadata?.update_priority || ''
+      }
+    };
+    return result;
+  }
+
   /**
    * 获取用户画像（供 AI 使用）
    */
@@ -868,144 +1044,12 @@ Apply these strategies systematically:
   }
 
   /**
-   * 格式化画像为文本（用于插入到 AI 上下文）- 丰富版
+   * 格式化画像为 Sentra XML（用于插入到 AI 上下文）
    */
   formatPersonaForContext(senderId) {
     const persona = this.getPersona(senderId);
     if (!persona) return '';
-
-    let text = '# 用户画像 (User Persona)\n\n';
-    
-    // 核心概述
-    if (persona.summary) {
-      text += `## 核心概述\n\n`;
-      text += `> ${persona.summary}\n\n`;
-    }
-
-    // 特征分析
-    if (persona.traits) {
-      text += '## 特征分析\n\n';
-      
-      // 性格特征
-      if (persona.traits.personality) {
-        text += '### 性格特征\n';
-        const personalities = Array.isArray(persona.traits.personality) 
-          ? persona.traits.personality 
-          : persona.traits.personality.map(t => typeof t === 'object' ? t.content : t);
-        personalities.forEach(trait => {
-          const content = typeof trait === 'object' ? trait.content : trait;
-          const status = typeof trait === 'object' && trait.attributes?.status 
-            ? ` [${trait.attributes.status}]` 
-            : '';
-          text += `- ${content}${status}\n`;
-        });
-        text += '\n';
-      }
-      
-      // 沟通风格
-      if (persona.traits.communication_style) {
-        text += '### 沟通风格\n';
-        text += `${persona.traits.communication_style}\n\n`;
-      }
-      
-      // 兴趣领域
-      if (persona.traits.interests && persona.traits.interests.length > 0) {
-        text += '### 兴趣领域\n';
-        persona.traits.interests.forEach(interest => {
-          const content = typeof interest === 'object' ? interest.content : interest;
-          const category = typeof interest === 'object' && interest.attributes?.category 
-            ? `**${interest.attributes.category}**: ` 
-            : '';
-          const status = typeof interest === 'object' && interest.attributes?.status 
-            ? ` (状态: ${interest.attributes.status})` 
-            : '';
-          text += `- ${category}${content}${status}\n`;
-        });
-        text += '\n';
-      }
-      
-      // 行为模式
-      if (persona.traits.behavioral_patterns && persona.traits.behavioral_patterns.length > 0) {
-        text += '### 行为模式\n';
-        persona.traits.behavioral_patterns.forEach(pattern => {
-          const content = typeof pattern === 'object' ? pattern.content : pattern;
-          const type = typeof pattern === 'object' && pattern.attributes?.type 
-            ? `[${pattern.attributes.type}] ` 
-            : '';
-          const trend = typeof pattern === 'object' && pattern.attributes?.trend 
-            ? ` (趋势: ${pattern.attributes.trend})` 
-            : '';
-          text += `- ${type}${content}${trend}\n`;
-        });
-        text += '\n';
-      }
-      
-      // 情感画像
-      if (persona.traits.emotional_profile) {
-        text += '### 情感画像\n';
-        const ep = persona.traits.emotional_profile;
-        if (ep.dominant_emotions) {
-          text += `- **主导情绪**: ${ep.dominant_emotions}\n`;
-        }
-        if (ep.sensitivity_areas) {
-          text += `- **敏感点**: ${ep.sensitivity_areas}\n`;
-        }
-        if (ep.expression_tendency) {
-          text += `- **表达倾向**: ${ep.expression_tendency}\n`;
-        }
-        text += '\n';
-      }
-    }
-
-    // 关键洞察
-    if (persona.insights && persona.insights.length > 0) {
-      text += '## 关键洞察\n\n';
-      persona.insights.forEach((insight, idx) => {
-        const content = typeof insight === 'object' ? insight.content : insight;
-        const evidence = typeof insight === 'object' && insight.attributes?.evidence 
-          ? ` \n  *证据: ${insight.attributes.evidence}*` 
-          : '';
-        const novelty = typeof insight === 'object' && insight.attributes?.novelty 
-          ? ` [${insight.attributes.novelty}]` 
-          : '';
-        text += `${idx + 1}. ${content}${novelty}${evidence}\n`;
-      });
-      text += '\n';
-    }
-    
-    // 演变记录（如果存在）
-    if (persona.evolution) {
-      text += '## 演变记录\n\n';
-      if (persona.evolution.changes && persona.evolution.changes.length > 0) {
-        text += '### 最近变化\n';
-        persona.evolution.changes.forEach(change => {
-          const content = typeof change === 'object' ? change.content : change;
-          const type = typeof change === 'object' && change.attributes?.type 
-            ? `[${change.attributes.type}] ` 
-            : '';
-          text += `- ${type}${content}\n`;
-        });
-        text += '\n';
-      }
-      if (persona.evolution.continuity) {
-        text += '### 稳定特征\n';
-        text += `${persona.evolution.continuity}\n\n`;
-      }
-    }
-    
-    // 元数据
-    const metadata = persona.metadata || {};
-    const confidence = metadata.confidence || persona.confidence || 'medium';
-    text += `---\n\n`;
-    text += `*画像可信度: ${confidence}*`;
-    
-    if (metadata.data_quality) {
-      text += ` | *数据质量: ${metadata.data_quality}*`;
-    }
-    
-    text += '\n';
-
-    return text;
+    return this._serializePersonaToXML(persona, senderId);
   }
 
   /**
@@ -1044,7 +1088,7 @@ Apply these strategies systematically:
       version: userData.version,
       createdAt: userData.createdAt,
       updatedAt: userData.updatedAt,
-      nextUpdateIn: this.updateInterval - (userData.messageCount - userData.lastUpdateCount)
+      nextUpdateIn: Math.max(0, this.minMessagesForUpdate - (userData.messageCount - userData.lastUpdateCount))
     };
   }
 

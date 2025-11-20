@@ -4,10 +4,30 @@
  */
 
 import { z } from 'zod';
-import { jsonToXMLLines, extractXMLTag, extractAllXMLTags, extractFilesFromContent, valueToXMLString, USER_QUESTION_FILTER_KEYS } from './xmlUtils.js';
+import { jsonToXMLLines, extractXMLTag, extractAllXMLTags, extractFilesFromContent, valueToXMLString, USER_QUESTION_FILTER_KEYS, extractFullXMLTag, extractAllFullXMLTags } from './xmlUtils.js';
 import { createLogger } from './logger.js';
 
 const logger = createLogger('ProtocolUtils');
+
+// 内部：将 JS 值渲染为参数 <parameter> 的文本
+function paramValueToText(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  // 对象/数组：用 JSON 字符串表达
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+// 内部：将 args 对象渲染为 XML 子元素（用于 <args> 或 <sentra-tools><parameter>）
+function argsObjectToParamEntries(args = {}) {
+  const out = [];
+  try {
+    for (const [k, v] of Object.entries(args || {})) {
+      out.push({ name: k, value: paramValueToText(v) });
+    }
+  } catch {}
+  return out;
+}
 
 /**
  * 反转义 HTML 实体（处理模型可能输出的转义字符）
@@ -33,33 +53,135 @@ const ResourceSchema = z.object({
 
 const SentraResponseSchema = z.object({
   textSegments: z.array(z.string()),
-  resources: z.array(ResourceSchema).optional().default([])
+  resources: z.array(ResourceSchema).optional().default([]),
+  replyMode: z.enum(['none', 'first', 'always']).optional().default('none'),
+  mentions: z.array(z.union([z.string(), z.number()])).optional().default([])
 });
 
 /**
- * 构建<sentra-result>块（工具执行结果）
+ * 构建 Sentra XML 块：
+ * - tool_result -> <sentra-result>
+ * - tool_result_group -> <sentra-result-group> 包含多个 <sentra-result>
  */
 export function buildSentraResultBlock(ev) {
-  const xmlLines = ['<sentra-result>'];
-  
-  // 递归遍历整个ev对象，自动生成XML
-  xmlLines.push(...jsonToXMLLines(ev, 1, 0, 8));
-  
-  // 提取文件路径
+  try {
+    const type = ev?.type;
+    if (type === 'tool_result') {
+      return buildSingleResultXML(ev);
+    }
+    if (type === 'tool_result_group' && Array.isArray(ev?.events)) {
+      const gid = ev.groupId != null ? String(ev.groupId) : '';
+      const gsize = Number(ev.groupSize || ev.events.length);
+      const order = Array.isArray(ev.orderIndices) ? ev.orderIndices.join(',') : '';
+      const lines = [
+        `<sentra-result-group group_id="${gid}" group_size="${gsize}" order="${order}">`
+      ];
+      for (const item of ev.events) {
+        const xml = buildSingleResultXML(item);
+        const indented = xml.split('\n').map(l => `  ${l}`).join('\n');
+        lines.push(indented);
+      }
+      // 附带一次性提取到的文件资源（可选）
+      const files = extractFilesFromContent(ev);
+      if (files.length > 0) {
+        lines.push('  <extracted_files>');
+        for (const f of files) {
+          lines.push('    <file>');
+          lines.push(`      <key>${f.key}</key>`);
+          lines.push(`      <path>${valueToXMLString(f.path, 0)}</path>`);
+          lines.push('    </file>');
+        }
+        lines.push('  </extracted_files>');
+      }
+      lines.push('</sentra-result-group>');
+      return lines.join('\n');
+    }
+    // 忽略 args/args_group：保持兼容但不生成对应标签
+    // 兜底：旧行为（用完整 ev 填充 <sentra-result>），保证向后兼容
+    const xmlLines = ['<sentra-result>'];
+    xmlLines.push(...jsonToXMLLines(ev, 1, 0, 8));
+    const files = extractFilesFromContent(ev);
+    if (files.length > 0) {
+      xmlLines.push('  <extracted_files>');
+      files.forEach(f => {
+        xmlLines.push('    <file>');
+        xmlLines.push(`      <key>${f.key}</key>`);
+        xmlLines.push(`      <path>${valueToXMLString(f.path, 0)}</path>`);
+        xmlLines.push('    </file>');
+      });
+      xmlLines.push('  </extracted_files>');
+    }
+    xmlLines.push('</sentra-result>');
+    return xmlLines.join('\n');
+  } catch (e) {
+    // 发生异常时返回 JSON 包裹，避免终止主流程
+    try { return `<sentra-result>${valueToXMLString(JSON.stringify(ev), 0)}</sentra-result>`; } catch { return '<sentra-result></sentra-result>'; }
+  }
+}
+
+// 内部：构建单个 <sentra-result>（统一字段）
+function buildSingleResultXML(ev) {
+  const aiName = ev?.aiName || '';
+  const step = Number(ev?.plannedStepIndex ?? ev?.stepIndex ?? 0);
+  const reason = Array.isArray(ev?.reason) ? ev.reason.join('; ') : (ev?.reason || '');
+  const success = ev?.result?.success !== false;
+  const code = ev?.result?.code || '';
+  const provider = ev?.result?.provider || ev?.toolMeta?.provider || '';
+  const args = ev?.args || {};
+  const data = (ev?.result && (ev.result.data !== undefined ? ev.result.data : ev.result)) || null;
+
+  const lines = [`<sentra-result step="${step}" tool="${aiName}" success="${success}">`];
+  if (reason) lines.push(`  <reason>${valueToXMLString(reason, 0)}</reason>`);
+  // 同时输出 <aiName> 以便旧解析器兼容
+  lines.push(`  <aiName>${valueToXMLString(aiName, 0)}</aiName>`);
+  // args：同时提供结构化与 JSON 两种表示
+  try {
+    lines.push('  <args>');
+    lines.push(...jsonToXMLLines(args, 2, 0, 6));
+    lines.push('  </args>');
+  } catch {}
+  try {
+    const jsonText = JSON.stringify(args || {});
+    lines.push(`  <arguments>${valueToXMLString(jsonText, 0)}</arguments>`);
+  } catch {}
+  // result：拆为 success/code/data/provider
+  lines.push('  <result>');
+  lines.push(`    <success>${success}</success>`);
+  if (code) lines.push(`    <code>${valueToXMLString(code, 0)}</code>`);
+  if (provider) lines.push(`    <provider>${valueToXMLString(provider, 0)}</provider>`);
+  try {
+    lines.push('    <data>');
+    lines.push(...jsonToXMLLines(data, 3, 0, 6));
+    lines.push('    </data>');
+  } catch {
+    try { lines.push(`    <data>${valueToXMLString(JSON.stringify(data), 0)}</data>`); } catch {}
+  }
+  lines.push('  </result>');
+
+  // 附带便于调试的元信息（可选）
+  if (Array.isArray(ev?.dependsOn) || Array.isArray(ev?.dependedBy)) {
+    lines.push('  <dependencies>');
+    if (Array.isArray(ev.dependsOn)) lines.push(`    <depends_on>${ev.dependsOn.join(',')}</depends_on>`);
+    if (Array.isArray(ev.dependedBy)) lines.push(`    <depended_by>${ev.dependedBy.join(',')}</depended_by>`);
+    if (ev.dependsNote) lines.push(`    <note>${valueToXMLString(ev.dependsNote, 0)}</note>`);
+    lines.push('  </dependencies>');
+  }
+
+  // 附带文件路径（可选）
   const files = extractFilesFromContent(ev);
   if (files.length > 0) {
-    xmlLines.push('  <extracted_files>');
-    files.forEach(f => {
-      xmlLines.push('    <file>');
-      xmlLines.push(`      <key>${f.key}</key>`);
-      xmlLines.push(`      <path>${valueToXMLString(f.path, 0)}</path>`);
-      xmlLines.push('    </file>');
-    });
-    xmlLines.push('  </extracted_files>');
+    lines.push('  <extracted_files>');
+    for (const f of files) {
+      lines.push('    <file>');
+      lines.push(`      <key>${f.key}</key>`);
+      lines.push(`      <path>${valueToXMLString(f.path, 0)}</path>`);
+      lines.push('    </file>');
+    }
+    lines.push('  </extracted_files>');
   }
-  
-  xmlLines.push('</sentra-result>');
-  return xmlLines.join('\n');
+
+  lines.push('</sentra-result>');
+  return lines.join('\n');
 }
 
 /**
@@ -144,6 +266,24 @@ export function parseSentraResponse(response) {
     logger.debug('无 <resources> 块或为空');
   }
   
+  // 提取 <send> 指令（回复/艾特控制）
+  const sendBlock = extractXMLTag(responseContent, 'send');
+  let replyMode = 'none';
+  let mentions = [];
+  try {
+    if (sendBlock && sendBlock.trim()) {
+      const rm = (extractXMLTag(sendBlock, 'reply_mode') || '').trim().toLowerCase();
+      if (rm === 'first' || rm === 'always') replyMode = rm; // 默认为 none
+      const mentionsBlock = extractXMLTag(sendBlock, 'mentions');
+      if (mentionsBlock) {
+        const ids = extractAllXMLTags(mentionsBlock, 'id') || [];
+        mentions = ids.map(v => (v || '').trim()).filter(Boolean);
+      }
+    }
+  } catch (e) {
+    logger.warn(`<send> 解析失败: ${e.message}`);
+  }
+  
   // 提取 <emoji> 标签（可选，最多一个）
   const emojiBlock = extractXMLTag(responseContent, 'emoji');
   let emoji = null;
@@ -167,7 +307,7 @@ export function parseSentraResponse(response) {
   
   // 最终验证整体结构
   try {
-    const validated = SentraResponseSchema.parse({ textSegments, resources });
+    const validated = SentraResponseSchema.parse({ textSegments, resources, replyMode, mentions });
     //logger.success('协议验证通过');
     //logger.debug(`textSegments: ${validated.textSegments.length} 段`);
     //logger.debug(`resources: ${validated.resources.length} 个`);
@@ -178,7 +318,7 @@ export function parseSentraResponse(response) {
     return validated;
   } catch (e) {
     logger.error('协议验证失败', e.errors);
-    const fallback = { textSegments: textSegments.length > 0 ? textSegments : [response], resources: [] };
+    const fallback = { textSegments: textSegments.length > 0 ? textSegments : [response], resources: [], replyMode, mentions };
     if (emoji) fallback.emoji = emoji;  // 即使验证失败也保留 emoji
     return fallback;
   }
@@ -204,10 +344,10 @@ export function convertHistoryToMCPFormat(historyConversations) {
     }
     
     if (msg.role === 'user') {
-      // 检查是否包含 <sentra-result>
-      const resultContent = extractXMLTag(msg.content, 'sentra-result');
-      
-      if (resultContent) {
+      // 优先检查是否包含 <sentra-result-group>
+      const groupBlocks = extractAllXMLTags(msg.content, 'sentra-result-group') || [];
+      const singleResultContent = extractXMLTag(msg.content, 'sentra-result');
+      if ((groupBlocks.length > 0) || singleResultContent) {
         // 提取待回复上下文和用户问题
         const pendingMessages = extractXMLTag(msg.content, 'sentra-pending-messages');
         const userQuestion = extractXMLTag(msg.content, 'sentra-user-question');
@@ -229,39 +369,115 @@ export function convertHistoryToMCPFormat(historyConversations) {
           });
         }
         
-        // 再提取 <sentra-result> 中的工具调用信息（assistant 消息在后）
-        const aiName = extractXMLTag(resultContent, 'aiName');
-        const argsContent = extractXMLTag(resultContent, 'args');
-        
-        if (aiName && argsContent) {
-          // 构建标准的 <sentra-tools> 块（不带注释）
-          const toolsXML = buildSentraToolsFromArgs(aiName, argsContent);
-          
-          mcpConversation.push({
-            role: 'assistant',
-            content: toolsXML
-          });
-          convertedCount++;
-          logger.debug(`转换工具调用: ${aiName}`);
+        // 将历史中的结果转换为 MCP 工具调用 + 结果块：
+        // - 若存在 group：仅遍历组内 <sentra-result> 以生成 <invoke>，并保留完整的 <sentra-result-group> 作为结果块
+        // - 否则：处理所有单个 <sentra-result>，并保留其完整块
+        const invocations = [];
+        const seen = new Set();
+        let resultBlocksFull = [];
+        if (groupBlocks.length > 0) {
+          // 完整组块（保留属性和外层标签）
+          const groupFullBlocks = extractAllFullXMLTags(msg.content, 'sentra-result-group') || [];
+          resultBlocksFull = groupFullBlocks;
+          for (const gb of groupBlocks) {
+            const items = extractAllXMLTags(gb, 'sentra-result') || [];
+            for (const it of items) {
+              const aiName = extractXMLTag(it, 'aiName');
+              let argsJSONText = extractXMLTag(it, 'arguments');
+              let argsContent = argsJSONText || extractXMLTag(it, 'args');
+              if (aiName && argsContent != null) {
+                const key = `${aiName}|${String(argsJSONText || argsContent).trim()}`;
+                if (seen.has(key)) continue; // 去重
+                seen.add(key);
+                invocations.push({ aiName, argsContent });
+                logger.debug(`转换工具调用: ${aiName}`);
+              }
+            }
+          }
+        } else if (singleResultContent) {
+          // 完整的单结果块（可能存在多个）
+          const singlesFull = extractAllFullXMLTags(msg.content, 'sentra-result') || [];
+          resultBlocksFull = singlesFull;
+          const singlesContents = extractAllXMLTags(msg.content, 'sentra-result') || [];
+          for (const it of singlesContents) {
+            const aiName = extractXMLTag(it, 'aiName');
+            let argsJSONText = extractXMLTag(it, 'arguments');
+            let argsContent = argsJSONText || extractXMLTag(it, 'args');
+            if (aiName && argsContent != null) {
+              const key = `${aiName}|${String(argsJSONText || argsContent).trim()}`;
+              if (!seen.has(key)) {
+                seen.add(key);
+                invocations.push({ aiName, argsContent });
+                logger.debug(`转换工具调用: ${aiName}`);
+              }
+            }
+          }
+        }
+
+        // 组合单条 assistant 内容：<sentra-tools>（如有） + 结果完整块（如有）
+        let combined = '';
+        if (invocations.length > 0) {
+          const toolsXML = buildSentraToolsBatch(invocations);
+          combined = toolsXML;
+          convertedCount += invocations.length;
+        }
+        if (resultBlocksFull.length > 0) {
+          const resultsXML = resultBlocksFull.join('\n\n');
+          combined = combined ? `${combined}\n\n${resultsXML}` : resultsXML;
+        }
+        if (combined) {
+          mcpConversation.push({ role: 'assistant', content: combined });
         }
       } else {
-        // 没有 <sentra-result>，直接保留原始 user 消息
+        // 没有 <sentra-result>：仍需生成一条 assistant，明确“未调用工具”的判定，便于AI判断
         mcpConversation.push(msg);
+
+        // 从 <sentra-user-question> 提取 summary/text 作为原因
+        const uq = extractXMLTag(msg.content, 'sentra-user-question') || '';
+        let reasonText = extractXMLTag(uq, 'summary') || extractXMLTag(uq, 'text') || '';
+        reasonText = (reasonText || '').trim();
+        if (!reasonText) reasonText = 'No tool required for this message.';
+
+        // 构建占位 tools：name="none"，标记 no_tool=true 与原因
+        const toolsXML = [
+          '<sentra-tools>',
+          '  <invoke name="none">',
+          '    <parameter name="no_tool">true</parameter>',
+          `    <parameter name="reason">${valueToXMLString(reasonText, 0)}</parameter>`,
+          '  </invoke>',
+          '</sentra-tools>'
+        ].join('\n');
+
+        // 构建占位 result：tool="none"，code=NO_TOOL，data含原因
+        const ev = {
+          type: 'tool_result',
+          aiName: 'none',
+          plannedStepIndex: 0,
+          reason: reasonText,
+          result: {
+            success: true,
+            code: 'NO_TOOL',
+            provider: 'system',
+            data: { no_tool: true, reason: reasonText }
+          }
+        };
+        const resultXML = buildSentraResultBlock(ev);
+
+        const combined = `${toolsXML}\n\n${resultXML}`;
+        mcpConversation.push({ role: 'assistant', content: combined });
       }
     }
     
     if (msg.role === 'assistant') {
-      // 检查是否包含 <sentra-response>（旧格式）
-      const hasResponse = msg.content.includes('<sentra-response>');
-      
-      if (hasResponse) {
-        // 旧格式的 assistant 消息，跳过（因为我们已经从 user 的 sentra-result 中提取了工具调用）
+      // 跳过旧格式响应与已存在的工具调用，避免重复
+      const hasResponse = typeof msg.content === 'string' && msg.content.includes('<sentra-response>');
+      const hasTools = typeof msg.content === 'string' && msg.content.includes('<sentra-tools>');
+      if (hasResponse || hasTools) {
         skippedCount++;
         continue;
-      } else {
-        // 新格式或纯文本，保留
-        mcpConversation.push(msg);
       }
+      // 纯文本或其他说明类 assistant 内容，保留
+      mcpConversation.push(msg);
     }
   }
   
@@ -278,21 +494,71 @@ export function convertHistoryToMCPFormat(historyConversations) {
  */
 function buildSentraToolsFromArgs(aiName, argsContent) {
   const xmlLines = ['<sentra-tools>'];
-  
   xmlLines.push(`  <invoke name="${aiName}">`);
-  
-  // 解析 <args> 中的参数
-  // 假设 argsContent 是 XML 格式，如 <city>上海</city><queryType>forecast</queryType>
-  const paramMatches = argsContent.matchAll(/<(\w+)>([^<]*)<\/\1>/g);
-  
-  for (const match of paramMatches) {
-    const paramName = match[1];
-    const paramValue = match[2];
-    xmlLines.push(`    <parameter name="${paramName}">${paramValue}</parameter>`);
+
+  // 优先尝试解析为 JSON（来自 <arguments> 或 <args> 中的 JSON）
+  let parsed = null;
+  try {
+    const trimmed = String(argsContent || '').trim();
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      parsed = JSON.parse(trimmed);
+    }
+  } catch {}
+
+  if (parsed && typeof parsed === 'object') {
+    const entries = argsObjectToParamEntries(parsed);
+    for (const p of entries) {
+      xmlLines.push(`    <parameter name="${p.name}">${valueToXMLString(p.value, 0)}</parameter>`);
+    }
+  } else {
+    // 回退：从简单 XML 解析 <key>value</key> 对
+    try {
+      const re = /<([a-zA-Z0-9_\-]+)>([^<]*)<\/\1>/g;
+      const matches = String(argsContent || '').matchAll(re);
+      for (const m of matches) {
+        const paramName = m[1];
+        const paramValue = m[2];
+        xmlLines.push(`    <parameter name="${paramName}">${paramValue}</parameter>`);
+      }
+    } catch {}
   }
-  
+
   xmlLines.push('  </invoke>');
   xmlLines.push('</sentra-tools>');
-  
+  return xmlLines.join('\n');
+}
+
+// 批量构建 <sentra-tools>，包含多个 <invoke>
+function buildSentraToolsBatch(items) {
+  const xmlLines = ['<sentra-tools>'];
+  for (const { aiName, argsContent } of items) {
+    xmlLines.push(`  <invoke name="${aiName}">`);
+    // 与 buildSentraToolsFromArgs 相同的解析逻辑：优先 JSON，回退 XML
+    let parsed = null;
+    try {
+      const trimmed = String(argsContent || '').trim();
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        parsed = JSON.parse(trimmed);
+      }
+    } catch {}
+    if (parsed && typeof parsed === 'object') {
+      const entries = argsObjectToParamEntries(parsed);
+      for (const p of entries) {
+        xmlLines.push(`    <parameter name="${p.name}">${valueToXMLString(p.value, 0)}</parameter>`);
+      }
+    } else {
+      try {
+        const re = /<([a-zA-Z0-9_\-]+)>([^<]*)<\/\1>/g;
+        const matches = String(argsContent || '').matchAll(re);
+        for (const m of matches) {
+          const paramName = m[1];
+          const paramValue = m[2];
+          xmlLines.push(`    <parameter name="${paramName}">${paramValue}</parameter>`);
+        }
+      } catch {}
+    }
+    xmlLines.push('  </invoke>');
+  }
+  xmlLines.push('</sentra-tools>');
   return xmlLines.join('\n');
 }

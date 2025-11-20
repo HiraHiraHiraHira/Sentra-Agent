@@ -37,6 +37,11 @@ export interface AdapterConfig {
   enableStream: boolean;
   streamPort: number;
   streamIncludeRaw: boolean;
+  streamSkipAnimatedEmoji: boolean;
+  // message stream RPC retry
+  streamRpcRetryEnabled: boolean;
+  streamRpcRetryIntervalMs: number;
+  streamRpcRetryMaxAttempts: number;
   connectMode: 'forward' | 'reverse';
 }
 
@@ -72,6 +77,10 @@ export function loadConfig(): AdapterConfig {
     enableStream: envBool(process.env.ENABLE_STREAM, false),
     streamPort: toInt(process.env.STREAM_PORT, 6702),
     streamIncludeRaw: envBool(process.env.STREAM_INCLUDE_RAW, false),
+    streamSkipAnimatedEmoji: envBool(process.env.STREAM_SKIP_ANIMATED_EMOJI, false),
+    streamRpcRetryEnabled: envBool(process.env.STREAM_RPC_RETRY_ENABLED, true),
+    streamRpcRetryIntervalMs: toInt(process.env.STREAM_RPC_RETRY_INTERVAL_MS, 10000),
+    streamRpcRetryMaxAttempts: toInt(process.env.STREAM_RPC_RETRY_MAX_ATTEMPTS, 60),
     connectMode: ((process.env.NAPCAT_MODE || process.env.MODE || 'forward').toLowerCase() === 'reverse') ? 'reverse' : 'forward',
   };
 }

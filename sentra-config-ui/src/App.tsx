@@ -1,231 +1,527 @@
 import { useState, useEffect } from 'react';
-import {
-  AppBar,
-  Button,
-  Toolbar,
-  Window,
-  WindowContent,
-  WindowHeader,
-  TextField,
-  MenuList,
-  MenuListItem,
-  Separator,
-  Hourglass,
-  Avatar,
-} from 'react95';
 import { ConfigData, ModuleConfig, PluginConfig, EnvVariable } from './types/config';
 import { fetchConfigs, saveModuleConfig, savePluginConfig } from './services/api';
-import styles from './App.module.css';
-
-// 详细的插件和模块图标映射
-const ICON_MAP: Record<string, string> = {
-  // === 核心模块 ===
-  'sentra-prompts': 'psychology',
-  'sentra-mcp': 'hub',
-  'sentra-emo': 'sentiment_satisfied',
-  'sentra-adapter': 'settings_ethernet',
-  'sentra-rag': 'storage',
-  
-  // === 搜索类 ===
-  'bilibili_search': 'video_library',
-  'github_repo_info': 'code',
-  'image_search': 'image_search',
-  'realtime_search': 'search',
-  'web_parser': 'article',
-  
-  // === 图像类 ===
-  'image_draw': 'brush',
-  'image_vision_edit': 'auto_fix_high',
-  'image_vision_read': 'visibility',
-  'web_render_image': 'screenshot',
-  
-  // === 视频/音频类 ===
-  'av_transcribe': 'subtitles',
-  'video_generate': 'videocam',
-  'video_vision_read': 'video_library',
-  'custom_music_card': 'library_music',
-  'music_card': 'music_note',
-  'suno_music_generate': 'audio_file',
-  
-  // === QQ 消息类 ===
-  'qq_message_emojilike': 'favorite',
-  'qq_message_recall': 'undo',
-  'qq_message_getfriendhistory': 'chat_bubble',
-  'qq_message_getgrouphistory': 'forum',
-  'qq_message_recentcontact': 'recent_actors',
-  
-  // === QQ 群组类 ===
-  'qq_group_info': 'groups',
-  'qq_group_list': 'group',
-  'qq_group_memberinfo': 'person',
-  'qq_group_memberlist': 'people',
-  'qq_group_ban': 'block',
-  'qq_group_kick': 'person_remove',
-  'qq_group_leave': 'exit_to_app',
-  'qq_group_setcard': 'badge',
-  'qq_group_setname': 'edit',
-  'qq_group_wholeban': 'voice_over_off',
-  
-  // === QQ 用户类 ===
-  'qq_user_deletefriend': 'person_remove',
-  'qq_user_getprofilelike': 'thumb_up',
-  'qq_user_sendlike': 'favorite_border',
-  'qq_user_sendpoke': 'touch_app',
-  
-  // === QQ 账户类 ===
-  'qq_account_getqqprofile': 'account_circle',
-  'qq_account_setqqavatar': 'account_box',
-  'qq_account_setqqprofile': 'settings',
-  'qq_account_setselflongnick': 'description',
-  'qq_avatar_get': 'face',
-  
-  // === QQ 系统类 ===
-  'qq_system_getmodelshow': 'phone_android',
-  'qq_system_getuserstatus': 'online_prediction',
-  'qq_system_setdiyonlinestatus': 'edit_note',
-  'qq_system_setmodelshow': 'devices',
-  'qq_system_setonlinestatus': 'circle',
-  
-  // === 文档/文件类 ===
-  'document_read': 'description',
-  'write_file': 'save',
-  'mindmap_gen': 'account_tree',
-  'html_to_app': 'web',
-  
-  // === 系统类 ===
-  'system_info': 'computer',
-  'desktop_control': 'desktop_windows',
-  'weather': 'wb_sunny',
-  
-  // === 默认 ===
-  'default': 'folder',
-};
-
+import { MacWindow } from './components/MacWindow';
+import { Dock } from './components/Dock';
+import { MenuBar } from './components/MenuBar';
+import { EnvEditor } from './components/EnvEditor';
+import { Launchpad } from './components/Launchpad';
+import { TerminalWindow } from './components/TerminalWindow';
+import { getIconForType, getDisplayName } from './utils/icons';
+import { IoCloseOutline, IoRemoveOutline, IoSquareOutline, IoCopyOutline, IoCubeOutline, IoTerminalOutline } from 'react-icons/io5';
+import { ToastContainer, ToastMessage } from './components/Toast';
+import { Dialog } from './components/Dialog';
+import { Menu, Item, Submenu, useContextMenu } from 'react-contexify';
+import 'react-contexify/dist/ReactContexify.css';
+import './styles/macOS.css';
 
 type FileItem = (ModuleConfig | PluginConfig) & { type: 'module' | 'plugin' };
 type DeskWindow = {
   id: string;
   file: FileItem;
-  pos: { x: number; y: number };
+  pos?: { x: number; y: number };
   z: number;
   minimized: boolean;
   editedVars: EnvVariable[];
   maximized?: boolean;
-  restorePos?: { x: number; y: number };
 };
+
+type TerminalWin = {
+  id: string;
+  title: string;
+  processId: string;
+  appKey: string;
+  pos: { x: number; y: number };
+  z: number;
+  minimized: boolean;
+};
+
+type DesktopIcon = {
+  id: string;
+  name: string;
+  icon: React.ReactNode;
+  position: { x: number; y: number };
+  onClick: () => void;
+};
+
+const DEFAULT_WALLPAPERS = [
+  '/wallpapers/desert.jpg',
+  '/wallpapers/yosemite.jpg',
+  '/wallpapers/lake.jpg',
+  '/wallpapers/coast.jpg',
+];
+
+const BING_WALLPAPER = 'https://bing.biturl.top/?resolution=1920&format=image&index=0&mkt=zh-CN';
+
+const SOLID_COLORS = [
+  { name: '纯黑', value: '#000000' },
+  { name: '纯白', value: '#ffffff' },
+  { name: '深灰', value: '#333333' },
+  { name: '午夜蓝', value: '#1a1a2e' },
+];
 
 function App() {
   const [loading, setLoading] = useState(true);
   const [configData, setConfigData] = useState<ConfigData | null>(null);
-  const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
   const [saving, setSaving] = useState(false);
-  const [startMenuOpen, setStartMenuOpen] = useState(false);
-  const [currentTime, setCurrentTime] = useState(new Date());
-  const [draggedIcon, setDraggedIcon] = useState<FileItem | null>(null);
-  const [isDraggingWindow, setIsDraggingWindow] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [openWindows, setOpenWindows] = useState<DeskWindow[]>([]);
-  const [activeWinId, setActiveWinId] = useState<string | null>(null);
-  const [draggingWinId, setDraggingWinId] = useState<string | null>(null);
-  const [zNext, setZNext] = useState(1000);
-  const [aboutOpen, setAboutOpen] = useState(false);
-  // 图标排序（拖拽放置）
-  const [iconOrder, setIconOrder] = useState<string[]>([]);
 
-  useEffect(() => {
-    loadConfigs();
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // 初始化读取本地图标顺序
-  useEffect(() => {
+  // Initialize from localStorage
+  const [openWindows, setOpenWindows] = useState<DeskWindow[]>(() => {
     try {
-      const saved = localStorage.getItem('sentra_config_ui_icon_order');
+      const saved = localStorage.getItem('sentra_open_windows');
       if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) setIconOrder(parsed);
+        const parsedWindows = JSON.parse(saved);
+        if (Array.isArray(parsedWindows) && parsedWindows.length > 0) {
+          const width = 600;
+          const height = 400;
+          const centerPos = {
+            x: Math.max(0, (window.innerWidth - width) / 2),
+            y: Math.max(40, (window.innerHeight - height) / 2)
+          };
+          return parsedWindows.map((w: any) => {
+            const p = w.pos || { x: 0, y: 0 };
+            const invalid =
+              p.x == null || p.y == null ||
+              p.x < 20 || p.y < 30 ||
+              p.x > window.innerWidth - 100 || p.y > window.innerHeight - 100;
+            return invalid ? { ...w, pos: centerPos } : w;
+          });
+        }
       }
-    } catch {}
-  }, []);
-
-  // 持久化图标顺序
-  useEffect(() => {
-    try {
-      localStorage.setItem('sentra_config_ui_icon_order', JSON.stringify(iconOrder));
-    } catch {}
-  }, [iconOrder]);
-
-  const loadConfigs = async () => {
-    try {
-      setLoading(true);
-      const data = await fetchConfigs();
-      setConfigData(data);
-    } catch (error) {
-      alert('❌ 加载配置失败\n\n' + (error instanceof Error ? error.message : '未知错误'));
-    } finally {
-      setLoading(false);
+    } catch (e) {
+      console.error('Failed to load saved windows', e);
     }
+    return [];
+  });
+
+  const [activeWinId, setActiveWinId] = useState<string | null>(null);
+
+  const [zNext, setZNext] = useState(() => {
+    if (openWindows.length > 0) {
+      return Math.max(...openWindows.map(w => w.z || 1000), 1000) + 1;
+    }
+    return 1000;
+  });
+
+  const [launchpadOpen, setLaunchpadOpen] = useState(false);
+
+  // Wallpapers state
+  const [wallpapers, setWallpapers] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('sentra_custom_wallpapers');
+      if (saved) {
+        const custom = JSON.parse(saved);
+        return [...DEFAULT_WALLPAPERS, ...custom];
+      }
+    } catch { }
+    return DEFAULT_WALLPAPERS;
+  });
+
+  const [currentWallpaper, setCurrentWallpaper] = useState<string>(() => {
+    return localStorage.getItem('sentra_current_wallpaper') || DEFAULT_WALLPAPERS[0];
+  });
+
+  const [dockFavorites, setDockFavorites] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('sentra_dock_favorites');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [brightness, setBrightness] = useState(() => {
+    const saved = localStorage.getItem('sentra_brightness');
+    return saved ? Number(saved) : 100;
+  });
+
+  const [wallpaperFit, setWallpaperFit] = useState<'cover' | 'contain'>(() => {
+    const saved = localStorage.getItem('sentra_wallpaper_fit');
+    return (saved as 'cover' | 'contain') || 'cover';
+  });
+
+  const [wallpaperInterval, setWallpaperInterval] = useState<number>(0); // 0 = off
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // Theme state
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    return (localStorage.getItem('sentra_theme') as 'light' | 'dark') || 'dark';
+  });
+
+  // Dialog state
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogConfig, setDialogConfig] = useState({
+    title: '',
+    message: '',
+    onConfirm: () => { },
+    type: 'info' as 'info' | 'warning' | 'error'
+  });
+
+  const { show } = useContextMenu({ id: 'desktop-menu' });
+
+  const addToast = (type: ToastMessage['type'], title: string, message?: string) => {
+    const id = Math.random().toString(36).substr(2, 9);
+    setToasts(prev => [...prev, { id, type, title, message }]);
   };
 
-  const getIconForFile = (file: FileItem): string => {
-    const name = file.name.toLowerCase().replace(/[-_]/g, '');
-    
-    // 精确匹配
-    for (const [key, icon] of Object.entries(ICON_MAP)) {
-      const normalizedKey = key.toLowerCase().replace(/[-_]/g, '');
-      if (name === normalizedKey || name.includes(normalizedKey)) {
-        return icon;
-      }
-    }
-    
-    return ICON_MAP.default;
+  const removeToast = (id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  const getItemKey = (file: FileItem) => `${file.type}:${file.name}`;
-
-  const reorderIcons = (srcKey: string, destKey: string, all: FileItem[]) => {
-    setIconOrder(prev => {
-      // 以现有顺序为基准，补足缺失项
-      const base = prev && prev.length > 0 ? [...prev] : all.map(getItemKey);
-      const currentKeys = new Set(all.map(getItemKey));
-      // 清理不存在的旧键
-      const cleaned = base.filter(k => currentKeys.has(k));
-      // 确保所有新项都在列表中（追加到末尾）
-      for (const k of currentKeys) if (!cleaned.includes(k)) cleaned.push(k);
-
-      const from = cleaned.indexOf(srcKey);
-      const to = cleaned.indexOf(destKey);
-      if (from === -1 || to === -1 || from === to) return cleaned;
-      const [moved] = cleaned.splice(from, 1);
-      cleaned.splice(to, 0, moved);
-      return cleaned;
+  const toggleTheme = () => {
+    setTheme(prev => {
+      const newTheme = prev === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('sentra_theme', newTheme);
+      return newTheme;
     });
   };
 
-  const handleIconClick = (item: FileItem, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setSelectedFile(item);
+  // Terminal windows state
+  const [terminalWindows, setTerminalWindows] = useState<TerminalWin[]>([]);
+  const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null);
+
+  const handleRunBootstrap = async () => {
+    const existing = terminalWindows.find(t => t.appKey === 'bootstrap');
+    if (existing) {
+      if (existing.minimized) {
+        setTerminalWindows(prev => prev.map(t => t.id === existing.id ? { ...t, minimized: false } : t));
+      }
+      bringTerminalToFront(existing.id);
+      return;
+    }
+    try {
+      const response = await fetch('http://localhost:7245/api/scripts/bootstrap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ args: [] }),
+      });
+      const data = await response.json();
+
+      if (data.success && data.processId) {
+        const id = `terminal-${Date.now()}`;
+        const terminal: TerminalWin = {
+          id,
+          title: 'Bootstrap Script',
+          processId: data.processId,
+          appKey: 'bootstrap',
+          pos: { x: window.innerWidth / 2 - 350, y: window.innerHeight / 2 - 250 },
+          z: zNext + 1,
+          minimized: false,
+        };
+        setTerminalWindows(prev => [...prev, terminal]);
+        setZNext(z => z + 1);
+        setActiveTerminalId(id);
+      }
+    } catch (error) {
+      addToast('error', 'Failed to run bootstrap script', error instanceof Error ? error.message : undefined);
+    }
+  };
+
+  const handleRunStart = async () => {
+    const existing = terminalWindows.find(t => t.appKey === 'start');
+    if (existing) {
+      if (existing.minimized) {
+        setTerminalWindows(prev => prev.map(t => t.id === existing.id ? { ...t, minimized: false } : t));
+      }
+      bringTerminalToFront(existing.id);
+      return;
+    }
+    try {
+      const response = await fetch('http://localhost:7245/api/scripts/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ args: [] }),
+      });
+      const data = await response.json();
+
+      if (data.success && data.processId) {
+        const id = `terminal-${Date.now()}`;
+        const terminal: TerminalWin = {
+          id,
+          title: 'Start Script',
+          processId: data.processId,
+          appKey: 'start',
+          pos: { x: window.innerWidth / 2 - 350, y: window.innerHeight / 2 - 250 },
+          z: zNext + 1,
+          minimized: false,
+        };
+        setTerminalWindows(prev => [...prev, terminal]);
+        setZNext(z => z + 1);
+        setActiveTerminalId(id);
+      }
+    } catch (error) {
+      addToast('error', 'Failed to run start script', error instanceof Error ? error.message : undefined);
+    }
+  };
+
+  const handleRunNapcatBuild = async () => {
+    const existing = terminalWindows.find(t => t.appKey === 'napcat');
+    if (existing) {
+      if (existing.minimized) {
+        setTerminalWindows(prev => prev.map(t => t.id === existing.id ? { ...t, minimized: false } : t));
+      }
+      bringTerminalToFront(existing.id);
+      return;
+    }
+    try {
+      const response = await fetch('http://localhost:7245/api/scripts/napcat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ args: ['build'] }),
+      });
+      const data = await response.json();
+
+      if (data.success && data.processId) {
+        const id = `terminal-${Date.now()}`;
+        const terminal: TerminalWin = {
+          id,
+          title: 'Napcat Build',
+          processId: data.processId,
+          appKey: 'napcat',
+          pos: { x: window.innerWidth / 2 - 350, y: window.innerHeight / 2 - 250 },
+          z: zNext + 1,
+          minimized: false,
+        };
+        setTerminalWindows(prev => [...prev, terminal]);
+        setZNext(z => z + 1);
+        setActiveTerminalId(id);
+      }
+    } catch (error) {
+      addToast('error', 'Failed to run Napcat build', error instanceof Error ? error.message : undefined);
+    }
+  };
+
+  const handleRunNapcatStart = async () => {
+    const existing = terminalWindows.find(t => t.appKey === 'napcat');
+    if (existing) {
+      if (existing.minimized) {
+        setTerminalWindows(prev => prev.map(t => t.id === existing.id ? { ...t, minimized: false } : t));
+      }
+      bringTerminalToFront(existing.id);
+      return;
+    }
+    try {
+      const response = await fetch('http://localhost:7245/api/scripts/napcat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ args: ['start'] }),
+      });
+      const data = await response.json();
+
+      if (data.success && data.processId) {
+        const id = `terminal-${Date.now()}`;
+        const terminal: TerminalWin = {
+          id,
+          title: 'Napcat Start',
+          processId: data.processId,
+          appKey: 'napcat',
+          pos: { x: window.innerWidth / 2 - 350, y: window.innerHeight / 2 - 250 },
+          z: zNext + 1,
+          minimized: false,
+        };
+        setTerminalWindows(prev => [...prev, terminal]);
+        setZNext(z => z + 1);
+        setActiveTerminalId(id);
+      }
+    } catch (error) {
+      addToast('error', 'Failed to start Napcat', error instanceof Error ? error.message : undefined);
+    }
+  };
+
+  const handleCloseTerminal = async (id: string) => {
+    const terminal = terminalWindows.find(t => t.id === id);
+    if (terminal) {
+      try {
+        await fetch(`http://localhost:7245/api/scripts/kill/${terminal.processId}`, { method: 'POST' });
+      } catch (e) {
+        console.error('Failed to kill process on close', e);
+      }
+    }
+    setTerminalWindows(prev => prev.filter(t => t.id !== id));
+    if (activeTerminalId === id) setActiveTerminalId(null);
+  };
+
+  const bringTerminalToFront = (id: string) => {
+    setTerminalWindows(prev => prev.map(t => t.id === id ? { ...t, z: zNext + 1 } : t));
+    setZNext(z => z + 1);
+    setActiveTerminalId(id);
+  };
+
+  // Desktop icons
+  const desktopIcons: DesktopIcon[] = [
+    {
+      id: 'bootstrap',
+      name: '安装板块依赖',
+      icon: <div style={{
+        width: 54,
+        height: 54,
+        background: 'linear-gradient(135deg, #34C759, #30B753)',
+        borderRadius: 12,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxShadow: '0 4px 12px rgba(52, 199, 89, 0.3)'
+      }}>
+        <IoCubeOutline size={28} color="white" />
+      </div>,
+      position: { x: 20, y: 80 },
+      onClick: handleRunBootstrap,
+    },
+    {
+      id: 'start',
+      name: '启动Sentra',
+      icon: <div style={{
+        width: 54,
+        height: 54,
+        background: 'linear-gradient(135deg, #007AFF, #0062CC)',
+        borderRadius: 12,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxShadow: '0 4px 12px rgba(0, 122, 255, 0.3)'
+      }}>
+        <IoTerminalOutline size={28} color="white" />
+      </div>,
+      position: { x: 20, y: 180 },
+      onClick: handleRunStart,
+    },
+    {
+      id: 'napcat-build',
+      name: 'NC构建SDK',
+      icon: <div style={{
+        width: 54,
+        height: 54,
+        background: 'linear-gradient(135deg, #9B59B6, #8E44AD)',
+        borderRadius: 12,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxShadow: '0 4px 12px rgba(155, 89, 182, 0.3)'
+      }}>
+        <IoCubeOutline size={28} color="white" />
+      </div>,
+      position: { x: 20, y: 280 },
+      onClick: handleRunNapcatBuild,
+    },
+    {
+      id: 'napcat-start',
+      name: '启动QQ适配器',
+      icon: <div style={{
+        width: 54,
+        height: 54,
+        background: 'linear-gradient(135deg, #16A085, #138D75)',
+        borderRadius: 12,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxShadow: '0 4px 12px rgba(22, 160, 133, 0.3)'
+      }}>
+        <IoTerminalOutline size={28} color="white" />
+      </div>,
+      position: { x: 20, y: 380 },
+      onClick: handleRunNapcatStart,
+    },
+  ];
+
+  // Wallpaper rotation
+  useEffect(() => {
+    if (wallpaperInterval > 0) {
+      const timer = setInterval(() => {
+        const currentIndex = wallpapers.indexOf(currentWallpaper);
+        const nextIndex = (currentIndex + 1) % wallpapers.length;
+        setCurrentWallpaper(wallpapers[nextIndex]);
+      }, wallpaperInterval * 1000);
+      return () => clearInterval(timer);
+    }
+  }, [wallpaperInterval, wallpapers, currentWallpaper]);
+
+  useEffect(() => {
+    loadConfigs();
+  }, []);
+
+  // Debounced persistence
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem('sentra_open_windows', JSON.stringify(openWindows));
+      } catch (e) {
+        console.error('Failed to save windows state', e);
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [openWindows]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      localStorage.setItem('sentra_dock_favorites', JSON.stringify(dockFavorites));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [dockFavorites]);
+
+  useEffect(() => {
+    localStorage.setItem('sentra_current_wallpaper', currentWallpaper);
+  }, [currentWallpaper]);
+
+  useEffect(() => {
+    localStorage.setItem('sentra_brightness', String(brightness));
+  }, [brightness]);
+
+  useEffect(() => {
+    localStorage.setItem('sentra_wallpaper_fit', wallpaperFit);
+  }, [wallpaperFit]);
+
+  const loadConfigs = async (silent = false) => {
+    try {
+      if (!silent) setLoading(true);
+      const data = await fetchConfigs();
+      setConfigData(data);
+
+      setOpenWindows(prev => prev.map(w => {
+        const isModule = w.file.type === 'module';
+        const found = isModule
+          ? data.modules.find(m => m.name === w.file.name)
+          : data.plugins.find(p => p.name === w.file.name);
+
+        if (found) {
+          return {
+            ...w,
+            file: { ...found, type: w.file.type }
+          };
+        }
+        return w;
+      }));
+
+    } catch (error) {
+      console.error('加载配置失败', error);
+    } finally {
+      if (!silent) setLoading(false);
+    }
   };
 
   const openWindow = (file: FileItem) => {
+    const existing = openWindows.find(w => w.file.name === file.name && w.file.type === file.type);
+    if (existing) {
+      if (existing.minimized) {
+        setOpenWindows(ws => ws.map(w => w.id === existing.id ? { ...w, minimized: false } : w));
+      }
+      bringToFront(existing.id);
+      return;
+    }
+
     const id = `w_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const defaultWidth = 650;
-    const defaultHeight = 520;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    // 打开默认居中
-    const pos = {
-      x: Math.max(8, Math.floor((vw - defaultWidth) / 2)),
-      y: Math.max(64, Math.floor((vh - defaultHeight) / 2))
-    };
+
+    const width = 600;
+    const height = 400;
+    const x = Math.max(0, (window.innerWidth - width) / 2);
+    const y = Math.max(40, (window.innerHeight - height) / 2);
+
     const win: DeskWindow = {
       id,
       file,
-      pos,
       z: zNext + 1,
       minimized: false,
       editedVars: file.variables ? [...file.variables] : [],
+      pos: { x, y }
     };
     setOpenWindows(ws => [...ws, win]);
     setZNext(z => z + 1);
@@ -235,85 +531,10 @@ function App() {
   const bringToFront = (id: string) => {
     setOpenWindows(ws => {
       const nextZ = zNext + 1;
-      const mapped = ws.map(w => (w.id === id ? { ...w, z: nextZ, minimized: false } : w));
-      return mapped;
+      return ws.map(w => (w.id === id ? { ...w, z: nextZ } : w));
     });
     setZNext(z => z + 1);
     setActiveWinId(id);
-  };
-
-  const handleIconDoubleClick = (file: FileItem) => {
-    openWindow(file);
-  };
-
-  const handleIconDragStart = (e: React.DragEvent, file: FileItem) => {
-    setDraggedIcon(file);
-    e.dataTransfer.effectAllowed = 'move';
-    try { e.dataTransfer.setData('text/plain', getItemKey(file)); } catch {}
-  };
-
-  const handleIconDragEnd = () => {
-    setDraggedIcon(null);
-  };
-
-  const handleWindowMouseDown = (e: React.MouseEvent, id: string) => {
-    const header = (e.target as HTMLElement).closest('.window-header');
-    bringToFront(id);
-    if (header) {
-      const w = openWindows.find(x => x.id === id);
-      if (!w) return;
-      if (w.maximized) return; // 最大化时不允许拖动
-      setIsDraggingWindow(true);
-      setDraggingWinId(id);
-      setDragStart({ x: e.clientX - w.pos.x, y: e.clientY - w.pos.y });
-    }
-  };
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (isDraggingWindow && draggingWinId) {
-        const grid = 8;
-        const rawX = e.clientX - dragStart.x;
-        const rawY = e.clientY - dragStart.y;
-        let nx = Math.round(rawX / grid) * grid;
-        let ny = Math.round(rawY / grid) * grid;
-        // 边界限制（留出 8px 边距与 64px 顶部任务栏空间）
-        const margin = 8;
-        const topBar = 64;
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
-        nx = Math.max(margin, Math.min(vw - 360, nx));
-        ny = Math.max(topBar, Math.min(vh - 160, ny));
-        setOpenWindows(ws => ws.map(w => (w.id === draggingWinId ? { ...w, pos: { x: nx, y: ny } } : w)));
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsDraggingWindow(false);
-      setDraggingWinId(null);
-      // 持久化当前窗口位置
-      if (draggingWinId) {
-        const w = openWindows.find(x => x.id === draggingWinId);
-        if (w) {
-          try { localStorage.setItem('sentra_config_ui_winpos_' + getItemKey(w.file), JSON.stringify(w.pos)); } catch {}
-        }
-      }
-    };
-
-    if (isDraggingWindow) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-    }
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDraggingWindow, dragStart]);
-
-  const handleDesktopClick = () => {
-    setSelectedFile(null);
-    setStartMenuOpen(false);
   };
 
   const handleClose = (id: string) => {
@@ -333,10 +554,10 @@ function App() {
       } else {
         await savePluginConfig(win.file.name, validVars);
       }
-      alert(`✅ 保存成功！\n\n文件: ${win.file.name}/.env\n配置项: ${validVars.length} 个`);
-      await loadConfigs();
+      addToast('success', '保存成功', `已更新 ${getDisplayName(win.file.name)} 配置`);
+      await loadConfigs(true);
     } catch (error) {
-      alert('❌ 保存失败\n\n' + (error instanceof Error ? error.message : '未知错误'));
+      addToast('error', '保存失败', error instanceof Error ? error.message : '未知错误');
     } finally {
       setSaving(false);
     }
@@ -352,429 +573,376 @@ function App() {
   };
 
   const handleAddVar = (id: string) => {
-    setOpenWindows(ws => ws.map(w => w.id === id ? { ...w, editedVars: [...w.editedVars, { key: '', value: '', comment: '' }] } : w));
+    setOpenWindows(ws => ws.map(w => w.id === id ? { ...w, editedVars: [...w.editedVars, { key: '', value: '', comment: '', isNew: true }] } : w));
   };
 
   const handleDeleteVar = (id: string, index: number) => {
-    if (confirm('确定要删除这个配置项吗？')) {
-      setOpenWindows(ws => ws.map(w => w.id === id ? { ...w, editedVars: w.editedVars.filter((_, i) => i !== index) } : w));
+    const win = openWindows.find(w => w.id === id);
+    if (!win) return;
+
+    const targetVar = win.editedVars[index];
+    if (!targetVar.isNew) {
+      addToast('error', '无法删除', '系统预设变量无法删除');
+      return;
     }
+
+    setOpenWindows(ws => ws.map(w => w.id === id ? { ...w, editedVars: w.editedVars.filter((_, i) => i !== index) } : w));
   };
 
-  const toggleMaximize = (id: string) => {
-    setOpenWindows(ws => ws.map(w => {
-      if (w.id !== id) return w;
-      if (w.maximized) {
-        const rp = w.restorePos || { x: 120, y: 80 };
-        return { ...w, maximized: false, pos: rp, restorePos: undefined };
-      } else {
-        return { ...w, maximized: true, restorePos: { ...w.pos } };
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    show({ event: e });
+  };
+
+  const handleWallpaperSelect = (wp: string) => {
+    setCurrentWallpaper(wp);
+  };
+
+  const handleUploadWallpaper = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) {
+        if (file.size > 5 * 1024 * 1024) {
+          addToast('error', '图片过大', '请上传小于 5MB 的图片');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const result = ev.target?.result as string;
+          if (result) {
+            const newWallpapers = [...wallpapers, result];
+            setWallpapers(newWallpapers);
+            setCurrentWallpaper(result);
+
+            const customOnly = newWallpapers.slice(DEFAULT_WALLPAPERS.length);
+            try {
+              localStorage.setItem('sentra_custom_wallpapers', JSON.stringify(customOnly));
+              addToast('success', '壁纸已添加');
+            } catch (e) {
+              addToast('error', '存储空间不足', '无法保存更多壁纸，请删除一些旧壁纸');
+            }
+          }
+        };
+        reader.readAsDataURL(file);
       }
-    }));
-    setActiveWinId(id);
-    bringToFront(id);
+    };
+    input.click();
+  };
+
+  const handleDeleteWallpaper = () => {
+    if (DEFAULT_WALLPAPERS.includes(currentWallpaper) || currentWallpaper === BING_WALLPAPER || SOLID_COLORS.some(c => c.value === currentWallpaper)) {
+      addToast('info', '无法删除', '系统默认壁纸无法删除');
+      return;
+    }
+
+    setDialogConfig({
+      title: '删除壁纸',
+      message: '确定要删除当前壁纸吗？此操作无法撤销。',
+      type: 'error',
+      onConfirm: () => {
+        const newWallpapers = wallpapers.filter(w => w !== currentWallpaper);
+        setWallpapers(newWallpapers);
+        setCurrentWallpaper(newWallpapers[newWallpapers.length - 1] || DEFAULT_WALLPAPERS[0]);
+
+        const customOnly = newWallpapers.slice(DEFAULT_WALLPAPERS.length);
+        localStorage.setItem('sentra_custom_wallpapers', JSON.stringify(customOnly));
+        addToast('success', '壁纸已删除');
+        setDialogOpen(false);
+      }
+    });
+    setDialogOpen(true);
   };
 
   const modules: FileItem[] = configData?.modules.map(m => ({ ...m, type: 'module' as const })) || [];
   const plugins: FileItem[] = configData?.plugins.map(p => ({ ...p, type: 'plugin' as const })) || [];
-  // 统一显示：模块在前，插件在后
   const allItems: FileItem[] = [...modules, ...plugins];
 
-  // 应用拖拽顺序
-  const orderedItems: FileItem[] = [...allItems].sort((a, b) => {
-    const aKey = getItemKey(a);
-    const bKey = getItemKey(b);
-    const ia = iconOrder.indexOf(aKey);
-    const ib = iconOrder.indexOf(bKey);
-    const fallbackA = allItems.indexOf(a);
-    const fallbackB = allItems.indexOf(b);
-    return (ia === -1 ? 100000 + fallbackA : ia) - (ib === -1 ? 100000 + fallbackB : ib);
-  });
+  const dockItems = [
+    {
+      id: 'launchpad',
+      name: '启动台',
+      icon: getIconForType('desktop', 'module'),
+      onClick: () => setLaunchpadOpen(true)
+    },
+    ...dockFavorites.map(favId => {
+      const item = allItems.find(i => `${i.type}-${i.name}` === favId);
+      if (!item) return null;
+      const isOpen = openWindows.some(w => w.file.name === item.name && w.file.type === item.type);
+      return {
+        id: favId,
+        name: getDisplayName(item.name),
+        icon: getIconForType(item.name, item.type),
+        isOpen,
+        onClick: () => openWindow(item),
+        onClose: isOpen ? () => {
+          const win = openWindows.find(w => w.file.name === item.name && w.file.type === item.type);
+          if (win) handleClose(win.id);
+        } : undefined,
+        onRemove: () => setDockFavorites(prev => prev.filter(id => id !== favId))
+      };
+    }).filter(Boolean) as any[],
+    ...openWindows
+      .filter(w => !dockFavorites.includes(`${w.file.type}-${w.file.name}`))
+      .map(w => ({
+        id: w.id,
+        name: getDisplayName(w.file.name),
+        icon: getIconForType(w.file.name, w.file.type),
+        isOpen: true,
+        onClick: () => {
+          if (w.minimized) {
+            setOpenWindows(ws => ws.map(x => x.id === w.id ? { ...x, minimized: false } : x));
+          }
+          bringToFront(w.id);
+        },
+        onClose: () => handleClose(w.id),
+        onRemove: undefined
+      }))
+  ];
 
-  const formatTime = (date: Date) => {
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    return `${hours}:${minutes}`;
-  };
+  const uniqueDockItems = dockItems.filter((item, index, self) =>
+    index === self.findIndex((t) => t.id === item.id)
+  );
 
   if (loading) {
     return (
-      <div className={styles.loadingScreen}>
-        <div className={styles.loadingBox}>
-          <Hourglass size={32} />
-          <div className={styles.loadingText}>正在加载配置文件...</div>
-          <div className={styles.loadingHint}>请稍候</div>
+      <div style={{
+        height: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#f5f5f7',
+        color: '#666'
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 24, marginBottom: 16 }}>Sentra Agent</div>
+          <div>正在启动系统...</div>
         </div>
       </div>
     );
   }
 
+  const isSolidColor = currentWallpaper.startsWith('#');
+
   return (
-    <div className={styles.desktop} onClick={handleDesktopClick}>
-        {/* 桌面图标区域 */}
-        <div className={styles.desktopIcons}
-             onDragOver={(e) => e.preventDefault()}>
-          {orderedItems.map((file) => (
-            <div
-              key={`${file.type}-${file.name}`}
-              className={`${styles.desktopIcon} ${
-                selectedFile?.name === file.name && selectedFile?.type === file.type
-                  ? styles.selected
-                  : ''
-              } ${draggedIcon?.name === file.name && draggedIcon?.type === file.type ? styles.dragging : ''}`}
-              onClick={(e) => handleIconClick(file, e)}
-              onDoubleClick={() => handleIconDoubleClick(file)}
-              draggable
-              onDragStart={(e) => handleIconDragStart(e, file)}
-              onDragEnd={handleIconDragEnd}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                const src = e.dataTransfer.getData('text/plain');
-                const dest = getItemKey(file);
-                if (src && dest && src !== dest) reorderIcons(src, dest, allItems);
-                setDraggedIcon(null);
-              }}
-            >
-              <span className={`material-icons ${styles.iconImage}`}>
-                {getIconForFile(file)}
-              </span>
-              <div className={styles.iconLabel}>
-                {file.name}
-                {!file.hasEnv && ' *'}
-              </div>
-            </div>
-          ))}
+    <div
+      className="desktop-container"
+      style={{
+        backgroundImage: isSolidColor ? 'none' : `url(${currentWallpaper})`,
+        backgroundColor: isSolidColor ? currentWallpaper : '#000',
+        backgroundSize: wallpaperFit,
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+        height: '100vh',
+        width: '100vw',
+        overflow: 'hidden',
+        position: 'relative',
+        filter: `brightness(${brightness}%)`
+      }}
+      onContextMenu={handleContextMenu}
+    >
+      <MenuBar
+        menus={[
+          {
+            label: '文件',
+            items: [
+              { label: '刷新配置', onClick: () => loadConfigs() },
+              { label: '关闭所有窗口', onClick: () => setOpenWindows([]) }
+            ]
+          },
+          {
+            label: '视图',
+            items: [
+              { label: '最小化所有', onClick: () => setOpenWindows(ws => ws.map(w => ({ ...w, minimized: true }))) },
+              { label: '恢复所有', onClick: () => setOpenWindows(ws => ws.map(w => ({ ...w, minimized: false }))) },
+              {
+                label: '切换壁纸', onClick: () => {
+                  const currentIndex = wallpapers.indexOf(currentWallpaper);
+                  const nextIndex = (currentIndex + 1) % wallpapers.length;
+                  setCurrentWallpaper(wallpapers[nextIndex]);
+                }
+              }
+            ]
+          },
+          {
+            label: '帮助',
+            items: [
+              { label: '关于 Sentra Agent', onClick: () => window.open('https://github.com/JustForSO/Sentra-Agent', '_blank') }
+            ]
+          }
+        ]}
+        onAppleClick={() => { }}
+        brightness={brightness}
+        setBrightness={setBrightness}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+      />
+
+      {openWindows.map(w => (
+        <MacWindow
+          key={w.id}
+          id={w.id}
+          title={`${getDisplayName(w.file.name)}`}
+          icon={getIconForType(w.file.name, w.file.type)}
+          zIndex={w.z}
+          isActive={activeWinId === w.id}
+          isMinimized={w.minimized}
+          initialPos={w.pos}
+          onClose={() => handleClose(w.id)}
+          onMinimize={() => {
+            setOpenWindows(ws => ws.map(x => x.id === w.id ? { ...x, minimized: true } : x));
+            setActiveWinId(null);
+          }}
+          onMaximize={() => { }}
+          onFocus={() => bringToFront(w.id)}
+          onMove={(x, y) => {
+            setOpenWindows(ws => ws.map(win => win.id === w.id ? { ...win, pos: { x, y } } : win));
+          }}
+        >
+          <EnvEditor
+            appName={getDisplayName(w.file.name)}
+            vars={w.editedVars}
+            onUpdate={(idx, field, val) => handleVarChange(w.id, idx, field, val)}
+            onAdd={() => handleAddVar(w.id)}
+            onDelete={(idx) => handleDeleteVar(w.id, idx)}
+            onSave={() => handleSave(w.id)}
+            saving={saving}
+            isExample={!w.file.hasEnv && w.file.hasExample}
+            theme={theme}
+          />
+        </MacWindow>
+      ))}
+
+      {/* Desktop Icons */}
+      {desktopIcons.map(icon => (
+        <div
+          key={icon.id}
+          style={{
+            position: 'absolute',
+            left: icon.position.x,
+            top: icon.position.y,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            cursor: 'pointer',
+            padding: '8px',
+            borderRadius: '8px',
+            transition: 'background 0.2s',
+            width: 80, // Fixed width for alignment
+          }}
+          onClick={icon.onClick}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'transparent';
+          }}
+        >
+          <div style={{ marginBottom: 4 }}>{icon.icon}</div>
+          <div style={{
+            fontSize: 12,
+            color: 'white',
+            textShadow: '0 1px 3px rgba(0,0,0,0.8)',
+            fontWeight: 500,
+            textAlign: 'center',
+            lineHeight: 1.2,
+          }}>
+            {icon.name}
+          </div>
         </div>
+      ))}
 
-        {/* 任务栏 */}
-        <AppBar style={{ zIndex: 200 }}>
-          <Toolbar className={styles.taskbar}>
-            <div className={styles.taskbarLeft}>
-              <Button
-                variant="menu"
-                size="sm"
-                active={startMenuOpen}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setStartMenuOpen(!startMenuOpen);
-                }}
-                style={{ fontWeight: 'bold', fontSize: 13 }}
-              >
-                <Avatar
-                  size={20}
-                  style={{ marginRight: 4 }}
-                  src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%23f00' width='16' height='16'/%3E%3Cpath fill='%23ff0' d='M0,0 L8,8 L0,16 Z'/%3E%3Cpath fill='%230f0' d='M8,8 L16,0 L16,16 Z'/%3E%3C/svg%3E"
-                />
-                开始
-              </Button>
+      {/* Terminal Windows */}
+      {terminalWindows.map(terminal => (
+        <MacWindow
+          key={terminal.id}
+          id={terminal.id}
+          title={terminal.title}
+          icon={<span style={{ fontSize: '16px', display: 'flex', alignItems: 'center' }}>{terminal.title.includes('Bootstrap') ? <IoCubeOutline /> : <IoTerminalOutline />}</span>}
+          initialPos={terminal.pos}
+          zIndex={terminal.z}
+          isActive={activeTerminalId === terminal.id}
+          isMinimized={terminal.minimized}
+          onClose={() => handleCloseTerminal(terminal.id)}
+          onMinimize={() => {
+            setTerminalWindows(prev => prev.map(w => w.id === terminal.id ? { ...w, minimized: true } : w));
+          }}
+          onMaximize={() => { }}
+          onFocus={() => bringTerminalToFront(terminal.id)}
+          onMove={(x, y) => {
+            setTerminalWindows(prev => prev.map(w => w.id === terminal.id ? { ...w, pos: { x, y } } : w));
+          }}
+        >
+          <TerminalWindow
+            processId={terminal.processId}
+          />
+        </MacWindow>
+      ))}
 
-              {openWindows.map(w => (
-                <Button
-                  key={w.id}
-                  size="sm"
-                  active={activeWinId === w.id && !w.minimized}
-                  style={{ fontSize: 11 }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (w.minimized) {
-                      bringToFront(w.id);
-                    } else {
-                      // 最小化
-                      setOpenWindows(ws => ws.map(x => x.id === w.id ? { ...x, minimized: true } : x));
-                      if (activeWinId === w.id) setActiveWinId(null);
-                    }
-                  }}
-                >
-                  <span className="material-icons" style={{ fontSize: 14, marginRight: 4 }}>
-                    {w.file.type === 'module' ? 'folder_special' : 'extension'}
-                  </span>
-                  {w.file.name}
-                </Button>
-              ))}
-            </div>
+      <Launchpad
+        isOpen={launchpadOpen}
+        onClose={() => setLaunchpadOpen(false)}
+        items={allItems.map(item => ({
+          name: item.name,
+          type: item.type,
+          onClick: () => {
+            openWindow(item);
+            const key = `${item.type}-${item.name}`;
+            if (!dockFavorites.includes(key)) {
+              setDockFavorites(prev => [...prev, key]);
+            }
+          }
+        }))}
+      />
 
-            <div className={styles.taskbarRight}>
-              <div className={styles.statusItem}>
-                <span className="material-icons" style={{ fontSize: 14 }}>folder</span>
-                {modules.length + plugins.length}
-              </div>
-              <div className={styles.statusItem}>
-                <span className="material-icons" style={{ fontSize: 14 }}>folder_special</span>
-                {modules.length}
-              </div>
-              <div className={styles.statusItem}>
-                <span className="material-icons" style={{ fontSize: 14 }}>extension</span>
-                {plugins.length}
-              </div>
-              <Separator orientation="vertical" />
-              <div className={styles.statusItem}>
-                <span className="material-icons" style={{ fontSize: 14 }}>volume_up</span>
-              </div>
-              <div className={`${styles.statusItem} ${styles.clock}`}>
-                <span className="material-icons" style={{ fontSize: 14 }}>schedule</span>
-                {formatTime(currentTime)}
-              </div>
-            </div>
-          </Toolbar>
-        </AppBar>
+      <Dock items={uniqueDockItems} />
 
-        {/* 开始菜单 */}
-        {startMenuOpen && (
-          <div className={styles.startMenu} onClick={(e) => e.stopPropagation()}>
-            <Window>
-              <WindowHeader style={{ background: '#000080', color: '#fff' }}>
-                <span style={{ fontWeight: 'bold' }}>Sentra Agent</span>
-              </WindowHeader>
-              <WindowContent style={{ padding: 0, background: '#c0c0c0' }}>
-                <MenuList style={{ background: '#c0c0c0' }}>
-                  <MenuListItem
-                    onClick={() => {
-                      window.location.reload();
-                      setStartMenuOpen(false);
-                    }}
-                  >
-                    <span className="material-icons" style={{ fontSize: 16, marginRight: 8 }}>refresh</span>
-                    刷新配置
-                  </MenuListItem>
-                  <MenuListItem
-                    onClick={() => {
-                      // 名称排序
-                      const sorted = [...orderedItems].sort((a, b) => a.name.localeCompare(b.name));
-                      setIconOrder(sorted.map(getItemKey));
-                      setStartMenuOpen(false);
-                    }}
-                  >
-                    <span className="material-icons" style={{ fontSize: 16, marginRight: 8 }}>sort_by_alpha</span>
-                    按名称整理图标
-                  </MenuListItem>
-                  <MenuListItem
-                    onClick={() => {
-                      setAboutOpen(true);
-                      setStartMenuOpen(false);
-                    }}
-                  >
-                    <span className="material-icons" style={{ fontSize: 16, marginRight: 8 }}>info</span>
-                    关于
-                  </MenuListItem>
-                  <Separator />
-                  <MenuListItem
-                    onClick={() => {
-                      if (confirm('确定要关闭配置管理器吗？')) {
-                        window.close();
-                      }
-                      setStartMenuOpen(false);
-                    }}
-                  >
-                    <span className="material-icons" style={{ fontSize: 16, marginRight: 8 }}>power_settings_new</span>
-                    关闭
-                  </MenuListItem>
-                </MenuList>
-              </WindowContent>
-            </Window>
-          </div>
-        )}
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
 
-        {/* 多窗口：配置编辑器 */}
-        {openWindows.filter(w => !w.minimized).map(w => (
-          <div 
-            key={w.id}
-            className={styles.editorWindow}
-            style={{
-              left: w.maximized ? 8 : w.pos.x,
-              top: w.maximized ? 48 : w.pos.y,
-              width: w.maximized ? 'calc(100vw - 16px)' as any : 650,
-              height: w.maximized ? 'calc(100vh - 64px)' as any : 'auto',
-              maxHeight: w.maximized ? 'calc(100vh - 64px)' as any : '80vh',
-              resize: w.maximized ? 'none' : 'both',
-              cursor: isDraggingWindow && draggingWinId === w.id ? 'grabbing' : 'default',
-              boxShadow: 'none',
-              zIndex: w.z
-            }}
-            onClick={(e) => { e.stopPropagation(); bringToFront(w.id); }}
-            onMouseDown={(e) => handleWindowMouseDown(e, w.id)}
-          >
-            <Window>
-              <WindowHeader 
-                className="window-header"
-                style={{ 
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
-                  alignItems: 'center',
-                  cursor: 'grab',
-                  background: (activeWinId === w.id) ? '#000080' : '#808080',
-                  color: '#fff'
-                }}
-                onDoubleClick={() => toggleMaximize(w.id)}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span className="material-icons" style={{ fontSize: 16 }}>
-                    {w.file.type === 'module' ? 'folder_special' : 'extension'}
-                  </span>
-                  {w.file.name} - .env 配置文件
-                </span>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <Button size="sm" onClick={() => setOpenWindows(ws => ws.map(x => x.id === w.id ? { ...x, minimized: true } : x))}>_</Button>
-                  <Button size="sm" onClick={() => toggleMaximize(w.id)}>{w.maximized ? '[ ]' : '□'}</Button>
-                  <Button size="sm" onClick={() => handleClose(w.id)}>X</Button>
+      <Dialog
+        isOpen={dialogOpen}
+        title={dialogConfig.title}
+        message={dialogConfig.message}
+        onConfirm={dialogConfig.onConfirm}
+        onCancel={() => setDialogOpen(false)}
+        type={dialogConfig.type}
+        confirmText="删除"
+      />
+
+      <Menu id="desktop-menu" theme="light" animation="scale">
+        <Submenu label="切换壁纸">
+          {wallpapers.map((wp, i) => (
+            <Item key={i} onClick={() => handleWallpaperSelect(wp)}>
+              壁纸 {i + 1}
+            </Item>
+          ))}
+          <Item onClick={() => handleWallpaperSelect(BING_WALLPAPER)}>Bing 每日壁纸</Item>
+          <Submenu label="纯色背景">
+            {SOLID_COLORS.map(c => (
+              <Item key={c.name} onClick={() => handleWallpaperSelect(c.value)}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 12, height: 12, background: c.value, border: '1px solid #ddd' }} />
+                  {c.name}
                 </div>
-              </WindowHeader>
-              <Toolbar className={styles.toolbar}>
-                <Button size="sm" onClick={() => handleAddVar(w.id)}>
-                  <span className="material-icons" style={{ fontSize: 14, marginRight: 4 }}>add</span>
-                  新增
-                </Button>
-                <Button size="sm" primary onClick={() => handleSave(w.id)} disabled={saving}>
-                  <span className="material-icons" style={{ fontSize: 14, marginRight: 4 }}>save</span>
-                  {saving ? '保存中...' : '保存'}
-                </Button>
-                <Button size="sm" onClick={() => handleClose(w.id)}>
-                  <span className="material-icons" style={{ fontSize: 14, marginRight: 4 }}>close</span>
-                  关闭
-                </Button>
-                <Separator orientation="vertical" />
-                <span className={styles.toolbarInfo}>
-                  {w.editedVars.length} 个配置项
-                </span>
-              </Toolbar>
-              <WindowContent className={styles.editorContent} style={{ maxHeight: w.maximized ? 'calc(100vh - 200px)' : undefined }}>
-                {w.editedVars.length === 0 ? (
-                  <div className={styles.emptyState}>
-                    <div className={styles.emptyIcon}>
-                      <span className="material-icons" style={{ fontSize: 64 }}>description</span>
-                    </div>
-                    <div className={styles.emptyText}>配置文件为空</div>
-                    <div className={styles.emptyHint}>点击上方"新增"按钮添加配置项</div>
-                  </div>
-                ) : (
-                  w.editedVars.map((v, idx) => (
-                    <div key={idx} className={styles.configBlock}>
-                      <div className={styles.codePreview}>
-                        {v.comment && (
-                          <>
-                            <span className={styles.codeComment}># {v.comment}</span>
-                            <br />
-                          </>
-                        )}
-                        <span className={styles.codeVarName}>{v.key || '变量名'}</span>
-                        <span className={styles.codeEquals}>=</span>
-                        <span className={styles.codeVarValue}>{v.value || '值'}</span>
-                      </div>
-
-                      <div className={styles.inputLabel}>
-                        <span className="material-icons" style={{ fontSize: 14 }}>comment</span>
-                        注释说明
-                      </div>
-                      <textarea
-                        className={styles.textArea}
-                        value={v.comment || ''}
-                        onChange={(e: any) => handleVarChange(w.id, idx, 'comment', e.target.value)}
-                        placeholder="配置项的说明（可选）"
-                      />
-
-                      <div className={styles.inputLabel}>
-                        <span className="material-icons" style={{ fontSize: 14 }}>vpn_key</span>
-                        变量名
-                      </div>
-                      <TextField
-                        value={v.key}
-                        onChange={(e: any) => handleVarChange(w.id, idx, 'key', e.target.value)}
-                        placeholder="API_KEY"
-                        fullWidth
-                        style={{ fontFamily: 'monospace' }}
-                      />
-
-                      <div className={styles.inputLabel}>
-                        <span className="material-icons" style={{ fontSize: 14 }}>edit</span>
-                        变量值
-                      </div>
-                      <TextField
-                        value={v.value}
-                        onChange={(e: any) => handleVarChange(w.id, idx, 'value', e.target.value)}
-                        placeholder="your-value-here"
-                        fullWidth
-                        style={{ fontFamily: 'monospace' }}
-                      />
-
-                      <div style={{ marginTop: 12, textAlign: 'right' }}>
-                        <Button size="sm" onClick={() => handleDeleteVar(w.id, idx)}>
-                          <span className="material-icons" style={{ fontSize: 14, marginRight: 4 }}>delete</span>
-                          删除
-                        </Button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </WindowContent>
-            </Window>
-          </div>
-        ))}
-
-        {/* 关于窗口 */}
-        {aboutOpen && (
-          <div
-            className={styles.editorWindow}
-            style={{
-              left: Math.max(8, Math.floor((window.innerWidth - 480) / 2)),
-              top: Math.max(64, Math.floor((window.innerHeight - 360) / 2)),
-              width: 480,
-              height: 'auto',
-              maxHeight: '80vh',
-              resize: 'none',
-              boxShadow: 'none',
-              zIndex: 9999
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Window>
-              <WindowHeader
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  background: '#000080',
-                  color: '#fff'
-                }}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span className="material-icons" style={{ fontSize: 16 }}>info</span>
-                  关于 Sentra Agent
-                </span>
-                <Button size="sm" onClick={() => setAboutOpen(false)}>X</Button>
-              </WindowHeader>
-              <WindowContent style={{ padding: 16, background: '#c0c0c0', maxHeight: '60vh', overflow: 'auto' }}>
-                <div style={{ fontFamily: 'MS Sans Serif', fontSize: 11, lineHeight: 1.6 }}>
-                  <div style={{ marginBottom: 12, padding: 8, background: '#ffffff', border: '2px solid #808080' }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: 8, fontSize: 12 }}>Sentra Config Manager</div>
-                    <div>Version: 2.0.0</div>
-                    <div>Build: 2024-11-10</div>
-                  </div>
-                  
-                  <div style={{ marginBottom: 12, padding: 8, background: '#ffffff', border: '2px solid #808080' }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: 6 }}>配置统计</div>
-                    <div>核心模块: {modules.length} 个</div>
-                    <div>MCP插件: {plugins.length} 个</div>
-                    <div>配置文件: {modules.length + plugins.length} 个</div>
-                    <div>已配置: {[...modules, ...plugins].filter(f => f.hasEnv).length} 个</div>
-                    <div>待配置: {[...modules, ...plugins].filter(f => !f.hasEnv).length} 个</div>
-                  </div>
-
-                  <div style={{ marginBottom: 12, padding: 8, background: '#ffffff', border: '2px solid #808080' }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: 6 }}>系统信息</div>
-                    <div>平台: Windows 95 UI</div>
-                    <div>框架: React + React95</div>
-                    <div>图标库: Material Icons</div>
-                  </div>
-
-                  <div style={{ textAlign: 'center', marginTop: 16 }}>
-                    <Button onClick={() => setAboutOpen(false)}>确定</Button>
-                  </div>
-                </div>
-              </WindowContent>
-            </Window>
-          </div>
-        )}
-      </div>
+              </Item>
+            ))}
+          </Submenu>
+        </Submenu>
+        <Item onClick={handleUploadWallpaper}>上传壁纸...</Item>
+        <Item onClick={handleDeleteWallpaper} disabled={DEFAULT_WALLPAPERS.includes(currentWallpaper) || currentWallpaper === BING_WALLPAPER || SOLID_COLORS.some(c => c.value === currentWallpaper)}>
+          删除当前壁纸
+        </Item>
+        <Item onClick={() => setWallpaperFit(f => f === 'cover' ? 'contain' : 'cover')}>
+          壁纸填充: {wallpaperFit === 'cover' ? '覆盖 (Cover)' : '包含 (Contain)'}
+        </Item>
+        <Item onClick={() => setWallpaperInterval(i => i === 0 ? 60 : 0)}>
+          {wallpaperInterval > 0 ? '停止壁纸轮播' : '开启壁纸轮播 (1min)'}
+        </Item>
+        <Item onClick={() => loadConfigs()}>刷新</Item>
+      </Menu>
+    </div>
   );
 }
 

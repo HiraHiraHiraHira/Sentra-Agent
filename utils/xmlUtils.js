@@ -22,6 +22,36 @@ export function isSensitiveKey(key = '') {
 }
 
 /**
+ * 提取完整的XML标签（包含外层起止标签和属性）
+ * @param {string} text - 包含 XML 标签的文本
+ * @param {string} tagName - 标签名称
+ * @returns {string|null} 完整标签字符串，未找到返回 null
+ */
+export function extractFullXMLTag(text, tagName) {
+  if (!text || !tagName) return null;
+  const regex = new RegExp(`<${tagName}[^>]*>[\\s\\S]*?<\/${tagName}>`, 'i');
+  const m = text.match(regex);
+  return m ? m[0] : null;
+}
+
+/**
+ * 提取所有完整的XML标签（包含外层起止标签和属性）
+ * @param {string} text - 包含 XML 标签的文本
+ * @param {string} tagName - 标签名称
+ * @returns {Array<string>} 完整标签字符串数组
+ */
+export function extractAllFullXMLTags(text, tagName) {
+  if (!text || !tagName) return [];
+  const regex = new RegExp(`<${tagName}[^>]*>[\\s\\S]*?<\/${tagName}>`, 'gi');
+  const out = [];
+  let m;
+  while ((m = regex.exec(text)) !== null) {
+    out.push(m[0]);
+  }
+  return out;
+}
+
+/**
  * 生成简单 XML 标签，不转义内容（符合 Sentra XML 协议的“原样输出”原则）
  */
 export function tag(name, val) {

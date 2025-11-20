@@ -8,7 +8,7 @@ dotenv.config();
  * @returns {Object} 配置对象
  */
 export const getConfigFromEnv = () => ({
-  apiBaseUrl: process.env.API_BASE_URL || 'https://yuanplus.cloud/v1/',
+  apiBaseUrl: process.env.API_BASE_URL || 'https://yuanplus.chat/v1/',
   apiKey: process.env.API_KEY || 'sk-ZsC6m89ewvSfx29HqOIEVBPCZOCrhjO0dv3ZhYEmCBl9ijzz',
   modelName: process.env.MODEL_NAME || 'gpt-4o-mini',
   temperature: parseFloat(process.env.TEMPERATURE) || 0.7,

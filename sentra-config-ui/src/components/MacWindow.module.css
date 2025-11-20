@@ -1,0 +1,108 @@
+.window {
+  /* Position is handled by inline styles for Draggable/Maximized logic */
+  background: var(--mac-window-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--mac-window-shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  /* Transition removed to avoid conflict with Draggable/Framer Motion */
+}
+
+.window.active {
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+.titleBar {
+  height: 32px;
+  background: #f0f0f0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  padding: 0 0 0 12px;
+  user-select: none;
+  flex-shrink: 0;
+  cursor: default;
+}
+
+.controls {
+  display: flex;
+  height: 100%;
+}
+
+.btn {
+  width: 46px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s;
+  color: #333;
+  font-size: 14px;
+}
+
+.btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.close:hover {
+  background: #e81123;
+  color: white;
+}
+
+.title {
+  flex: 1;
+  text-align: left;
+  font-size: 12px;
+  color: #333;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 1;
+}
+
+.titleIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.titleIcon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.titleIcon > div {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.spacer {
+  display: none;
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  /* Crucial for nested flex scrolling */
+  overflow: hidden;
+  /* Let child handle scrolling */
+  position: relative;
+  background: rgba(255, 255, 255, 0.8);
+  display: flex;
+  flex-direction: column;
+}

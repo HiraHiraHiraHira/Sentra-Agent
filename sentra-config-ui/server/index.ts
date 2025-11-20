@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { configRoutes } from './routes/config';
+import { scriptRoutes } from './routes/scripts';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import dotenv from 'dotenv';
@@ -24,6 +25,7 @@ async function start() {
 
   // 注册路由
   await fastify.register(configRoutes);
+  await fastify.register(scriptRoutes);
 
   // 生产环境提供静态文件
   if (process.env.NODE_ENV === 'production') {
@@ -46,7 +48,7 @@ async function start() {
 
   try {
     await fastify.listen({ port: PORT, host: '0.0.0.0' });
-    console.log(`\n🚀 Sentra Config UI Server running at:`);
+    console.log(`\nSentra Config Webui Server running at:`);
     console.log(`   - Local:   http://localhost:${PORT}`);
     console.log(`   - Network: http://0.0.0.0:${PORT}\n`);
   } catch (err) {
