@@ -19,6 +19,11 @@ import { useWallpaper } from './hooks/useWallpaper';
 import { useUsageCounts } from './hooks/useUsageCounts';
 import { useDockFavorites } from './hooks/useDockFavorites';
 import { useDesktopWindows } from './hooks/useDesktopWindows';
+import { loader } from '@monaco-editor/react';
+import * as monaco from 'monaco-editor';
+
+// Configure Monaco to use local instance (bundled) instead of CDN
+loader.config({ monaco: monaco as any });
 
 
 

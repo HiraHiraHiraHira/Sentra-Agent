@@ -140,12 +140,78 @@ async function execCommand(command, args, cwd, extraEnv = {}) {
     });
 }
 
+// Load .env file
+const envPath = path.join(ROOT_DIR, 'sentra-config-ui', '.env');
+let env = {};
+try {
+    const envContent = fs.readFileSync(envPath, 'utf-8');
+    envContent.split('\n').forEach(line => {
+        const match = line.match(/^([^=]+)=(.*)$/);
+        if (match) {
+            const key = match[1].trim();
+            const value = match[2].trim().replace(/^["']|["']$/g, ''); // Remove quotes
+            env[key] = value;
+        }
+    });
+} catch (e) {
+    // Ignore if .env missing
+}
+
+function getUpdateSourceUrl() {
+    const source = (env.UPDATE_SOURCE || 'github').toLowerCase();
+    const customUrl = env.UPDATE_CUSTOM_URL;
+
+    if (source === 'gitee') {
+        return 'https://gitee.com/yuanpluss/Sentra-Agent.git';
+    } else if (source === 'custom' && customUrl) {
+        return customUrl;
+    }
+    // Default to GitHub
+    return 'https://github.com/JustForSO/Sentra-Agent.git';
+}
+
+async function switchRemote(url) {
+    try {
+        // Check current remote
+        const currentRemote = (await execCommandOutput('git', ['remote', 'get-url', 'origin'], ROOT_DIR)).trim();
+
+        if (currentRemote !== url) {
+            console.log(chalk.yellow(`\n🔄 Switching remote from ${currentRemote} to ${url}...`));
+            await execCommand('git', ['remote', 'set-url', 'origin', url], ROOT_DIR);
+            console.log(chalk.green('✅ Remote updated successfully'));
+        }
+    } catch (e) {
+        // If remote doesn't exist, add it
+        try {
+            await execCommand('git', ['remote', 'add', 'origin', url], ROOT_DIR);
+            console.log(chalk.green('✅ Remote added successfully'));
+        } catch (err) {
+            console.warn(chalk.red('⚠️ Failed to update remote URL:'), err.message);
+        }
+    }
+}
+
+async function execCommandOutput(command, args, cwd) {
+    return new Promise((resolve, reject) => {
+        const proc = spawn(command, args, { cwd, shell: true });
+        let output = '';
+        proc.stdout.on('data', (data) => output += data.toString());
+        proc.on('close', (code) => code === 0 ? resolve(output) : reject(new Error(`Command failed: ${command}`)));
+        proc.on('error', reject);
+    });
+}
+
 async function update() {
     const spinner = ora();
 
     try {
+        // Step 0: Configure Remote
+        const targetUrl = getUpdateSourceUrl();
+        console.log(chalk.cyan(`\n🌐 Update Source: ${env.UPDATE_SOURCE || 'github'} (${targetUrl})`));
+        await switchRemote(targetUrl);
+
         // Step 1: Get package.json hashes before update
-        console.log(chalk.cyan('📦 Detecting package.json files...\n'));
+        console.log(chalk.cyan('\n📦 Detecting package.json files...\n'));
         const projects = collectAllNodeProjects();
         const beforeHashes = new Map();
 
@@ -169,14 +235,24 @@ async function update() {
             spinner.start('Resetting to origin/main...');
             await execCommand('git', ['reset', '--hard', 'origin/main'], ROOT_DIR);
             spinner.succeed('Reset to origin/main');
+
+            spinner.start('Cleaning untracked files...');
+            await execCommand('git', ['clean', '-fd'], ROOT_DIR);
+            spinner.succeed('Cleaned untracked files');
         } else {
             spinner.start('Checking for updates...');
             await execCommand('git', ['fetch'], ROOT_DIR);
             spinner.succeed('Checked for updates');
 
             spinner.start('Pulling latest changes...');
-            await execCommand('git', ['pull'], ROOT_DIR);
-            spinner.succeed('Pulled latest changes');
+            try {
+                await execCommand('git', ['pull'], ROOT_DIR);
+                spinner.succeed('Pulled latest changes');
+            } catch (e) {
+                spinner.fail('Pull failed (conflict?)');
+                console.log(chalk.yellow('\n💡 Tip: Try "Force Update" if you have local conflicts.'));
+                throw e;
+            }
         }
 
         // Step 3: Check which projects need dependency installation

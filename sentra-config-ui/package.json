@@ -42,6 +42,7 @@
     "dotenv": "^16.4.5",
     "fastify": "^4.28.1",
     "framer-motion": "^12.23.24",
+    "monaco-editor": "^0.55.1",
     "ora": "^8.2.0",
     "react": "^18.3.1",
     "react-contexify": "^6.0.0",
