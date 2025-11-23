@@ -55,6 +55,10 @@ Sentra Agent 是一个为生产环境设计的 AI Agent 框架。我们理解构
 | Python | >= 3.10 | 情绪分析服务（可选） |
 | PM2 | 最新版 | 生产环境进程管理 |
 
+### 包管理器说明
+
+项目默认使用 **pnpm**（仓库包含 `pnpm-lock.yaml`）。在全球网络环境下推荐直接使用 `pnpm`；若处于国内网络环境，需要落地镜像或加速器时，可以将所有命令替换为 `cnpm`（或配置 `cnpm` 作为 npm 镜像）。下文示例默认使用 `pnpm`，如需 `cnpm` 请在命令中做等价替换。
+
 ### 安装前置依赖
 
 #### 一键安装脚本（推荐，Windows / Linux）
@@ -144,29 +148,29 @@ cd Sentra-Agent/sentra-config-ui
 
 2. 安装 UI 依赖
 ```bash
-npm install
+pnpm install
+# 或 cnpm install （国内网络）
 ```
 
 3. 可选：一键初始化（安装所有子项目依赖、准备 Node/Python 环境）
 ```bash
-npm run bootstrap          # 全量初始化
-npm run bootstrap:node     # 仅 Node 相关
-npm run bootstrap:python   # 仅 Python 情绪服务
+pnpm run bootstrap          # 全量初始化
+pnpm run bootstrap:node     # 仅 Node 相关
+pnpm run bootstrap:python   # 仅 Python 情绪服务
 ```
 
 4. 启动 Web UI
 ```bash
-npm run dev
+pnpm run dev
 ```
 启动后浏览器访问 http://localhost:7244 按指引完成配置并启动服务。
 
 生产环境可在 UI 目录使用下列脚本进行服务管理：
 ```bash
-npm run service:pm2        # 使用 PM2 启动
-npm run service:status     # 查看状态
-npm run service:logs       # 查看日志
-npm run service:monit      # 实时监控
-...
+pnpm run service:pm2        # 使用 PM2 启动
+pnpm run service:status     # 查看状态
+pnpm run service:logs       # 查看日志
+pnpm run service:monit      # 实时监控
 ```
 
 ---
