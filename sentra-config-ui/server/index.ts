@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { configRoutes } from './routes/config';
 import { scriptRoutes } from './routes/scripts';
+import { presetRoutes } from './routes/presets';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import dotenv from 'dotenv';
@@ -17,6 +18,8 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 // SECURITY TOKEN: allow fixed from .env, otherwise generate random on boot
 const ENV_TOKEN = (process.env.SECURITY_TOKEN || '').trim();
 const SECURITY_TOKEN = ENV_TOKEN || crypto.randomBytes(4).toString('hex').toUpperCase();
+
+const BOOT_TIME = Date.now();
 
 async function start() {
   const fastify = Fastify({
@@ -37,6 +40,7 @@ async function start() {
     // Allow static files and verify endpoint without token
     if (
       request.url.startsWith('/api/auth/verify') ||
+      request.url.startsWith('/api/health') ||
       !request.url.startsWith('/api')
     ) {
       return;
@@ -54,6 +58,11 @@ async function start() {
     }
   });
 
+  // Health Check Endpoint
+  fastify.get('/api/health', async () => {
+    return { status: 'ok', bootTime: BOOT_TIME };
+  });
+
   // Auth Verification Endpoint
   fastify.post('/api/auth/verify', async (request, reply) => {
     const { token } = request.body as { token: string };
@@ -67,6 +76,7 @@ async function start() {
   // 注册路由
   await fastify.register(configRoutes);
   await fastify.register(scriptRoutes);
+  await fastify.register(presetRoutes);
 
   // 生产环境提供静态文件
   if (process.env.NODE_ENV === 'production') {

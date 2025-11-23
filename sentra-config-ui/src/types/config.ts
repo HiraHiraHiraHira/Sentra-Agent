@@ -25,6 +25,14 @@ export interface PluginConfig {
   configJson?: any;
 }
 
+export interface PresetFile {
+  path: string;
+  name: string;
+  content?: string;
+  size: number;
+  modified: string;
+}
+
 export interface ConfigData {
   modules: ModuleConfig[];
   plugins: PluginConfig[];

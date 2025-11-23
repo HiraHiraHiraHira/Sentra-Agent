@@ -47,6 +47,17 @@ export class MCPCore {
     this.rebuildIndex();
   }
 
+  async reloadLocalPlugins(pluginsDir) {
+    try {
+      const tools = await loadPlugins(pluginsDir);
+      this.localTools = tools || [];
+      this.rebuildIndex();
+      logger.info?.('本地插件已热重载', { label: 'MCP', total: this.localTools.length });
+    } catch (e) {
+      logger.error?.('本地插件热重载失败', { label: 'MCP', error: String(e) });
+    }
+  }
+
   rebuildIndex() {
     this.toolIndex.clear();
     // Local

@@ -152,7 +152,7 @@ export async function scriptRoutes(fastify: FastifyInstance) {
     // Kill script process
     fastify.post<{
         Params: { id: string };
-    }>('/api/scripts/kill/:id', async (request, reply) => {
+    }>('/api/scripts/kill/:id', async (request) => {
         const { id } = request.params;
         const killed = scriptRunner.killProcess(id);
 

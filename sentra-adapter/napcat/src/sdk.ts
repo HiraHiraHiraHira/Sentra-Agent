@@ -5,6 +5,7 @@ import type { ReverseAdapterOptions } from './adapter/NapcatReverseAdapter';
 import type { OneBotResponse, MessageEvent } from './types/onebot';
 import type { MessageInput } from './utils/message';
 import { loadConfig } from './config';
+import { onConfigChange } from './runtimeConfig';
 import { assertOk } from './ob11';
 import { extractReplyInfo, type ReplyInfo } from './utils/reply-parser';
 import { MessageStream, type FormattedMessage } from './stream';
@@ -197,7 +198,7 @@ export type SdkInvoke = ((action: string, params?: any) => Promise<OneBotRespons
 export type { FormattedMessage };
 
 export function createSDK(init?: SDKInit): SdkInvoke {
-  const cfg = loadConfig();
+  let cfg = loadConfig();
   let adapter: NapcatAdapter | NapcatReverseAdapter;
   let isReverse = false;
 
@@ -251,6 +252,39 @@ export function createSDK(init?: SDKInit): SdkInvoke {
       isReverse = false;
     }
   }
+
+  const stopConfigListener = onConfigChange((prev, next) => {
+    cfg = next;
+    try {
+      if (adapter instanceof NapcatAdapter && typeof (adapter as any).updateRuntimeOptions === 'function') {
+        (adapter as any).updateRuntimeOptions({
+          whitelistGroups: next.whitelistGroups,
+          whitelistUsers: next.whitelistUsers,
+          logFiltered: next.logFiltered,
+          deDupEvents: next.deDupEvents,
+          deDupTtlMs: next.deDupTtlMs,
+        });
+      } else if (adapter instanceof NapcatReverseAdapter && typeof (adapter as any).updateRuntimeOptions === 'function') {
+        (adapter as any).updateRuntimeOptions({
+          whitelistGroups: next.whitelistGroups,
+          whitelistUsers: next.whitelistUsers,
+          logFiltered: next.logFiltered,
+        });
+      }
+    } catch {}
+
+    if (messageStream && typeof messageStream.updateRuntimeOptions === 'function') {
+      try {
+        messageStream.updateRuntimeOptions({
+          includeRaw: next.streamIncludeRaw,
+          skipAnimatedEmoji: next.streamSkipAnimatedEmoji,
+          rpcRetryEnabled: next.streamRpcRetryEnabled,
+          rpcRetryIntervalMs: next.streamRpcRetryIntervalMs,
+          rpcRetryMaxAttempts: next.streamRpcRetryMaxAttempts,
+        });
+      } catch {}
+    }
+  });
 
   // 统一的调用接口
   const fn = (async (action: string, params?: any) => {
@@ -903,6 +937,9 @@ export function createSDK(init?: SDKInit): SdkInvoke {
         adapter.stop();
       } else if (adapter instanceof NapcatAdapter) {
         await adapter.destroy();
+      }
+      if (typeof stopConfigListener === 'function') {
+        try { stopConfigListener(); } catch {}
       }
     } catch {}
   };

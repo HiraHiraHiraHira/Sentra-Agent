@@ -63,6 +63,7 @@ export const getDisplayName = (name: string): string => {
     '.': '对话配置',
     'sentra-config-ui': 'Webui配置',
     'utils/emoji-stickers': '表情包配置',
+    'agent-presets': '预设撰写',
     'av_transcribe': '音频转录',
     'mindmap_gen': '思维导图',
     'custom_music_card': '自定义音卡',

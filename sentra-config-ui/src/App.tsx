@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ConfigData } from './types/config';
-import { fetchConfigs, verifyToken } from './services/api';
+import { fetchConfigs, verifyToken, waitForBackend } from './services/api';
 import { LoginScreen } from './components/LoginScreen';
 import { getIconForType, getDisplayName } from './utils/icons';
 import { buildDesktopIcons, buildDesktopFolders } from './utils/buildDesktopIcons';
@@ -20,6 +20,7 @@ import { useUsageCounts } from './hooks/useUsageCounts';
 import { useDockFavorites } from './hooks/useDockFavorites';
 import { useDesktopWindows } from './hooks/useDesktopWindows';
 import { loader } from '@monaco-editor/react';
+import { usePresetsEditor } from './hooks/usePresetsEditor';
 import * as monaco from 'monaco-editor';
 
 // Configure Monaco to use local instance (bundled) instead of CDN
@@ -39,10 +40,10 @@ function App() {
 
   // Toasts first (used by hooks below)
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const addToast = (type: ToastMessage['type'], title: string, message?: string) => {
+  const addToast = useCallback((type: ToastMessage['type'], title: string, message?: string) => {
     const id = Math.random().toString(36).substr(2, 9);
     setToasts(prev => [...prev, { id, type, title, message }]);
-  };
+  }, []);
   const removeToast = (id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
@@ -156,6 +157,20 @@ function App() {
 
   } = useIOSEditor({ setSaving, addToast, loadConfigs });
 
+  // Presets Editor State via hook
+  const presetsState = usePresetsEditor(addToast);
+  const [presetsEditorOpen, setPresetsEditorOpen] = useState(false);
+  const [iosPresetsEditorOpen, setIosPresetsEditorOpen] = useState(false);
+
+  const handleOpenPresets = () => {
+    if (isMobile || isTablet) {
+      setIosPresetsEditorOpen(true);
+    } else {
+      setPresetsEditorOpen(true);
+      bringToFront('presets-editor');
+    }
+  };
+
   // terminal run handlers now provided by useTerminals
 
   // close/minimize handled by useTerminals
@@ -173,6 +188,7 @@ function App() {
     handleRunNapcatStart,
     handleRunUpdate,
     handleRunForceUpdate,
+    handleOpenPresets,
   );
 
   // Desktop folders (for desktop view)
@@ -188,9 +204,38 @@ function App() {
 
   // rotation handled by useWallpaper
 
+  const [serverReady, setServerReady] = useState(false);
+
   useEffect(() => {
-    checkAuth();
+    initApp();
   }, []);
+
+  const initApp = async () => {
+    // 1. Wait for backend to be ready
+    const bootTime = await waitForBackend();
+    setServerReady(!!bootTime);
+
+    if (!bootTime) {
+      addToast('error', '连接失败', '无法连接到后端服务器');
+      setLoading(false);
+      return;
+    }
+
+    // 2. Check if server restarted (Boot Time changed)
+    const lastBootTime = sessionStorage.getItem('sentra_server_boot_time');
+    if (lastBootTime && lastBootTime !== String(bootTime)) {
+      console.log('Server restarted, invalidating session');
+      sessionStorage.removeItem('sentra_auth_token');
+      sessionStorage.removeItem('sentra_server_boot_time');
+      setIsAuthenticated(false);
+    }
+
+    // Update stored boot time
+    sessionStorage.setItem('sentra_server_boot_time', String(bootTime));
+
+    // 3. Check auth
+    await checkAuth();
+  };
 
   const checkAuth = async () => {
     const token = sessionStorage.getItem('sentra_auth_token');
@@ -204,6 +249,7 @@ function App() {
       }
     }
     setAuthChecking(false);
+    setLoading(false);
   };
 
   const handleLogin = async (token: string) => {
@@ -292,6 +338,14 @@ function App() {
       icon: getIconForType('desktop', 'module'),
       onClick: () => setLaunchpadOpen(true)
     },
+    {
+      id: 'presets-app',
+      name: '预设撰写',
+      icon: getIconForType('agent-presets', 'module'),
+      isOpen: presetsEditorOpen,
+      onClick: handleOpenPresets,
+      onClose: () => setPresetsEditorOpen(false)
+    },
     ...dockFavorites.map(favId => {
       const item = allItems.find(i => `${i.type}-${i.name}` === favId);
       if (!item) return null;
@@ -370,7 +424,7 @@ function App() {
       }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 24, marginBottom: 16 }}>Sentra Agent</div>
-          <div>正在启动系统...</div>
+          <div>{serverReady ? '正在启动系统...' : '正在连接服务器...'}</div>
         </div>
       </div>
     );
@@ -402,6 +456,10 @@ function App() {
         handleMinimizeTerminal={handleMinimizeTerminal}
         handleCloseTerminal={handleCloseTerminal}
         desktopFolders={desktopFolders}
+        iosPresetsEditorOpen={iosPresetsEditorOpen}
+        setIosPresetsEditorOpen={setIosPresetsEditorOpen}
+        addToast={addToast}
+        presetsState={presetsState}
       />
     );
   }
@@ -461,6 +519,10 @@ function App() {
       wallpaperInterval={wallpaperInterval}
       setWallpaperInterval={setWallpaperInterval}
       loadConfigs={loadConfigs}
+      presetsEditorOpen={presetsEditorOpen}
+      setPresetsEditorOpen={setPresetsEditorOpen}
+      presetsState={presetsState}
+      addToast={addToast}
     />
   );
 }

@@ -6,7 +6,8 @@ import {
     IoCloudDownload,
     IoRefreshCircle,
     IoSettings,
-    IoPlay
+    IoPlay,
+    IoDocumentText
 } from 'react-icons/io5';
 
 // Helper to create folder icon with app thumbnails
@@ -190,7 +191,6 @@ export function buildDesktopFolders(
     ];
 }
 
-// Keep the original function for backward compatibility (mobile)
 export function buildDesktopIcons(
     recordUsage: (key: string) => void,
     handleRunBootstrap: () => void,
@@ -199,6 +199,7 @@ export function buildDesktopIcons(
     handleRunNapcatStart: () => void,
     handleRunUpdate: () => void,
     handleRunForceUpdate: () => void,
+    handleOpenPresets: () => void,
 ): DesktopIcon[] {
     const iconSize = 56;
     const gap = 100;
@@ -206,6 +207,21 @@ export function buildDesktopIcons(
     const startY = 80;
 
     return [
+        {
+            id: 'desktop-presets',
+            name: '预设撰写',
+            icon: <AppIconWrapper
+                bg="linear-gradient(135deg, #00b09b 0%, #96c93d 100%)"
+                shadow="0 8px 16px rgba(0, 176, 155, 0.4), inset 0 1px 2px rgba(255,255,255,0.3)"
+            >
+                <IoDocumentText color="white" size={iconSize} />
+            </AppIconWrapper>,
+            position: { x: startX, y: startY },
+            onClick: () => {
+                recordUsage('app:presets');
+                handleOpenPresets();
+            }
+        },
         {
             id: 'desktop-bootstrap',
             name: '安装依赖',

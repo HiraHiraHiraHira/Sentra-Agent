@@ -2,6 +2,7 @@ import { useState, type Dispatch, type SetStateAction } from 'react';
 import { MenuBar } from '../components/MenuBar';
 import { MacWindow } from '../components/MacWindow';
 import { EnvEditor } from '../components/EnvEditor';
+import { PresetsEditor } from '../components/PresetsEditor';
 import { Dock } from '../components/Dock';
 import { Launchpad } from '../components/Launchpad';
 import { TerminalWindow } from '../components/TerminalWindow';
@@ -85,6 +86,10 @@ export type DesktopViewProps = {
   wallpaperInterval: number;
   setWallpaperInterval: Dispatch<SetStateAction<number>>;
   loadConfigs: () => void | Promise<void>;
+  presetsEditorOpen: boolean;
+  setPresetsEditorOpen: (open: boolean) => void;
+  addToast: (type: 'success' | 'error', title: string, message?: string) => void;
+  presetsState: any; // Type will be refined in component
 };
 
 export function DesktopView(props: DesktopViewProps) {
@@ -141,6 +146,10 @@ export function DesktopView(props: DesktopViewProps) {
     wallpaperInterval,
     setWallpaperInterval,
     loadConfigs,
+    presetsEditorOpen,
+    setPresetsEditorOpen,
+    presetsState,
+    addToast,
   } = props;
 
   // Folder state
@@ -244,6 +253,30 @@ export function DesktopView(props: DesktopViewProps) {
         </MacWindow>
       ))}
 
+      {presetsEditorOpen && (
+        <MacWindow
+          id="presets-editor"
+          title="预设撰写"
+          icon={getIconForType('agent-presets', 'module')}
+          zIndex={100}
+          isActive={true}
+          isMinimized={false}
+          initialPos={{ x: 100, y: 50 }}
+          initialSize={{ width: 900, height: 600 }}
+          onClose={() => setPresetsEditorOpen(false)}
+          onMinimize={() => setPresetsEditorOpen(false)}
+          onMaximize={() => { }}
+          onFocus={() => bringToFront('presets-editor')}
+          onMove={() => { }}
+        >
+          <PresetsEditor
+            onClose={() => setPresetsEditorOpen(false)}
+            theme={theme}
+            addToast={addToast}
+            state={presetsState}
+          />
+        </MacWindow>
+      )}
 
       {/* Desktop Folders or Icons */}
       {desktopFolders ? (
@@ -293,7 +326,7 @@ export function DesktopView(props: DesktopViewProps) {
           {openFolderId && (
             <AppFolderModal
               folder={desktopFolders.find(f => f.id === openFolderId)!}
-              onAppClick={(appId, onClick) => onClick()}
+              onAppClick={(_, onClick) => onClick()}
               onClose={() => setOpenFolderId(null)}
             />
           )}

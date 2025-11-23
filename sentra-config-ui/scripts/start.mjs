@@ -47,6 +47,11 @@ function chooseMode(preferred) {
   return commandExists('pm2') ? 'pm2' : 'node';
 }
 
+function quotePath(p) {
+  // Always quote paths to handle spaces and Chinese characters
+  return JSON.stringify(p);
+}
+
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, { stdio: 'inherit', shell: true, ...opts });
@@ -79,12 +84,12 @@ async function runPm2(cmd, opts) {
       if (!fs.existsSync(ecosystem)) throw new Error(`ecosystem file not found: ${ecosystem}`);
       if (exists) {
         console.log(chalk.yellow('Process already exists, restarting...'));
-        const args = ['restart', ecosystem];
+        const args = ['restart', quotePath(ecosystem)];
         if (opts.env) args.push('--env', opts.env);
         await run('pm2', args, { cwd: repoRoot });
       } else {
         console.log(chalk.green('Starting new process...'));
-        const args = ['start', ecosystem];
+        const args = ['start', quotePath(ecosystem)];
         if (opts.env) args.push('--env', opts.env);
         await run('pm2', args, { cwd: repoRoot });
       }
@@ -97,7 +102,7 @@ async function runPm2(cmd, opts) {
     case 'restart': {
       if (!fs.existsSync(ecosystem)) throw new Error(`ecosystem file not found: ${ecosystem}`);
       if (opts.env) {
-        await run('pm2', ['restart', ecosystem, '--env', opts.env], { cwd: repoRoot });
+        await run('pm2', ['restart', quotePath(ecosystem), '--env', opts.env], { cwd: repoRoot });
       } else {
         await run('pm2', ['restart', appName, '--update-env'], { cwd: repoRoot });
       }
@@ -106,7 +111,7 @@ async function runPm2(cmd, opts) {
     case 'reload': {
       if (!fs.existsSync(ecosystem)) throw new Error(`ecosystem file not found: ${ecosystem}`);
       if (opts.env) {
-        await run('pm2', ['reload', ecosystem, '--env', opts.env], { cwd: repoRoot });
+        await run('pm2', ['reload', quotePath(ecosystem), '--env', opts.env], { cwd: repoRoot });
       } else {
         await run('pm2', ['reload', appName, '--update-env'], { cwd: repoRoot });
       }
@@ -139,7 +144,7 @@ async function runNode(cmd, opts) {
       env.COLORTERM = env.COLORTERM || 'truecolor';
 
       console.log(chalk.blue(`Starting ${appName} in ${opts.env || 'production'} mode...`));
-      await run(process.execPath, [entry], { env, cwd: repoRoot });
+      await run(process.execPath, [quotePath(entry)], { env, cwd: repoRoot });
       break;
     }
     case 'logs':

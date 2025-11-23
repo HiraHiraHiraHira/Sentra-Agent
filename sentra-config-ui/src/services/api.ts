@@ -24,6 +24,28 @@ export async function verifyToken(token: string): Promise<boolean> {
   }
 }
 
+export async function checkHealth(): Promise<number | null> {
+  try {
+    const response = await fetch(`${API_BASE}/health`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.bootTime;
+  } catch {
+    return null;
+  }
+}
+
+export async function waitForBackend(maxAttempts = 60, interval = 1000): Promise<number | null> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const bootTime = await checkHealth();
+    if (bootTime !== null) {
+      return bootTime;
+    }
+    await new Promise(resolve => setTimeout(resolve, interval));
+  }
+  return null;
+}
+
 export async function fetchConfigs(): Promise<ConfigData> {
   // Add timestamp to prevent caching
   const response = await fetch(`${API_BASE}/configs?t=${Date.now()}`, {
@@ -65,4 +87,40 @@ export async function savePluginConfig(
     const error = await response.json();
     throw new Error(error.message || 'Failed to save plugin configuration');
   }
+}
+
+export async function fetchPresets(): Promise<any[]> {
+  const response = await fetch(`${API_BASE}/presets`, {
+    headers: getAuthHeaders()
+  });
+  if (!response.ok) throw new Error('Failed to fetch presets');
+  return response.json();
+}
+
+export async function fetchPresetFile(path: string): Promise<{ content: string }> {
+  const response = await fetch(`${API_BASE}/presets/file?path=${encodeURIComponent(path)}`, {
+    headers: getAuthHeaders()
+  });
+  if (!response.ok) throw new Error('Failed to fetch preset file');
+  return response.json();
+}
+
+export async function savePresetFile(path: string, content: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/presets/file`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ path, content })
+  });
+  if (!response.ok) throw new Error('Failed to save preset file');
+}
+
+export async function deletePresetFile(path: string): Promise<void> {
+  const token = sessionStorage.getItem('sentra_auth_token');
+  const response = await fetch(`${API_BASE}/presets/file?path=${encodeURIComponent(path)}`, {
+    method: 'DELETE',
+    headers: {
+      'x-auth-token': token || ''
+    }
+  });
+  if (!response.ok) throw new Error('Failed to delete preset file');
 }

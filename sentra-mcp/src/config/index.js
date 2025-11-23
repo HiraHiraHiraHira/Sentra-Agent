@@ -10,12 +10,19 @@ const __dirname = path.dirname(__filename);
 // 加载环境变量（从 sentra-mcp 目录）
 const mcpRootDir = path.resolve(__dirname, '../..');
 const envPath = path.join(mcpRootDir, '.env');
-if (fs.existsSync(envPath)) {
-  dotenv.config({ path: envPath });
-} else {
-  // 如果 sentra-mcp/.env 不存在，尝试加载父目录的 .env
-  dotenv.config();
+
+function loadEnv(options = {}) {
+  const { override = false } = options;
+  const dotenvOptions = { override };
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath, ...dotenvOptions });
+  } else {
+    // 如果 sentra-mcp/.env 不存在，尝试加载父目录的 .env
+    dotenv.config(dotenvOptions);
+  }
 }
+
+loadEnv();
 
 const bool = (v, d = false) => {
   if (v === undefined) return d;
@@ -49,7 +56,8 @@ function parseConcurrencyOverrides(prefix) {
   return out;
 }
 
-export const config = {
+function buildConfigFromEnv() {
+  return {
   llm: {
     baseURL: process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
     apiKey: process.env.OPENAI_API_KEY || '',
@@ -250,7 +258,16 @@ export const config = {
       .map((s) => s.trim())
       .filter(Boolean),
   },
-};
+  };
+}
+
+export const config = buildConfigFromEnv();
+
+export function reloadConfig() {
+  loadEnv({ override: true });
+  const next = buildConfigFromEnv();
+  Object.assign(config, next);
+}
 
 /**
  * 获取指定阶段的模型配置

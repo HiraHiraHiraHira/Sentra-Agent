@@ -57,6 +57,12 @@ function exists(p) {
   try { fs.accessSync(p); return true; } catch { return false; }
 }
 
+function quotePath(p) {
+  // Always quote paths to handle spaces and Chinese characters
+  // Use JSON.stringify to handle internal quotes properly
+  return JSON.stringify(p);
+}
+
 function listSentraSubdirs(root) {
   const out = [];
   const entries = fs.readdirSync(root, { withFileTypes: true });
@@ -224,7 +230,7 @@ function hasUv() {
 
 async function installRequirementsWithFallback(vpy, emoDir, pipIndex, dryRun) {
   const attempts = [];
-  const basePipArgs = ['-m', 'pip', 'install', '-r', 'requirements.txt', '--retries', '3', '--timeout', '60'];
+  const basePipArgs = ['-m', 'pip', 'install', '-r', quotePath('requirements.txt'), '--retries', '3', '--timeout', '60'];
   const extraIndexEnv = (process.env.PIP_EXTRA_INDEX_URL || '').trim();
   let extraIndex = extraIndexEnv;
   const trustedHosts = parseTrustedHostsFromEnv();
@@ -241,7 +247,7 @@ async function installRequirementsWithFallback(vpy, emoDir, pipIndex, dryRun) {
   if (uvAvailable) {
     attempts.push({
       cmd: 'uv',
-      args: ['pip', 'install', '-r', 'requirements.txt', '--python', vpy, '--index-url', (pipIndex || 'https://pypi.org/simple')].concat(extraIndex ? ['--extra-index-url', extraIndex] : []),
+      args: ['pip', 'install', '-r', quotePath('requirements.txt'), '--python', quotePath(vpy), '--index-url', (pipIndex || 'https://pypi.org/simple')].concat(extraIndex ? ['--extra-index-url', extraIndex] : []),
       label: 'uv pip (--python venv)'
     });
   }

@@ -469,6 +469,30 @@ export class NapcatAdapter extends EventEmitter<{
 
     return false; // allow
   }
+
+  updateRuntimeOptions(options: {
+    whitelistGroups?: number[];
+    whitelistUsers?: number[];
+    logFiltered?: boolean;
+    deDupEvents?: boolean;
+    deDupTtlMs?: number;
+  }) {
+    if (options.whitelistGroups) {
+      this.whitelistGroups = new Set(options.whitelistGroups);
+    }
+    if (options.whitelistUsers) {
+      this.whitelistUsers = new Set(options.whitelistUsers);
+    }
+    if (options.logFiltered !== undefined) {
+      this.logFiltered = options.logFiltered;
+    }
+    if (options.deDupEvents !== undefined) {
+      this.deDupEnabled = options.deDupEvents;
+    }
+    if (options.deDupTtlMs !== undefined) {
+      this.deDupTtlMs = options.deDupTtlMs;
+    }
+  }
 }
 
 function sleep(ms: number) {

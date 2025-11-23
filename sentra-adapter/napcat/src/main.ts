@@ -3,7 +3,8 @@ import createSDK from './sdk';
 import { createLogger } from './logger';
 import { formatEventCompact, isMeaningfulMessage } from './events';
 import type { MessageEvent } from './types/onebot';
-import { loadConfig } from './config';
+import { getConfig, refreshConfigFromEnv } from './runtimeConfig';
+import { startEnvWatcher } from './envWatcher';
 import * as path from 'path';
 import * as fs from 'fs';
 import { promises as fsp } from 'fs';
@@ -12,7 +13,8 @@ import * as https from 'https';
 const log = createLogger(process.env.LOG_LEVEL as any || 'info');
 
 async function main() {
-  const cfg = loadConfig();
+  startEnvWatcher();
+  const cfg = refreshConfigFromEnv() || getConfig();
   const mode = cfg.connectMode;
   const isReverse = mode === 'reverse';
 

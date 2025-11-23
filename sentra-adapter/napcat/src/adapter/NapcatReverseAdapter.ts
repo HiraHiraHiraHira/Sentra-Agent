@@ -144,4 +144,20 @@ export class NapcatReverseAdapter extends EventEmitter<{
 
     return false; // allow
   }
+
+  updateRuntimeOptions(options: {
+    whitelistGroups?: number[];
+    whitelistUsers?: number[];
+    logFiltered?: boolean;
+  }) {
+    if (options.whitelistGroups) {
+      this.whitelistGroups = new Set(options.whitelistGroups);
+    }
+    if (options.whitelistUsers) {
+      this.whitelistUsers = new Set(options.whitelistUsers);
+    }
+    if (options.logFiltered !== undefined) {
+      this.logFiltered = options.logFiltered;
+    }
+  }
 }

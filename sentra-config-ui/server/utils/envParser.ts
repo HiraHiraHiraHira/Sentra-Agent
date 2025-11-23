@@ -83,8 +83,33 @@ export function readEnvFile(filePath: string): EnvVariable[] {
 
 /**
  * 写入 .env 文件
+ * 规则：如果同目录下存在 .env.example，则不允许删除 .env.example 中定义的变量
  */
 export function writeEnvFile(filePath: string, variables: EnvVariable[]): void {
+  // Check if .env.example exists in the same directory
+  const examplePath = filePath.replace(/\.env$/, '.env.example');
+
+  if (existsSync(examplePath)) {
+    // Read .env.example to get protected variable keys
+    const exampleContent = readFileSync(examplePath, 'utf-8');
+    const exampleVars = parseEnvFile(exampleContent);
+    const protectedKeys = new Set(exampleVars.map(v => v.key));
+
+    // Read current .env to check if any protected variables are being deleted
+    if (existsSync(filePath)) {
+      const currentVars = readEnvFile(filePath);
+      const currentKeys = new Set(currentVars.map(v => v.key));
+      const newKeys = new Set(variables.map(v => v.key));
+
+      // Check if any protected variable is being deleted
+      for (const protectedKey of protectedKeys) {
+        if (currentKeys.has(protectedKey) && !newKeys.has(protectedKey)) {
+          throw new Error(`Cannot delete variable "${protectedKey}" because it exists in .env.example`);
+        }
+      }
+    }
+  }
+
   const content = serializeEnvFile(variables);
   writeFileSync(filePath, content, 'utf-8');
 }

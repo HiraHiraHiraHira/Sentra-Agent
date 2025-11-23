@@ -16,6 +16,9 @@ export function useIOSEditor({ setSaving, addToast, loadConfigs }: UseIOSEditorP
   const [activeIOSEditorId, setActiveIOSEditorId] = useState<string | null>(null);
 
   const openIOSWindow = (file: FileItem) => {
+    // Refresh configs to ensure we have the latest data
+    loadConfigs(true); // silent mode
+
     const existing = iosEditorWindows.find(w => w.file.name === file.name && w.file.type === file.type);
     if (existing) {
       if (existing.minimized) {
@@ -61,12 +64,19 @@ export function useIOSEditor({ setSaving, addToast, loadConfigs }: UseIOSEditorP
   const deleteVar = (id: string, index: number) => {
     const win = iosEditorWindows.find(w => w.id === id);
     if (!win) return;
+
     const targetVar = win.editedVars[index];
-    if (!targetVar.isNew) {
-      addToast('error', '无法删除', '系统预设变量无法删除');
+
+    // Check if variable exists in .env.example
+    const exampleKeys = new Set((win.file.exampleVariables || []).map(v => v.key));
+    if (exampleKeys.has(targetVar.key)) {
+      addToast('error', '无法删除', `变量 "${targetVar.key}" 存在于 .env.example 中，无法删除`);
       return;
     }
+
+    // Allow deletion and show success feedback
     setIosEditorWindows(prev => prev.map(w => w.id === id ? { ...w, editedVars: w.editedVars.filter((_, i) => i !== index) } : w));
+    addToast('success', '删除成功', `已删除变量 "${targetVar.key}"`);
   };
 
   const save = async (id: string) => {

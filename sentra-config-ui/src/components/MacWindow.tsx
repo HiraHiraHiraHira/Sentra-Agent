@@ -22,7 +22,6 @@ interface MacWindowProps {
 }
 
 export const MacWindow: React.FC<MacWindowProps> = ({
-  id,
   title,
   icon,
   initialPos,
@@ -32,7 +31,6 @@ export const MacWindow: React.FC<MacWindowProps> = ({
   isMinimized,
   onClose,
   onMinimize,
-  onMaximize,
   onFocus,
   onMove,
   children

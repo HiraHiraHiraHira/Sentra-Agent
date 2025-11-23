@@ -1,11 +1,13 @@
 import { IOSHomeScreen } from '../components/IOSHomeScreen';
 import { IOSEditor } from '../components/IOSEditor';
+import { IOSPresetsEditor } from '../components/IOSPresetsEditor';
 import { Launchpad } from '../components/Launchpad';
 import { TerminalWindow } from '../components/TerminalWindow';
 import { ToastContainer, ToastMessage } from '../components/Toast';
 import { IoChevronBack } from 'react-icons/io5';
 import { getDisplayName, getIconForType } from '../utils/icons';
 import { FileItem, IOSEditorWin, DesktopIcon, TerminalWin, AppFolder } from '../types/ui';
+import { PresetsEditorState } from '../hooks/usePresetsEditor';
 
 export type MobileViewProps = {
   allItems: FileItem[];
@@ -30,6 +32,10 @@ export type MobileViewProps = {
   terminalWindows: TerminalWin[];
   handleMinimizeTerminal: (id: string) => void;
   handleCloseTerminal: (id: string) => void;
+  iosPresetsEditorOpen: boolean;
+  setIosPresetsEditorOpen: (open: boolean) => void;
+  addToast: (type: 'success' | 'error', title: string, message?: string) => void;
+  presetsState: PresetsEditorState;
 };
 
 export function MobileView(props: MobileViewProps) {
@@ -56,6 +62,10 @@ export function MobileView(props: MobileViewProps) {
     terminalWindows,
     handleMinimizeTerminal,
     handleCloseTerminal,
+    iosPresetsEditorOpen,
+    setIosPresetsEditorOpen,
+    addToast,
+    presetsState,
   } = props;
 
   const topByUsage = [...allItems]
@@ -70,6 +80,14 @@ export function MobileView(props: MobileViewProps) {
     icon: getIconForType(it.name, it.type),
     onClick: () => { recordUsage(`${it.type}:${it.name}`); handleIOSOpenWindow(it); }
   }));
+
+  // Add Presets to Dock
+  iosDockExtra.push({
+    id: 'ios-presets',
+    name: '预设撰写',
+    icon: getIconForType('agent-presets', 'module'),
+    onClick: () => setIosPresetsEditorOpen(true)
+  });
 
   return (
     <>
@@ -129,6 +147,16 @@ export function MobileView(props: MobileViewProps) {
             />
           </div>
         ))}
+
+      {iosPresetsEditorOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 2000 }}>
+          <IOSPresetsEditor
+            onClose={() => setIosPresetsEditorOpen(false)}
+            addToast={addToast}
+            state={presetsState}
+          />
+        </div>
+      )}
 
       <ToastContainer toasts={toasts} removeToast={removeToast} />
     </>

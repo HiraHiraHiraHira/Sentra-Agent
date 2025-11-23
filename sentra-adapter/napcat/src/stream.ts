@@ -164,6 +164,30 @@ export class MessageStream {
     this.invoker = fn;
   }
 
+  updateRuntimeOptions(options: {
+    includeRaw?: boolean;
+    skipAnimatedEmoji?: boolean;
+    rpcRetryEnabled?: boolean;
+    rpcRetryIntervalMs?: number;
+    rpcRetryMaxAttempts?: number;
+  }) {
+    if (options.includeRaw !== undefined) {
+      this.includeRaw = options.includeRaw;
+    }
+    if (options.skipAnimatedEmoji !== undefined) {
+      this.skipAnimatedEmoji = options.skipAnimatedEmoji;
+    }
+    if (options.rpcRetryEnabled !== undefined) {
+      this.rpcRetryEnabled = options.rpcRetryEnabled;
+    }
+    if (options.rpcRetryIntervalMs !== undefined) {
+      this.rpcRetryIntervalMs = options.rpcRetryIntervalMs;
+    }
+    if (options.rpcRetryMaxAttempts !== undefined) {
+      this.rpcRetryMaxAttempts = options.rpcRetryMaxAttempts;
+    }
+  }
+
   /**
    * 内部通用重试：用于 NapCat SDK 的远程调用失败时自动重试
    */

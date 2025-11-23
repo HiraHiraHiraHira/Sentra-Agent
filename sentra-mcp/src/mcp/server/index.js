@@ -3,13 +3,90 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import express from 'express';
 import cors from 'cors';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { config } from '../../config/index.js';
+import { config, reloadConfig } from '../../config/index.js';
 import logger from '../../logger/index.js';
 import MCPCore from '../../mcpcore/index.js';
 import { Metrics } from '../../metrics/index.js';
 
 const mcpcore = new MCPCore();
+
+function createDebounced(fn, delayMs) {
+  let timer = null;
+  return () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      fn();
+    }, delayMs);
+  };
+}
+
+function startHotReloadWatchers(core) {
+  const debounceMs = 500;
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  const mcpRootDir = path.resolve(__dirname, '../..');
+  const envPath = path.join(mcpRootDir, '.env');
+  const pluginsDir = path.join(mcpRootDir, 'plugins');
+
+  const reloadConfigDebounced = createDebounced(() => {
+    try {
+      logger.info('检测到根 .env 变更，重新加载配置', { label: 'MCP' });
+      reloadConfig();
+    } catch (e) {
+      logger.error('重新加载配置失败', { label: 'MCP', error: String(e) });
+    }
+  }, debounceMs);
+
+  const reloadPluginsDebounced = createDebounced(() => {
+    try {
+      logger.info('检测到插件 .env 变更，重新加载本地插件', { label: 'MCP' });
+      core.reloadLocalPlugins().catch((e) => {
+        logger.error('本地插件热重载失败', { label: 'MCP', error: String(e) });
+      });
+    } catch (e) {
+      logger.error('调度插件热重载失败', { label: 'MCP', error: String(e) });
+    }
+  }, debounceMs);
+
+  try {
+    if (fs.existsSync(envPath)) {
+      fs.watch(envPath, { persistent: false }, () => {
+        reloadConfigDebounced();
+      });
+      logger.info('已开启根 .env 热更新监控', { label: 'MCP', envPath });
+    }
+  } catch (e) {
+    logger.warn('根 .env 监控失败（将不支持自动热更新）', { label: 'MCP', error: String(e) });
+  }
+
+  try {
+    if (fs.existsSync(pluginsDir)) {
+      const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
+      for (const ent of entries) {
+        if (!ent.isDirectory()) continue;
+        const pluginDir = path.join(pluginsDir, ent.name);
+        try {
+          fs.watch(pluginDir, { persistent: false }, (_eventType, filename) => {
+            if (!filename) return;
+            if (filename === '.env' || filename === 'config.env') {
+              reloadPluginsDebounced();
+            }
+          });
+        } catch (e) {
+          logger.warn('插件目录监控失败', { label: 'MCP', dir: pluginDir, error: String(e) });
+        }
+      }
+      logger.info('已开启插件 .env 热更新监控', { label: 'MCP', pluginsDir });
+    }
+  } catch (e) {
+    logger.warn('插件根目录监控失败（将不支持插件热更新）', { label: 'MCP', dir: pluginsDir, error: String(e) });
+  }
+}
 
 // Some SDK versions may not export isInitializeRequest; define a minimal local predicate
 function isInitialize(body) {
@@ -156,11 +233,13 @@ async function starthttp() {
 }
 
 if (config.server.transport === 'stdio') {
+  startHotReloadWatchers(mcpcore);
   startstdio().catch((e) => {
     logger.error('Failed to start stdio server', { error: String(e) });
     process.exit(1);
   });
 } else if (config.server.transport === 'http') {
+  startHotReloadWatchers(mcpcore);
   starthttp().catch((e) => {
     logger.error('Failed to start http server', { error: String(e) });
     process.exit(1);
