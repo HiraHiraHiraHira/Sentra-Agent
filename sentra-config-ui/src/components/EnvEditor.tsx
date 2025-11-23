@@ -2,10 +2,8 @@ import React, { useState } from 'react';
 import { EnvVariable } from '../types/config';
 import styles from './EnvEditor.module.css';
 import { IoAdd, IoSave, IoTrash, IoInformationCircle, IoSearch, IoWarning } from 'react-icons/io5';
-import Editor from '@monaco-editor/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SafeInput } from './SafeInput';
-import { SafeZone } from './SafeZone';
 
 interface EnvEditorProps {
   appName?: string;
@@ -177,34 +175,13 @@ export const EnvEditor: React.FC<EnvEditorProps> = ({
                   </div>
 
                   <div className={styles.editorWrapper}>
-                    <SafeZone style={{ height: '100%' }}>
-                      <Editor
-                        height="32px"
-                        defaultLanguage="plaintext"
-                        value={v.value}
-                        onChange={(value) => onUpdate(v.originalIndex, 'value', value || '')}
-                        options={{
-                          minimap: { enabled: false },
-                          lineNumbers: 'off',
-                          glyphMargin: false,
-                          folding: false,
-                          lineDecorationsWidth: 0,
-                          lineNumbersMinChars: 0,
-                          renderLineHighlight: 'none',
-                          scrollbar: { vertical: 'hidden', horizontal: 'hidden' },
-                          overviewRulerBorder: false,
-                          hideCursorInOverviewRuler: true,
-                          contextmenu: false,
-                          fontFamily: "'Consolas', 'Monaco', 'Courier New', monospace",
-                          fontSize: 13,
-                          scrollBeyondLastLine: false,
-                          automaticLayout: true,
-                          fixedOverflowWidgets: true,
-                          padding: { top: 6, bottom: 6 }
-                        }}
-                        theme={theme === 'dark' ? 'vs-dark' : 'light'}
-                      />
-                    </SafeZone>
+                    <SafeInput
+                      className={styles.valueInput}
+                      value={v.value}
+                      onChange={(e) => onUpdate(v.originalIndex, 'value', e.target.value)}
+                      placeholder="Value"
+                      spellCheck={false}
+                    />
                   </div>
                 </div>
               ))}
