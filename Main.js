@@ -862,13 +862,15 @@ socket.on('message', async (data) => {
         logger.debug('启动干预判断: 使用轻量模型进行二次判断');
         
         const interventionConfig = getInterventionConfig();
+        const fromFollowupConversation = replyDecision.reason === '对话跟进窗口';
         
         const interventionResult = await executeIntervention(
           agent, 
           msg, 
           replyDecision.probability, 
           replyDecision.threshold || 0.65,
-          replyDecision.state
+          replyDecision.state,
+          { fromFollowupConversation }
         );
         
         if (!interventionResult.need) {

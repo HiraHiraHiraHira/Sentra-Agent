@@ -19,7 +19,10 @@ function buildInterventionPrompt(msg, probability, threshold, state) {
   const chatType = isGroup ? 'group' : 'private';
   const pace = state.avgMessageInterval > 0 ? `${state.avgMessageInterval.toFixed(0)}s` : 'unknown';
   const maxTextLength = 200;
-  let messageText = msg.text || '(empty)';
+  // 优先使用 summary 作为干预判断的核心语义，text 仅作为兜底
+  const rawSummary = (typeof msg.summary === 'string' && msg.summary.trim()) ? msg.summary.trim() : '';
+  const rawText = (typeof msg.text === 'string' && msg.text.trim()) ? msg.text.trim() : '';
+  let messageText = rawSummary || rawText || '(empty)';
   if (messageText.length > maxTextLength) {
     messageText = messageText.substring(0, maxTextLength) + '...';
   }
@@ -36,7 +39,7 @@ function buildInterventionPrompt(msg, probability, threshold, state) {
   if (isExplicitMention) {
     const senderName = msg.sender_name || `${msg.sender_id ?? ''}`;
     // 在群聊里被 @ 时，明确告诉轻量模型：XX 在群聊里面艾特了你，然后说：XXX
-    mentionInfo = `提问者 ${senderName} 在群聊里面艾特了你，然后说："${messageText}"\n\n`;
+    mentionInfo = `提问者 ${senderName} 在群聊里面艾特了你，然后说:"${messageText}"\n\n`;
   }
   return `# Reply Decision Validator
 
@@ -49,7 +52,7 @@ You are a secondary validator for reply decisions. The base probability check ha
 **Pace**: Average interval ${pace}
 **Base Probability**: ${(probability * 100).toFixed(0)}%
 
-${mentionInfo}**Current Message**:
+${mentionInfo}${rawSummary ? `**Message Summary (preferred)**:\n${rawSummary}\n\n` : ''}${rawText && !rawSummary ? `**Original Text**:\n${rawText}\n\n` : ''}**Current Message (truncated, with flags)**:
 \`\`\`
 ${messageTextWithFlags}
 \`\`\`
@@ -144,15 +147,17 @@ function parseDecisionXML(xmlText) {
  * @param {number} probability - 基础概率
  * @param {number} threshold - 阈值
  * @param {Object} state - 会话状态
+ * @param {Object} [options] - 附加选项（如是否来自对话跟进窗口）
  * @returns {Promise<{need: boolean, reason: string, confidence: number}>}
  */
-export async function executeIntervention(agent, msg, probability, threshold, state) {
+export async function executeIntervention(agent, msg, probability, threshold, state, options = {}) {
   const model = process.env.REPLY_INTERVENTION_MODEL;
   const timeout = parseInt(process.env.REPLY_INTERVENTION_TIMEOUT || '2000');
   const onlyNearThresholdEnv = process.env.REPLY_INTERVENTION_ONLY_NEAR_THRESHOLD === 'true';
   // 显式@ 提及时强制进行干预判断（无视 onlyNearThreshold 限制）
   const isExplicitMention = Array.isArray(msg?.at_users) && msg?.self_id != null && msg.at_users.some((id) => id === msg.self_id);
-  const onlyNearThreshold = isExplicitMention ? false : onlyNearThresholdEnv;
+  const fromFollowupConversation = !!options?.fromFollowupConversation;
+  const onlyNearThreshold = (isExplicitMention || fromFollowupConversation) ? false : onlyNearThresholdEnv;
   
   if (!model) {
     logger.warn('未配置 REPLY_INTERVENTION_MODEL，跳过干预判断');
@@ -172,7 +177,10 @@ export async function executeIntervention(agent, msg, probability, threshold, st
     logger.debug(`启动干预判断: model=${model}, prob=${(probability * 100).toFixed(1)}%, threshold=${(threshold * 100).toFixed(1)}%`);
     
     const systemPrompt = buildInterventionPrompt(msg, probability, threshold, state);
-    const userPrompt = `请判断是否需要回复这条消息：\n\n${msg.text || '(无文本内容)'}`;
+    const summary = (typeof msg.summary === 'string' && msg.summary.trim()) ? msg.summary.trim() : '';
+    const originalText = (typeof msg.text === 'string' && msg.text.trim()) ? msg.text.trim() : '';
+    const userContent = summary || originalText || '(无文本内容)';
+    const userPrompt = `请根据以上上下文，判断这条用户消息是否需要回复（优先基于 summary）：\n\n${userContent}`;
     
     // 使用 tools + tool_choice 强制函数调用
     const startTime = Date.now();

@@ -21,6 +21,12 @@ const senderQueues = new Map();
 // 活跃任务跟踪（per-sender）
 const activeTasks = new Map();
 
+// 全局注意力状态（用于群隔离，同一时间只专注一个群）
+const globalAttentionState = {
+  currentGroupId: null,
+  attentionActiveUntil: 0
+};
+
 /**
  * 任务状态
  */
@@ -150,8 +156,19 @@ function getConfig() {
     // 显式 @ 是否必须回复（true=显式 @ 一律回复，不走轻量模型；false=显式 @ 由轻量模型拍板）
     mentionMustReply: process.env.MENTION_MUST_REPLY === 'true',
     attentionKeywords: botNames,
-    attentionWindowSeconds: parseInt(process.env.ATTENTION_WINDOW_SECONDS) || 60,
-    attentionStrictMode: process.env.ATTENTION_STRICT_MODE !== 'false'
+    attentionWindowSeconds: parseInt(process.env.ATTENTION_WINDOW_SECONDS || '60') || 60,
+    attentionStrictMode: process.env.ATTENTION_STRICT_MODE !== 'false',
+    // 对话跟进窗口配置
+    conversationFollowupWindowSeconds: parseInt(process.env.CONVERSATION_FOLLOWUP_WINDOW_SECONDS || process.env.ATTENTION_WINDOW_SECONDS || '60') || 60,
+    conversationFollowupMinInterval: parseInt(process.env.CONVERSATION_FOLLOWUP_MIN_INTERVAL || '0') || 0,
+    // 全局群注意力隔离配置（默认跟随对话跟进窗口时长，避免同群刚聊完就被误判为未聚焦）
+    globalAttentionEnabled: (process.env.GLOBAL_ATTENTION_ENABLED || 'true') !== 'false',
+    globalAttentionWindowSeconds: parseInt(
+      process.env.GLOBAL_ATTENTION_WINDOW_SECONDS
+      || process.env.CONVERSATION_FOLLOWUP_WINDOW_SECONDS
+      || process.env.ATTENTION_WINDOW_SECONDS
+      || '60'
+    ) || 60
   };
 }
 
@@ -172,6 +189,36 @@ function checkKeywordMention(text, keywords) {
   }
   const lowerText = text.toLowerCase();
   return keywords.some(kw => lowerText.includes(kw.toLowerCase()));
+}
+
+// 全局注意力 gating：决定当前群是否允许进入智能回复计算
+function isGlobalAttentionAllowed(groupId, now, config, isAttentionTrigger) {
+  if (!config.globalAttentionEnabled || !groupId) {
+    return true;
+  }
+
+  const windowSeconds = config.globalAttentionWindowSeconds || config.attentionWindowSeconds;
+  const hasActive = globalAttentionState.currentGroupId && now < globalAttentionState.attentionActiveUntil;
+
+  if (!hasActive) {
+    // 当前没有聚焦群：只有触发消息可以抢占注意力
+    if (isAttentionTrigger) {
+      globalAttentionState.currentGroupId = groupId;
+      globalAttentionState.attentionActiveUntil = now + windowSeconds;
+      logger.debug(`[GlobalAttention] 聚焦群 ${groupId}, 窗口 ${windowSeconds}s`);
+      return true;
+    }
+    return false;
+  }
+
+  if (globalAttentionState.currentGroupId === groupId) {
+    // 已经在当前群：任意新消息都会顺延全局注意力窗口
+    globalAttentionState.attentionActiveUntil = now + windowSeconds;
+    return true;
+  }
+
+  // 已有其他群占用注意力且仍在窗口内：本群被隔离
+  return false;
 }
 
 /**
@@ -449,6 +496,14 @@ export async function shouldReply(msg) {
   const isGroup = msg.type === 'group';
   const isExplicitMention = Array.isArray(msg.at_users) && msg.at_users.some(at => at === msg.self_id);
 
+  // 计算是否处于对话跟进窗口（基于最近一次成功回复时间）
+  const timeSinceLastReply = state.lastReplyTime > 0 ? (now - state.lastReplyTime) : Number.POSITIVE_INFINITY;
+  const inFollowupWindow =
+    isGroup &&
+    config.conversationFollowupWindowSeconds > 0 &&
+    state.lastReplyTime > 0 &&
+    timeSinceLastReply <= config.conversationFollowupWindowSeconds;
+
   if (isGroup && config.attentionStrictMode) {
     const hasAttentionKeyword = Array.isArray(config.attentionKeywords) &&
       config.attentionKeywords.length > 0 &&
@@ -456,14 +511,40 @@ export async function shouldReply(msg) {
 
     const isAttentionTrigger = isExplicitMention || hasAttentionKeyword;
 
-    if (isAttentionTrigger) {
+    const allowedByGlobalAttention = isGlobalAttentionAllowed(
+      msg.group_id,
+      now,
+      config,
+      // 对话跟进窗口内也视为“需要继续关注”的强信号
+      isAttentionTrigger || inFollowupWindow
+    );
+
+    if (!allowedByGlobalAttention) {
+      const groupInfo = msg.group_id ? `群${msg.group_id}` : '私聊';
+      logger.debug(`[${groupInfo}] 用户${senderId}: 全局注意力未聚焦该群，跳过智能回复计算`);
+      return {
+        needReply: false,
+        reason: '全局注意力未聚焦该群',
+        mandatory: false,
+        probability: 0.0,
+        taskId: null
+      };
+    }
+
+    // 只要处于注意力窗口内，或新触发了注意力，或仍在对话跟进窗口内，就顺延本群注意力窗口
+    if (
+      isAttentionTrigger
+      || inFollowupWindow
+      || (state.attentionActiveUntil > 0 && now < state.attentionActiveUntil)
+    ) {
       state.lastAttentionTime = now;
       state.attentionActiveUntil = now + config.attentionWindowSeconds;
     }
 
     const inAttentionWindow = state.attentionActiveUntil > 0 && now < state.attentionActiveUntil;
 
-    if (!inAttentionWindow) {
+    // 如果既不在群注意力窗口内，也不在对话跟进窗口内，才视为“未处于注意力窗口”
+    if (!inAttentionWindow && !inFollowupWindow) {
       const groupInfo = msg.group_id ? `群${msg.group_id}` : '私聊';
       logger.debug(`[${groupInfo}] 用户${senderId}: 未处于注意力窗口，跳过智能回复计算`);
       return {
@@ -476,8 +557,19 @@ export async function shouldReply(msg) {
     }
   }
 
+  let effectiveMinInterval = config.minReplyInterval;
+  if (inFollowupWindow) {
+    const followInterval = config.conversationFollowupMinInterval;
+    if (!Number.isFinite(followInterval) || followInterval <= 0) {
+      // 窗口内不做最小间隔限制
+      effectiveMinInterval = 0;
+    } else {
+      effectiveMinInterval = Math.min(effectiveMinInterval, followInterval);
+    }
+  }
+
   // 检查回复间隔
-  if (!canReplyByInterval(conversationId, config.minReplyInterval)) {
+  if (!canReplyByInterval(conversationId, effectiveMinInterval)) {
     const groupInfo = msg.group_id ? `群${msg.group_id}` : '私聊';
     logger.debug(`[${groupInfo}] 用户${senderId}: 回复间隔不足，累积消息计数`);
     // 只累积消息计数和忽略次数
@@ -533,6 +625,7 @@ export async function shouldReply(msg) {
   const isExplicitGroupMention = isGroup && isExplicitMention;
   const mentionMustReply = !!config.mentionMustReply;
   const canUseLightModelForMention = isExplicitGroupMention && enableInterventionEnv && hasInterventionModel;
+  const inFollowupConversationMode = inFollowupWindow && isGroup && enableInterventionEnv && hasInterventionModel;
   
   if (isExplicitGroupMention && mentionMustReply) {
     const taskId = randomUUID();
@@ -543,6 +636,23 @@ export async function shouldReply(msg) {
       reason: '显式@（配置必须回复）',
       mandatory: true,
       probability: 1.0,
+      conversationId,
+      taskId,
+      state,
+      threshold: config.baseReplyThreshold
+    };
+  }
+  
+  // 对话跟进窗口：交给轻量模型决定是否需要继续回复（不再被基础阈值直接拦截）
+  if (inFollowupConversationMode) {
+    const taskId = randomUUID();
+    addActiveTask(senderId, taskId);
+    logger.info(`[${groupInfo}] 用户${senderId} 对话跟进窗口内，交给轻量模型判断, prob=${(probability * 100).toFixed(1)}%`);
+    return {
+      needReply: true,
+      reason: '对话跟进窗口',
+      mandatory: false,
+      probability,
       conversationId,
       taskId,
       state,
