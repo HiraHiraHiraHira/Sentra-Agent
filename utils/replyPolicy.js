@@ -52,7 +52,9 @@ function getConversationState(conversationId) {
       consecutiveIgnored: 0, // 连续忽略次数
       messageTimestamps: [], // 消息时间戳数组（用于时间衰减）
       lastMessageTime: 0, // 最后一条消息时间
-      avgMessageInterval: 0 // 平均消息间隔（用于对话节奏）
+      avgMessageInterval: 0, // 平均消息间隔（用于对话节奏）
+      lastAttentionTime: 0,
+      attentionActiveUntil: 0
     });
   }
   return conversationStates.get(conversationId);
@@ -116,9 +118,10 @@ function parseBotNames() {
  * 解析配置参数
  */
 function getConfig() {
+  const botNames = parseBotNames();
   return {
     // bot名称列表（支持多个昵称）
-    botNames: parseBotNames(),
+    botNames,
     // 最小回复间隔（秒）
     minReplyInterval: parseInt(process.env.MIN_REPLY_INTERVAL) || 5,
     // 欲望值增长速率（改进的对数曲线斜率）
@@ -145,7 +148,10 @@ function getConfig() {
     // Sigmoid激活函数的陡峭度
     sigmoidSteepness: parseFloat(process.env.SIGMOID_STEEPNESS) || 8.0,
     // 显式 @ 是否必须回复（true=显式 @ 一律回复，不走轻量模型；false=显式 @ 由轻量模型拍板）
-    mentionMustReply: process.env.MENTION_MUST_REPLY === 'true'
+    mentionMustReply: process.env.MENTION_MUST_REPLY === 'true',
+    attentionKeywords: botNames,
+    attentionWindowSeconds: parseInt(process.env.ATTENTION_WINDOW_SECONDS) || 60,
+    attentionStrictMode: process.env.ATTENTION_STRICT_MODE !== 'false'
   };
 }
 
@@ -158,6 +164,14 @@ function checkBotNameMention(text, botNames) {
   }
   const lowerText = text.toLowerCase();
   return botNames.some(name => lowerText.includes(name.toLowerCase()));
+}
+
+function checkKeywordMention(text, keywords) {
+  if (!text || !Array.isArray(keywords) || keywords.length === 0) {
+    return false;
+  }
+  const lowerText = text.toLowerCase();
+  return keywords.some(kw => lowerText.includes(kw.toLowerCase()));
 }
 
 /**
@@ -432,6 +446,36 @@ export async function shouldReply(msg) {
   }
   state.lastMessageTime = now;
   
+  const isGroup = msg.type === 'group';
+  const isExplicitMention = Array.isArray(msg.at_users) && msg.at_users.some(at => at === msg.self_id);
+
+  if (isGroup && config.attentionStrictMode) {
+    const hasAttentionKeyword = Array.isArray(config.attentionKeywords) &&
+      config.attentionKeywords.length > 0 &&
+      checkKeywordMention(msg.text, config.attentionKeywords);
+
+    const isAttentionTrigger = isExplicitMention || hasAttentionKeyword;
+
+    if (isAttentionTrigger) {
+      state.lastAttentionTime = now;
+      state.attentionActiveUntil = now + config.attentionWindowSeconds;
+    }
+
+    const inAttentionWindow = state.attentionActiveUntil > 0 && now < state.attentionActiveUntil;
+
+    if (!inAttentionWindow) {
+      const groupInfo = msg.group_id ? `群${msg.group_id}` : '私聊';
+      logger.debug(`[${groupInfo}] 用户${senderId}: 未处于注意力窗口，跳过智能回复计算`);
+      return {
+        needReply: false,
+        reason: '未处于注意力窗口',
+        mandatory: false,
+        probability: 0.0,
+        taskId: null
+      };
+    }
+  }
+
   // 检查回复间隔
   if (!canReplyByInterval(conversationId, config.minReplyInterval)) {
     const groupInfo = msg.group_id ? `群${msg.group_id}` : '私聊';
@@ -453,7 +497,6 @@ export async function shouldReply(msg) {
   
   // 2. 提及加成（注意力机制）
   // 显式@ 或 文本包含昵称 均视为“提及”以获得加成，但不再强制回复
-  const isExplicitMention = Array.isArray(msg.at_users) && msg.at_users.some(at => at === msg.self_id);
   const hasBotNameMention = isExplicitMention || checkBotNameMention(msg.text, config.botNames);
   const mentionBonus = hasBotNameMention ? config.mentionBonus : 0;
   
@@ -487,7 +530,6 @@ export async function shouldReply(msg) {
   
   const enableInterventionEnv = process.env.ENABLE_REPLY_INTERVENTION === 'true';
   const hasInterventionModel = !!process.env.REPLY_INTERVENTION_MODEL;
-  const isGroup = msg.type === 'group';
   const isExplicitGroupMention = isGroup && isExplicitMention;
   const mentionMustReply = !!config.mentionMustReply;
   const canUseLightModelForMention = isExplicitGroupMention && enableInterventionEnv && hasInterventionModel;

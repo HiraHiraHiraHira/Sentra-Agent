@@ -96,6 +96,38 @@ function collectAllNodeProjects() {
     return Array.from(projects);
 }
 
+function collectPnpmLockFiles(projects) {
+    const lockFiles = [];
+    for (const dir of projects) {
+        const lockPath = path.join(dir, 'pnpm-lock.yaml');
+        if (exists(lockPath)) {
+            lockFiles.push(lockPath);
+        }
+    }
+    return lockFiles;
+}
+
+function toGitPath(absolutePath) {
+    const rel = path.relative(ROOT_DIR, absolutePath) || '.';
+    return rel.split(path.sep).join('/');
+}
+
+async function ensureSkipWorktreeForLockFiles(lockFiles) {
+    if (!lockFiles.length) return;
+
+    console.log(chalk.cyan('\n🔧 Configuring Git to ignore local changes to pnpm-lock.yaml...\n'));
+
+    for (const file of lockFiles) {
+        const gitPath = toGitPath(file);
+        try {
+            await execCommand('git', ['update-index', '--skip-worktree', gitPath], ROOT_DIR);
+            console.log(chalk.gray(`  - ${gitPath}: marked as skip-worktree`));
+        } catch (e) {
+            console.log(chalk.yellow(`  - ${gitPath}: skip-worktree failed (${e.message})`));
+        }
+    }
+}
+
 function resolveMirrorProfileDefaults() {
     const profile = String(process.env.MIRROR_PROFILE || '').toLowerCase();
     const isChina = profile === 'china' || profile === 'cn' || profile === 'tsinghua' || profile === 'npmmirror' || profile === 'taobao';
@@ -224,6 +256,8 @@ async function update() {
         }
         console.log();
 
+        const lockFiles = collectPnpmLockFiles(projects);
+
         // Step 2: Git operations
         if (isForce) {
             console.log(chalk.yellow.bold('⚠️  Force Update Mode - This will discard local changes!\n'));
@@ -240,6 +274,10 @@ async function update() {
             await execCommand('git', ['clean', '-fd'], ROOT_DIR);
             spinner.succeed('Cleaned untracked files');
         } else {
+            if (lockFiles.length > 0) {
+                await ensureSkipWorktreeForLockFiles(lockFiles);
+            }
+
             spinner.start('Checking for updates...');
             await execCommand('git', ['fetch'], ROOT_DIR);
             spinner.succeed('Checked for updates');

@@ -208,29 +208,52 @@ export default async function handler(args = {}, options = {}) {
     ? args.send_as_music_card 
     : String(penv.BILI_SEND_AS_MUSIC_CARD || process.env.BILI_SEND_AS_MUSIC_CARD || 'false').toLowerCase() === 'true';
   
-  // 从参数或缓存中获取 ID（优先参数，其次缓存）
-  const { user_id, group_id, source } = await getIdsWithCache(args, options, 'bilibili_search');
-  
-  logger.info?.('bilibili_search:ids_resolved', { 
-    label: 'PLUGIN', 
-    user_id, 
-    group_id, 
-    source,
-    sendAsMusicCard 
-  });
-  
-  // 如果开启音乐卡片发送，必须提供目标
-  if (sendAsMusicCard && !user_id && !group_id) {
-    return { success: false, code: 'TARGET_REQUIRED', error: '发送音乐卡片时必须提供 user_id（私聊）或 group_id（群聊）' };
+  // 仅在音乐卡片模式下解析 QQ 目标 ID 和 WebSocket 配置，普通模式不依赖 ws 服务
+  let user_id;
+  let group_id;
+  let source;
+  let wsUrl;
+  let wsSendTimeoutMs;
+  let argStyle;
+  let pathMain;
+  let pathPri;
+  let pathGrp;
+
+  if (sendAsMusicCard) {
+    const ids = await getIdsWithCache(args, options, 'bilibili_search');
+    user_id = ids?.user_id;
+    group_id = ids?.group_id;
+    source = ids?.source;
+
+    logger.info?.('bilibili_search:ids_resolved', { 
+      label: 'PLUGIN', 
+      user_id, 
+      group_id, 
+      source,
+      sendAsMusicCard 
+    });
+
+    // 如果开启音乐卡片发送，必须提供目标
+    if (!user_id && !group_id) {
+      return { success: false, code: 'TARGET_REQUIRED', error: '发送音乐卡片时必须提供 user_id（私聊）或 group_id（群聊）' };
+    }
+
+    // WebSocket 配置（音乐卡片模式）
+    wsUrl = String(penv.WS_SDK_URL || process.env.WS_SDK_URL || 'ws://127.0.0.1:6702');
+    wsSendTimeoutMs = Math.max(1000, Number(penv.WS_SDK_TIMEOUT_MS || process.env.WS_SDK_TIMEOUT_MS || 15000));
+    argStyle = String(penv.WS_SDK_ARG_STYLE || process.env.WS_SDK_ARG_STYLE || 'pair');
+    pathMain = String(penv.WS_SDK_SEND_PATH || process.env.WS_SDK_SEND_PATH || '').trim();
+    pathPri = String(penv.WS_SDK_SEND_PATH_PRIVATE || process.env.WS_SDK_SEND_PATH_PRIVATE || 'send.private');
+    pathGrp = String(penv.WS_SDK_SEND_PATH_GROUP || process.env.WS_SDK_SEND_PATH_GROUP || 'send.group');
+  } else {
+    logger.info?.('bilibili_search:ids_resolved', { 
+      label: 'PLUGIN', 
+      user_id: null, 
+      group_id: null, 
+      source: null,
+      sendAsMusicCard 
+    });
   }
-  
-  // WebSocket 配置（音乐卡片模式）
-  const wsUrl = String(penv.WS_SDK_URL || process.env.WS_SDK_URL || 'ws://127.0.0.1:6702');
-  const wsSendTimeoutMs = Math.max(1000, Number(penv.WS_SDK_TIMEOUT_MS || process.env.WS_SDK_TIMEOUT_MS || 15000));
-  const argStyle = String(penv.WS_SDK_ARG_STYLE || process.env.WS_SDK_ARG_STYLE || 'pair');
-  const pathMain = String(penv.WS_SDK_SEND_PATH || process.env.WS_SDK_SEND_PATH || '').trim();
-  const pathPri = String(penv.WS_SDK_SEND_PATH_PRIVATE || process.env.WS_SDK_SEND_PATH_PRIVATE || 'send.private');
-  const pathGrp = String(penv.WS_SDK_SEND_PATH_GROUP || process.env.WS_SDK_SEND_PATH_GROUP || 'send.group');
   
   // B站视频下载配置
   const wantCover = String(penv.BILI_SAVE_COVER || process.env.BILI_SAVE_COVER || 'true').toLowerCase() !== 'false';
@@ -354,6 +377,16 @@ export default async function handler(args = {}, options = {}) {
         data.send_to = user_id || group_id;
         data.status = 'OK_MUSIC_CARD_SENT';
         data.summary = `已成功发送B站视频"${title}"（${bvid}）的音乐卡片到${data.send_target}`;
+        // 方便 MCP 等上层直接展示的 Markdown 文本
+        data.markdown = [
+          '### B 站视频搜索结果',
+          '',
+          `- 标题：[${title}](${urlVideoPage})`,
+          up ? `- UP 主：${up}` : null,
+          duration ? `- 时长：${duration}` : null,
+          bvid ? `- BV 号：\`${bvid}\`` : null,
+          `- 发送方式：${data.send_target}（已以音乐卡片形式发送）`
+        ].filter(Boolean).join('\n');
         logger.info?.('bilibili_search:send_music_card_success', { label: 'PLUGIN', target: data.send_target, to: data.send_to });
         return { success: true, data };
       } else {
@@ -441,6 +474,29 @@ export default async function handler(args = {}, options = {}) {
         logger.warn?.('bilibili_search:cover_download_failed', { label: 'PLUGIN', error: String(e?.message || e) });
       }
     }
+
+    // 为非音乐卡片模式统一构建 Markdown 文本，便于直接展示
+    try {
+      const lines = [];
+      lines.push('### B 站视频搜索结果');
+      lines.push('');
+      lines.push(`- 标题：[${title}](${urlVideoPage})`);
+      if (up) lines.push(`- UP 主：${up}`);
+      if (duration) lines.push(`- 时长：${duration}`);
+      if (bvid) lines.push(`- BV 号：\`${bvid}\``);
+      if (data.status) lines.push(`- 状态：${data.status}`);
+      if (data.notice) {
+        lines.push('');
+        lines.push(`> ${data.notice}`);
+      }
+      if (data.downloaded && data.path_markdown) {
+        lines.push('');
+        lines.push('本地文件：');
+        lines.push('');
+        lines.push(data.path_markdown);
+      }
+      data.markdown = lines.join('\n');
+    } catch {}
 
     logger.info?.('bilibili_search:complete', { label: 'PLUGIN', status: data.status, downloaded: data.downloaded });
     return { success: true, data };

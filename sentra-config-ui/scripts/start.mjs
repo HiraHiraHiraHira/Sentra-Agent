@@ -144,7 +144,7 @@ async function runNode(cmd, opts) {
       env.COLORTERM = env.COLORTERM || 'truecolor';
 
       console.log(chalk.blue(`Starting ${appName} in ${opts.env || 'production'} mode...`));
-      await run(process.execPath, [quotePath(entry)], { env, cwd: repoRoot });
+      await run(quotePath(process.execPath), [quotePath(entry)], { env, cwd: repoRoot });
       break;
     }
     case 'logs':

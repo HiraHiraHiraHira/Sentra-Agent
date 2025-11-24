@@ -254,7 +254,7 @@ async function installRequirementsWithFallback(vpy, emoDir, pipIndex, dryRun) {
 
   if (pipIndex) {
     attempts.push({
-      cmd: vpy,
+      cmd: quotePath(vpy),
       args: [...basePipArgs, '-i', pipIndex, ...(extraIndex ? ['--extra-index-url', extraIndex] : ['--extra-index-url', 'https://pypi.org/simple']), ...trustedArgs],
       label: `pip (-i ${pipIndex}${extraIndex ? ` + extra-index ${extraIndex}` : ' + extra-index pypi.org'})`
     });
@@ -262,7 +262,7 @@ async function installRequirementsWithFallback(vpy, emoDir, pipIndex, dryRun) {
 
   if (!pipOnlyCustomIndex) {
     attempts.push({
-      cmd: vpy,
+      cmd: quotePath(vpy),
       args: [...basePipArgs, '-i', 'https://pypi.org/simple', ...(extraIndex ? ['--extra-index-url', extraIndex] : []), ...trustedArgs],
       label: `pip (official pypi.org${extraIndex ? ` + extra-index ${extraIndex}` : ''})`
     });
@@ -334,7 +334,7 @@ async function ensureEmoPython(pyChoice, pipIndex, force, dryRun) {
   try {
     const trustedHosts = parseTrustedHostsFromEnv();
     const trustedArgs = trustedHosts.flatMap(h => ['--trusted-host', h]);
-    await run(vpy, ['-m', 'pip', 'install', '--upgrade', 'pip', '-i', 'https://pypi.org/simple', ...trustedArgs], emoDir);
+    await run(quotePath(vpy), ['-m', 'pip', 'install', '--upgrade', 'pip', '-i', 'https://pypi.org/simple', ...trustedArgs], emoDir);
   } catch { }
 
   console.log(chalk.blue('Installing requirements for sentra-emo...'));
