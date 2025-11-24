@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { join, resolve, basename, relative, dirname } from 'path';
+import { join, resolve, relative, dirname } from 'path';
 import { existsSync, statSync, readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, rmSync } from 'fs';
 
 // Helper to get root directory

@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { IoChevronBack, IoAdd, IoSave, IoSearch, IoDocumentText, IoTrash } from 'react-icons/io5';
 import Editor from '@monaco-editor/react';
 import { PresetsEditorState } from '../hooks/usePresetsEditor';
-import styles from './PresetsEditor.module.css'; // Reuse desktop styles where possible or define inline
+
 
 interface IOSPresetsEditorProps {
     onClose: () => void;
@@ -10,7 +10,7 @@ interface IOSPresetsEditorProps {
     state: PresetsEditorState;
 }
 
-export const IOSPresetsEditor: React.FC<IOSPresetsEditorProps> = ({ onClose, addToast, state }) => {
+export const IOSPresetsEditor: React.FC<IOSPresetsEditorProps> = ({ onClose, state }) => {
     const {
         files,
         selectedFile,
@@ -24,8 +24,7 @@ export const IOSPresetsEditor: React.FC<IOSPresetsEditorProps> = ({ onClose, add
         saveFile,
         setFileContent,
         createFile,
-        deleteFile,
-        refreshFiles
+        deleteFile
     } = state;
 
     const [showCreateModal, setShowCreateModal] = useState(false);

@@ -135,7 +135,7 @@ interface OpenFile {
     preview: boolean; // Per-file preview state
 }
 
-export const FileManager: React.FC<FileManagerProps> = ({ onClose, addToast, theme }) => {
+export const FileManager: React.FC<FileManagerProps> = ({ addToast, theme }) => {
     const [fileTree, setFileTree] = useState<FileNode[]>([]);
 
     // Multi-tab state
@@ -143,7 +143,6 @@ export const FileManager: React.FC<FileManagerProps> = ({ onClose, addToast, the
     const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
 
     const [loading, setLoading] = useState(false);
-    const [saving, setSaving] = useState(false);
 
     // Modal State
     const [modalOpen, setModalOpen] = useState(false);
@@ -268,7 +267,6 @@ export const FileManager: React.FC<FileManagerProps> = ({ onClose, addToast, the
 
     const handleSaveFile = async () => {
         if (!activeFile) return;
-        setSaving(true);
         try {
             await saveFileContent(activeFile.node.path, activeFile.content);
             setOpenFiles(prev => prev.map(f => {
@@ -284,8 +282,6 @@ export const FileManager: React.FC<FileManagerProps> = ({ onClose, addToast, the
             addToast('success', '保存成功');
         } catch (e) {
             addToast('error', '保存失败');
-        } finally {
-            setSaving(false);
         }
     };
 

@@ -1,20 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-    IoRefresh, IoFolderOpen, IoDocumentText,
-    IoImage, IoCodeSlash, IoChevronForward, IoChevronBack,
-    IoFolder, IoSettings, IoLogoMarkdown, IoClose, IoAdd, IoSave, IoTrash, IoSearch
+    IoImage, IoChevronForward, IoChevronBack,
+    IoFolder, IoSettings, IoLogoMarkdown, IoAdd, IoSave, IoTrash, IoDocumentText
 } from 'react-icons/io5';
 import {
     SiPython, SiJavascript, SiTypescript, SiHtml5, SiCss3,
     SiJson, SiGo, SiReact, SiGnubash, SiVite
 } from 'react-icons/si';
-import { VscNewFile, VscNewFolder, VscTrash, VscEdit, VscCopy, VscPreview } from 'react-icons/vsc';
+
 import Editor from '@monaco-editor/react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import {
     fetchFileTree, fetchFileContent, saveFileContent,
-    createFile, renameFile, deleteFile,
+    createFile, deleteFile,
     FileNode
 } from '../services/fileApi';
 import { ToastMessage } from './Toast';
@@ -66,7 +63,7 @@ interface OpenFile {
     preview: boolean;
 }
 
-export const IOSFileManager: React.FC<IOSFileManagerProps> = ({ onClose, addToast, theme }) => {
+export const IOSFileManager: React.FC<IOSFileManagerProps> = ({ onClose, addToast }) => {
     const [fileTree, setFileTree] = useState<FileNode[]>([]);
     const [currentPath, setCurrentPath] = useState<string>(''); // Root path is empty string or specific root
     const [activeFile, setActiveFile] = useState<OpenFile | null>(null);
@@ -79,7 +76,6 @@ export const IOSFileManager: React.FC<IOSFileManagerProps> = ({ onClose, addToas
     const [modalOpen, setModalOpen] = useState(false);
     const [modalType, setModalType] = useState<'createFile' | 'createFolder' | 'rename'>('createFile');
     const [modalInput, setModalInput] = useState('');
-    const [targetNode, setTargetNode] = useState<FileNode | null>(null);
 
     // Load Tree
     const loadTree = useCallback(async () => {
