@@ -28,6 +28,9 @@ dist-info/
 .env.*.local
 *.env
 
+# Agent preset files (always treated as local config)
+agent-presets/
+
 # Logs
 logs/
 *.log
@@ -115,6 +118,3 @@ test/1.txt.backup
 # User Data (Privacy Protection)
 userData/
 !userData/README.md
-
-# Agent Presets (Ignore custom presets, keep default only)
-agent-presets/*.txt
