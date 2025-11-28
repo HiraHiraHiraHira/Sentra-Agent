@@ -85,8 +85,12 @@ export async function buildPlanFunctionCallInstruction({ allowedAiNames = [], lo
   const vars = {
     allowed_list: allow,
     require_line: hasAllow
-      ? (String(locale).toLowerCase().startsWith('zh') ? '- 允许列表非空：steps 至少包含 1 步；若无法直接完成，请选择最接近的工具用于信息收集/授权/诊断等前置步骤。' : '- When allowed tools exist: include at least 1 step; if direct completion is not possible, pick the closest tool to gather info/request authorization/diagnose.')
-      : (String(locale).toLowerCase().startsWith('zh') ? '- 若确无合适工具，可输出空 steps 数组。' : '- If truly no tool fits, you may output an empty steps array.'),
+      ? (String(locale).toLowerCase().startsWith('zh')
+        ? '- 允许列表非空：优先从列表中选择 1 个或多个 MCP operations 组成步骤；若所有 operation 确实不适用，可以输出空 steps 数组，但绝不能发明列表外的 operation。'
+        : '- When allowed tools exist: prefer selecting one or more operations from the list; if none truly fit, you MAY return an empty steps array, but MUST NOT invent operations outside the list.')
+      : (String(locale).toLowerCase().startsWith('zh')
+        ? '- 若确无合适工具，可输出空 steps 数组，并且禁止创建列表外的虚构 operation。'
+        : '- If truly no tool fits, you may output an empty steps array, and you MUST NOT invent any operation outside the (possibly empty) list.'),
     schema_hint: schemaHint,
   };
   return renderTemplate(tpl, vars);

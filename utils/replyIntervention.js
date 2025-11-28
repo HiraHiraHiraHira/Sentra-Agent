@@ -38,110 +38,6 @@ function getAgent() {
   return sharedAgent;
 }
 
-const DECISION_TOOLS = [
-  {
-    type: 'function',
-    function: {
-      name: 'decide_reply',
-      description: 'Decide whether the assistant should reply to this group chat message.',
-      parameters: {
-        type: 'object',
-        properties: {
-          should_reply: {
-            type: 'boolean',
-            description: '是否需要立即由机器人回复本次消息（true/false）'
-          },
-          reason: {
-            type: 'string',
-            description: '简要中文原因说明，用于日志，比如：用户在提问 / 只是简单致谢 / 重复内容等'
-          },
-          confidence: {
-            type: 'number',
-            description: '本次判断的置信度，0-1 之间的数字',
-            minimum: 0,
-            maximum: 1
-          },
-          priority: {
-            type: 'string',
-            description: '回复优先级：high/normal/low',
-            enum: ['high', 'normal', 'low']
-          },
-          should_quote: {
-            type: 'boolean',
-            description: '是否建议使用引用回复（如果平台支持）'
-          }
-        },
-        required: ['should_reply', 'reason', 'confidence']
-      }
-    }
-  }
-];
-
-const DEDUP_TOOLS = [
-  {
-    type: 'function',
-    function: {
-      name: 'decide_send_dedup',
-      description: 'Judge whether the candidate reply text makes the base reply text redundant for the same conversation.',
-      parameters: {
-        type: 'object',
-        properties: {
-          are_similar: {
-            type: 'boolean',
-            description: 'true if the two replies express essentially the same meaning and the earlier one can be dropped.'
-          },
-          similarity: {
-            type: 'number',
-            description: 'Optional similarity score between 0 and 1 (higher = more similar).',
-            minimum: 0,
-            maximum: 1
-          },
-          reason: {
-            type: 'string',
-            description: 'Short English or Chinese explanation of why they are or are not considered duplicates.'
-          }
-        },
-        required: ['are_similar']
-      }
-    }
-  }
-];
-
-const OVERRIDE_TOOLS = [
-  {
-    type: 'function',
-    function: {
-      name: 'decide_override',
-      description: '判断新消息与之前消息之间的关系，以及是否需要取消当前正在执行的旧任务。',
-      parameters: {
-        type: 'object',
-        properties: {
-          relation: {
-            type: 'string',
-            description: '新消息与之前消息之间的语义关系：override=改主意/重写、append=补充信息、refine=细化/修正、unrelated=无关新话题',
-            enum: ['override', 'append', 'refine', 'unrelated']
-          },
-          should_cancel: {
-            type: 'boolean',
-            description: '是否建议取消当前正在执行的旧任务（true/false）'
-          },
-          reason: {
-            type: 'string',
-            description: '简短中文说明，例如："用户将地点从上海改为北京"'
-          },
-          confidence: {
-            type: 'number',
-            description: '判断置信度（0-1）',
-            minimum: 0,
-            maximum: 1
-          }
-        },
-        required: ['relation', 'should_cancel', 'confidence']
-      }
-    }
-  }
-];
-
 const SYSTEM_PROMPT = [
   '<role>reply_decision_classifier</role>',
   '<task>',
@@ -275,13 +171,30 @@ const DEDUP_SYSTEM_PROMPT = [
   '    they are NOT duplicates and both may be sent.',
   '  - Small wording differences, extra emojis, or short compliments do NOT prevent them from being duplicates.',
   '</guidelines>',
-  '<output>',
-  '  You must call the decide_send_dedup tool with:',
-  '  - are_similar=true if B makes A redundant;',
-  '  - are_similar=false otherwise;',
-  '  - optional similarity in [0,1];',
-  '  - a short reason.',
-  '</output>'
+  '<input_format>',
+  '  You will receive exactly one <send_dedup_input> block:',
+  '  <send_dedup_input>',
+  '    <base_text>string</base_text>',
+  '    <candidate_text>string</candidate_text>',
+  '  </send_dedup_input>',
+  '</input_format>',
+  '<decision_rules>',
+  '  - Consider semantic meaning, key facts, constraints, tone, and overall intent.',
+  '  - If B clearly covers and improves A with the same intent, they are duplicates (are_similar=true).',
+  '  - If B contradicts A, changes the main intent, or introduces new important content, they are NOT duplicates (are_similar=false).',
+  '  - Ignore minor wording differences, small emoji changes, or short compliments appended to the same content.',
+  '</decision_rules>',
+  '<output_requirements>',
+  '  You must output exactly one <sentra-dedup-decision> XML block and nothing else (no markdown, no chat text).',
+  '  Strict XML structure:',
+  '  <sentra-dedup-decision>',
+  '    <are_similar>true|false</are_similar>',
+  '    <similarity>0.0-1.0 (optional, omit if unsure)</similarity>',
+  '    <reason>Short explanation in Chinese or English describing whether they are duplicates.</reason>',
+  '  </sentra-dedup-decision>',
+  '  - Do NOT wrap the XML in markdown code fences.',
+  '  - Do NOT output any natural language outside the XML block.',
+  '</output_requirements>'
 ].join('\n');
 
 function escapeXmlText(text) {
@@ -359,6 +272,47 @@ function parseReplyDecisionXml(text) {
     confidence,
     priority,
     shouldQuote,
+    reason
+  };
+}
+
+function parseDedupDecisionXml(text) {
+  const xml = extractFirstTagBlock(text, 'sentra-dedup-decision');
+  if (!xml) {
+    return { error: 'missing <sentra-dedup-decision> block' };
+  }
+
+  const boolFrom = (raw) => {
+    if (raw == null) return null;
+    const t = String(raw).trim().toLowerCase();
+    if (!t) return null;
+    if (['true', '1', 'yes', 'y'].includes(t)) return true;
+    if (['false', '0', 'no', 'n'].includes(t)) return false;
+    return null;
+  };
+
+  const areSimilarRaw = extractTagText(xml, 'are_similar');
+  const areSimilar = boolFrom(areSimilarRaw);
+  if (areSimilar === null) {
+    return { error: 'invalid or missing <are_similar> (expect true/false)' };
+  }
+
+  const simRaw = extractTagText(xml, 'similarity');
+  let similarity = null;
+  if (simRaw) {
+    const n = parseFloat(simRaw);
+    if (!Number.isNaN(n)) {
+      similarity = Math.min(1, Math.max(0, n));
+    }
+  }
+
+  const reasonRaw = extractTagText(xml, 'reason');
+  const reason = reasonRaw || (areSimilar ? '模型判定为重复回复' : '模型判定为非重复回复');
+
+  return {
+    error: null,
+    areSimilar,
+    similarity,
     reason
   };
 }
@@ -734,7 +688,7 @@ export async function decideSendDedupPair(baseText, candidateText) {
   ].join('\n');
 
   try {
-    const result = await agent.chat(
+    const raw = await agent.chat(
       [
         { role: 'system', content: DEDUP_SYSTEM_PROMPT },
         { role: 'user', content: userContent }
@@ -742,23 +696,21 @@ export async function decideSendDedupPair(baseText, candidateText) {
       {
         model: REPLY_DECISION_MODEL,
         temperature: 0,
-        tools: DEDUP_TOOLS,
-        tool_choice: { type: 'function', function: { name: 'decide_send_dedup' } }
+        maxTokens: 96
       }
     );
+    const text = typeof raw === 'string' ? raw : String(raw ?? '');
+    const parsed = parseDedupDecisionXml(text);
 
-    if (!result || typeof result !== 'object') {
-      logger.warn('SendDedup: 工具返回结果不是对象，将回退为仅基于向量相似度判断');
+    if (parsed.error) {
+      logger.warn('SendDedup: XML 决策解析失败，将回退为仅基于向量相似度判断', {
+        err: parsed.error,
+        snippet: text.slice(0, 500)
+      });
       return null;
     }
 
-    const areSimilar = !!result.are_similar;
-    let similarity = null;
-    if (typeof result.similarity === 'number' && !Number.isNaN(result.similarity)) {
-      similarity = Math.max(0, Math.min(1, result.similarity));
-    }
-    const reason = typeof result.reason === 'string' ? result.reason : '';
-
+    const { areSimilar, similarity, reason } = parsed;
     return { areSimilar, similarity, reason };
   } catch (e) {
     logger.warn('SendDedup: 调用 LLM 决策失败，将回退为仅基于向量相似度判断', { err: String(e) });
