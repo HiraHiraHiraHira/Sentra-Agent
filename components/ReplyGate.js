@@ -3,7 +3,7 @@ import { tokenCounter } from '../src/token-counter.js';
 import emojiRegex from 'emoji-regex';
 import natural from 'natural';
 import LinkifyIt from 'linkify-it';
-import { getEnv } from '../utils/envHotReloader.js';
+import { getEnv, getEnvBool } from '../utils/envHotReloader.js';
 
 function getDefaultModel() {
   return getEnv('REPLY_DECISION_MODEL', getEnv('MAIN_AI_MODEL', 'gpt-4.1-mini'));
@@ -18,6 +18,113 @@ function clamp01(x) {
   if (x < 0) return 0;
   if (x > 1) return 1;
   return x;
+}
+
+function isReplyGateEnabled() {
+  return getEnvBool('REPLY_GATE_ENABLED', true);
+}
+
+const DEFAULT_REPLY_GATE_MODEL_CONFIG = {
+  version: 1,
+  contentWeights: {
+    bias: -0.5,
+    punctuationOnly: -1.2,
+    mentionByAt: 1.8,
+    mentionByName: 1.2,
+    tokenInIdealRange: 1.0,
+    tokenTooLong: -1.0,
+    tokenShortMeaningful: 0.6,
+    segmentCountHigh: 0.7,
+    averageSegmentLengthGood: 0.5,
+    lexicalDiversityLow: -0.9,
+    lexicalDiversityHigh: 0.4,
+    uniqueCharRatioLow: -0.8,
+    highPunctuationRatio: -0.8,
+    veryShortLowInfo: -0.7,
+    emojiOnly: -1.2,
+    emojiRatioHigh: -0.8,
+    emojiRatioMedium: -0.5,
+    highUrlRatio: -0.8,
+    mediumUrlRatio: -0.6,
+    recentSenderDuplicate: -0.7,
+    recentSenderNearDuplicate: -0.5,
+    followup: 0.8
+  },
+  budgetWeights: {
+    bias: 1.0,
+    senderFatigue: -2.0,
+    groupFatigue: -1.6,
+    senderReplyRate: -1.4,
+    groupReplyRate: -1.0
+  },
+  thresholds: {
+    lowProbability: 0.25,
+    highProbability: 0.6
+  }
+};
+
+let cachedReplyGateModelConfig = null;
+let cachedReplyGateModelConfigEnv = null;
+
+function mergeModelConfig(base, override) {
+  if (!override || typeof override !== 'object') return base;
+  const result = { ...base };
+  if (override.contentWeights && typeof override.contentWeights === 'object') {
+    result.contentWeights = { ...base.contentWeights, ...override.contentWeights };
+  }
+  if (override.budgetWeights && typeof override.budgetWeights === 'object') {
+    result.budgetWeights = { ...base.budgetWeights, ...override.budgetWeights };
+  }
+  if (override.thresholds && typeof override.thresholds === 'object') {
+    result.thresholds = { ...base.thresholds, ...override.thresholds };
+  }
+  if (typeof override.version === 'number') {
+    result.version = override.version;
+  }
+  return result;
+}
+
+function getReplyGateModelConfig() {
+  const raw = getEnv('REPLY_GATE_MODEL_CONFIG_JSON', '').trim();
+  if (!raw) {
+    if (!cachedReplyGateModelConfig) {
+      cachedReplyGateModelConfig = { ...DEFAULT_REPLY_GATE_MODEL_CONFIG };
+      cachedReplyGateModelConfigEnv = '';
+    }
+    return cachedReplyGateModelConfig;
+  }
+  if (cachedReplyGateModelConfig && cachedReplyGateModelConfigEnv === raw) {
+    return cachedReplyGateModelConfig;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    cachedReplyGateModelConfig = mergeModelConfig(DEFAULT_REPLY_GATE_MODEL_CONFIG, parsed || {});
+    cachedReplyGateModelConfigEnv = raw;
+  } catch {
+    cachedReplyGateModelConfig = { ...DEFAULT_REPLY_GATE_MODEL_CONFIG };
+    cachedReplyGateModelConfigEnv = raw;
+  }
+  return cachedReplyGateModelConfig;
+}
+
+function applyLinearModel(features, weights) {
+  if (!weights || typeof weights !== 'object') return 0;
+  if (!features || typeof features !== 'object') return 0;
+  let sum = 0;
+  for (const [name, weight] of Object.entries(weights)) {
+    if (!Number.isFinite(weight) || weight === 0) continue;
+    const v = features[name];
+    if (!Number.isFinite(v)) continue;
+    sum += v * weight;
+  }
+  return sum;
+}
+
+function sigmoid(x) {
+  if (!Number.isFinite(x)) return 0.5;
+  if (x > 20) return 1;
+  if (x < -20) return 0;
+  return 1 / (1 + Math.exp(-x));
 }
 
 function computeTextSimilarity(a, b) {
@@ -54,9 +161,16 @@ function computeInterestScore(rawText, signals = {}, context = {}) {
     && !hasWordLikeChars
     && emojiCount === 0;
 
+   const contentFeatures = {
+    bias: 1
+  };
+  const budgetFeatures = {
+    bias: 1
+  };
+
   if (punctuationOnly && !signals.isFollowupAfterBotReply) {
-    score -= 3;
-    details.punctuationOnly = -3;
+    contentFeatures.punctuationOnly = 1;
+    details.punctuationOnly = 1;
   }
 
   // 基础统计：分词 & token
@@ -79,36 +193,36 @@ function computeInterestScore(rawText, signals = {}, context = {}) {
 
   // 1) 提及信号（显式 @ / 名称提及）
   if (signals.mentionedByAt) {
-    score += 5;
-    details.mentionByAt = 5;
+    contentFeatures.mentionByAt = 1;
+    details.mentionByAt = 1;
   }
   if (!signals.mentionedByAt && signals.mentionedByName) {
-    score += 3;
-    details.mentionByName = 3;
+    contentFeatures.mentionByName = 1;
+    details.mentionByName = 1;
   }
 
   // 2) 文本长度 & token 数
   if (tokenCount >= 8 && tokenCount <= 256) {
-    score += 2;
-    details.tokenRange = 2;
+    contentFeatures.tokenInIdealRange = 1;
+    details.tokenRange = 1;
   } else if (tokenCount > 512) {
-    score -= 2;
-    details.tooLong = -2;
+    contentFeatures.tokenTooLong = 1;
+    details.tooLong = 1;
   } else if (tokenCount >= 3 && tokenCount < 8 && hasWordLikeChars) {
-    score += 0.5;
-    details.shortButMeaningful = 0.5;
+    contentFeatures.tokenShortMeaningful = 1;
+    details.shortButMeaningful = 1;
   }
 
   // 3) 内容丰富度（基于分词统计）
   if (segStats) {
     const { segmentCount, averageSegmentLength, primaryLanguage } = segStats;
     if (segmentCount > 5) {
-      score += 1;
+      contentFeatures.segmentCountHigh = 1;
       details.segmentCount = 1;
     }
     if (averageSegmentLength > 2 && averageSegmentLength < 20) {
-      score += 0.5;
-      details.avgSegmentLen = 0.5;
+      contentFeatures.averageSegmentLengthGood = 1;
+      details.avgSegmentLen = 1;
     }
     const segments = Array.isArray(segStats.segments) ? segStats.segments : [];
     if (segments.length > 0) {
@@ -120,11 +234,11 @@ function computeInterestScore(rawText, signals = {}, context = {}) {
         details.lexicalDiversity = Number(lexicalDiversity.toFixed(3));
         if (totalTokens >= 5) {
           if (lexicalDiversity < 0.3) {
-            score -= 1;
-            details.lowLexicalDiversity = -1;
+            contentFeatures.lexicalDiversityLow = 1;
+            details.lowLexicalDiversity = 1;
           } else if (lexicalDiversity > 0.7 && totalTokens >= 8) {
-            score += 0.5;
-            details.highLexicalDiversity = 0.5;
+            contentFeatures.lexicalDiversityHigh = 1;
+            details.highLexicalDiversity = 1;
           }
         }
       }
@@ -133,8 +247,8 @@ function computeInterestScore(rawText, signals = {}, context = {}) {
     const uniqueChars = new Set(text.split(''));
     const uniqueRatio = uniqueChars.size / Math.max(1, charCount);
     if (uniqueRatio < 0.4 && charCount >= 4) {
-      score -= 1.5;
-      details.lowUniqueCharRatio = -1.5;
+      contentFeatures.uniqueCharRatioLow = 1;
+      details.lowUniqueCharRatio = 1;
     }
     // 标点占比很高时，通常不是需要复杂回复的消息
     if (segStats.languageBlocks && Array.isArray(segStats.languageBlocks)) {
@@ -142,15 +256,16 @@ function computeInterestScore(rawText, signals = {}, context = {}) {
         .filter((b) => b.language === 'punctuation')
         .reduce((sum, b) => sum + (b.text?.length || 0), 0);
       const punctRatio = punctuationLen / Math.max(1, charCount);
+      details.punctuationRatio = Number.isFinite(punctRatio) ? Number(punctRatio.toFixed(3)) : 0;
       if (punctRatio > 0.6 && tokenCount < 16) {
-        score -= 1.5;
-        details.highPunctuationRatio = -1.5;
+        contentFeatures.highPunctuationRatio = 1;
+        details.highPunctuationRatio = 1;
       }
     }
     // 只有极少分词且没有任何文字信息时，才认为是低价值
     if (segmentCount <= 3 && charCount <= 8 && !hasWordLikeChars) {
-      score -= 1;
-      details.veryShortLowInfo = -1;
+      contentFeatures.veryShortLowInfo = 1;
+      details.veryShortLowInfo = 1;
     }
   }
 
@@ -161,14 +276,14 @@ function computeInterestScore(rawText, signals = {}, context = {}) {
 
     const emojiOnly = textWithoutEmoji.length === 0;
     if (emojiOnly && !signals.isFollowupAfterBotReply) {
-      score -= 2.5;
-      details.emojiOnly = -2.5;
+      contentFeatures.emojiOnly = 1;
+      details.emojiOnly = 1;
     } else if (emojiRatio > 0.7 && tokenCount < 32) {
-      score -= 1.5;
-      details.highEmojiRatio = -1.5;
+      contentFeatures.emojiRatioHigh = 1;
+      details.highEmojiRatio = 1;
     } else if (emojiRatio > 0.4 && tokenCount < 32) {
-      score -= 1;
-      details.mediumEmojiRatio = -1;
+      contentFeatures.emojiRatioMedium = 1;
+      details.mediumEmojiRatio = 1;
     }
   }
   let urlMatches = [];
@@ -182,15 +297,12 @@ function computeInterestScore(rawText, signals = {}, context = {}) {
     const urlRatio = urlCharLen / Math.max(1, charCount);
     details.urlCount = urlMatches.length;
     details.urlCharRatio = Number.isFinite(urlRatio) ? Number(urlRatio.toFixed(3)) : 0;
-    const penaltyFactor = signals.isFollowupAfterBotReply ? 0.5 : 1;
     if (urlRatio > 0.8 && tokenCount < 64) {
-      const delta = 2 * penaltyFactor;
-      score -= delta;
-      details.highUrlRatio = -delta;
+      contentFeatures.highUrlRatio = 1;
+      details.highUrlRatio = 1;
     } else if (urlRatio > 0.5 && tokenCount < 64) {
-      const delta = 1.5 * penaltyFactor;
-      score -= delta;
-      details.mediumUrlRatio = -delta;
+      contentFeatures.mediumUrlRatio = 1;
+      details.mediumUrlRatio = 1;
     }
   }
 
@@ -227,42 +339,68 @@ function computeInterestScore(rawText, signals = {}, context = {}) {
   }
 
   if (senderMaxSimilarity >= 0.9 && tokenCount <= 32 && !signals.isFollowupAfterBotReply) {
-    score -= 1.5;
-    details.recentSenderDuplicate = -1.5;
+    contentFeatures.recentSenderDuplicate = 1;
+    details.recentSenderDuplicate = 1;
   } else if (senderMaxSimilarity >= 0.8 && tokenCount <= 32 && !signals.isFollowupAfterBotReply) {
-    score -= 1;
-    details.recentSenderNearDuplicate = -1;
+    contentFeatures.recentSenderNearDuplicate = 1;
+    details.recentSenderNearDuplicate = 1;
   }
 
   // 5) 上下文信号：follow-up、fatigue 等
   if (signals.isFollowupAfterBotReply) {
-    score += 2;
-    details.followup = 2;
+    contentFeatures.followup = 1;
+    details.followup = 1;
   }
 
-  if (typeof signals.senderFatigue === 'number') {
-    const penalty = signals.senderFatigue * 3;
-    score -= penalty;
-    details.senderFatigue = -penalty;
+  const senderFatigueRaw = typeof signals.senderFatigue === 'number' ? signals.senderFatigue : 0;
+  const groupFatigueRaw = typeof signals.groupFatigue === 'number' ? signals.groupFatigue : 0;
+  const senderFatigue = clamp01(senderFatigueRaw);
+  const groupFatigue = clamp01(groupFatigueRaw);
+  const senderReplyRate = typeof signals.senderReplyCountWindow === 'number'
+    ? clamp01(signals.senderReplyCountWindow / 10)
+    : 0;
+  const groupReplyRate = typeof signals.groupReplyCountWindow === 'number'
+    ? clamp01(signals.groupReplyCountWindow / 60)
+    : 0;
+
+  budgetFeatures.senderFatigue = senderFatigue;
+  budgetFeatures.groupFatigue = groupFatigue;
+  budgetFeatures.senderReplyRate = senderReplyRate;
+  budgetFeatures.groupReplyRate = groupReplyRate;
+
+  details.senderFatigue = senderFatigue;
+  details.groupFatigue = groupFatigue;
+  if (typeof signals.senderReplyCountWindow === 'number') {
+    details.senderReplyCount = signals.senderReplyCountWindow;
+  }
+  if (typeof signals.groupReplyCountWindow === 'number') {
+    details.groupReplyCount = signals.groupReplyCountWindow;
   }
 
-  if (typeof signals.groupFatigue === 'number') {
-    const penalty = signals.groupFatigue * 2;
-    score -= penalty;
-    details.groupFatigue = -penalty;
-  }
+  const modelConfig = getReplyGateModelConfig();
+  const contentWeights = modelConfig.contentWeights || {};
+  const budgetWeights = modelConfig.budgetWeights || {};
 
-  // 近期机器人对该用户/群回复过多时，适当再减一点分
-  if (typeof signals.senderReplyCountWindow === 'number' && signals.senderReplyCountWindow > 5) {
-    score -= 0.5;
-    details.senderReplyCount = -0.5;
-  }
-  if (typeof signals.groupReplyCountWindow === 'number' && signals.groupReplyCountWindow > 30) {
-    score -= 0.5;
-    details.groupReplyCount = -0.5;
-  }
+  const contentZ = applyLinearModel(contentFeatures, contentWeights);
+  const pContent = sigmoid(contentZ);
 
-  return { score, details, tokenCount };
+  const budgetZ = applyLinearModel(budgetFeatures, budgetWeights);
+  const budgetFactorRaw = sigmoid(budgetZ);
+  const budgetFactor = clamp01(budgetFactorRaw);
+
+  const probability = clamp01(pContent * budgetFactor);
+
+  score = contentZ;
+
+  details.contentFeatures = contentFeatures;
+  details.budgetFeatures = budgetFeatures;
+  details.contentZ = Number(contentZ.toFixed(3));
+  details.budgetZ = Number(budgetZ.toFixed(3));
+  details.pContent = Number(pContent.toFixed(3));
+  details.budgetFactor = Number(budgetFactor.toFixed(3));
+  details.probability = Number(probability.toFixed(3));
+
+  return { score, details, tokenCount, probability };
 }
 
 /**
@@ -276,9 +414,19 @@ function computeInterestScore(rawText, signals = {}, context = {}) {
  */
 export function assessReplyWorth(msg, signals = {}, options = {}) {
   const scene = msg?.type || 'unknown';
-  const isGroup = scene === 'group';
-
   const rawText = ((msg?.text && String(msg.text)) || (msg?.summary && String(msg.summary)) || '').trim();
+
+  if (!isReplyGateEnabled()) {
+    return {
+      decision: 'llm',
+      score: 0,
+      normalizedScore: 1,
+      reason: 'reply_gate_disabled',
+      debug: { scene, rawTextLength: rawText.length }
+    };
+  }
+
+  const isGroup = scene === 'group';
 
   // 私聊的 worth 评估交给上层（目前私聊默认必回）
   if (!isGroup) {
@@ -300,28 +448,49 @@ export function assessReplyWorth(msg, signals = {}, options = {}) {
     };
   }
 
-  const { score, details, tokenCount } = computeInterestScore(rawText, signals, options);
+  const { score, details, tokenCount, probability } = computeInterestScore(rawText, signals, options);
 
-  const highThreshold = typeof options.highThreshold === 'number'
-    ? options.highThreshold
-    : parseFloat(process.env.REPLY_GATE_HIGH_THRESHOLD || '3');
-  const lowThreshold = typeof options.lowThreshold === 'number'
-    ? options.lowThreshold
-    : parseFloat(process.env.REPLY_GATE_LOW_THRESHOLD || '0');
+  const modelConfig = getReplyGateModelConfig();
+  const baseHighProb = clamp01(modelConfig?.thresholds?.highProbability ?? 0.6);
+  const baseLowProb = clamp01(modelConfig?.thresholds?.lowProbability ?? 0.25);
+
+  let highThreshold;
+  let lowThreshold;
+
+  if (typeof options.highThreshold === 'number') {
+    highThreshold = clamp01(options.highThreshold);
+  } else {
+    highThreshold = baseHighProb;
+  }
+
+  if (typeof options.lowThreshold === 'number') {
+    lowThreshold = clamp01(options.lowThreshold);
+  } else {
+    lowThreshold = baseLowProb;
+  }
+
+  if (lowThreshold > highThreshold) {
+    const tmp = lowThreshold;
+    lowThreshold = highThreshold;
+    highThreshold = tmp;
+  }
+
+  const prob = typeof probability === 'number' && Number.isFinite(probability)
+    ? clamp01(probability)
+    : clamp01((score - lowThreshold) / Math.max(1e-6, highThreshold - lowThreshold));
 
   let decision = 'llm';
   let reason = '';
 
-  if (score <= lowThreshold) {
+  if (prob <= lowThreshold) {
     decision = 'ignore';
-    reason = 'low_interest_score';
+    reason = 'low_interest_probability';
   } else {
     decision = 'llm';
-    reason = score >= highThreshold ? 'high_interest_score' : 'ambiguous_score_range';
+    reason = prob >= highThreshold ? 'high_interest_probability' : 'ambiguous_probability_range';
   }
 
-  // 将 score 映射到 0-1 区间，便于上层作为置信度参考
-  const normalizedScore = clamp01((score - lowThreshold) / Math.max(1e-6, highThreshold - lowThreshold));
+  const normalizedScore = prob;
 
   return {
     decision,

@@ -1,4 +1,3 @@
-import { extractJsonSync } from '@axync/extract-json';
 import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
@@ -122,6 +121,112 @@ export function normalizePresetJsonForRuntime(obj, options = {}) {
   return normalizePresetJson(inner, options);
 }
 
+function extractFirstTagBlock(text, tagName) {
+  if (!text || !tagName) return null;
+  const re = new RegExp(`<${tagName}[^>]*>[\\s\\S]*?<\/${tagName}\\s*>`, 'i');
+  const m = String(text).match(re);
+  return m ? m[0] : null;
+}
+
+function extractTagText(xml, tagName) {
+  if (!xml || !tagName) return '';
+  const re = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\/${tagName}\\s*>`, 'i');
+  const m = String(xml).match(re);
+  return m ? m[1].trim() : '';
+}
+
+function parseSimpleChildrenBlock(inner) {
+  const result = {};
+  if (!inner) return result;
+  const re = /<([A-Za-z0-9_:-]+)\b[^>]*>([\s\S]*?)<\/\1\s*>/g;
+  let m;
+  const src = String(inner);
+  while ((m = re.exec(src)) !== null) {
+    const tag = m[1];
+    const text = (m[2] || '').trim();
+    if (!tag) continue;
+    if (Object.prototype.hasOwnProperty.call(result, tag)) {
+      const prev = result[tag];
+      if (Array.isArray(prev)) {
+        prev.push(text);
+      } else {
+        result[tag] = [prev, text];
+      }
+    } else {
+      result[tag] = text;
+    }
+  }
+  return result;
+}
+
+function parseSentraAgentPresetXml(xml) {
+  if (!xml) return null;
+  const metaXml = extractFirstTagBlock(xml, 'meta');
+  const meta = {};
+  const metaKeys = ['node_name', 'category', 'description', 'version', 'author'];
+  for (const key of metaKeys) {
+    const v = extractTagText(metaXml, key);
+    if (v) {
+      meta[key] = v;
+    }
+  }
+
+  const parametersInner = extractTagText(xml, 'parameters');
+  const parameters = parseSimpleChildrenBlock(parametersInner);
+
+  const rulesInner = extractTagText(xml, 'rules');
+  const rules = [];
+  if (rulesInner) {
+    const reRule = /<rule\b[^>]*>([\s\S]*?)<\/rule\s*>/gi;
+    let m;
+    const src = String(rulesInner);
+    while ((m = reRule.exec(src)) !== null) {
+      const block = m[0];
+      const id = extractTagText(block, 'id');
+      const enabledRaw = extractTagText(block, 'enabled');
+      let enabled;
+      if (enabledRaw) {
+        const t = enabledRaw.trim().toLowerCase();
+        if (t === 'true' || t === '1') enabled = true;
+        else if (t === 'false' || t === '0') enabled = false;
+      }
+      const event = extractTagText(block, 'event');
+      const conditionsInner = extractTagText(block, 'conditions');
+      const conditions = [];
+      if (conditionsInner) {
+        const reCond = /<condition\b[^>]*>([\s\S]*?)<\/condition\s*>/gi;
+        let mc;
+        const srcCond = String(conditionsInner);
+        while ((mc = reCond.exec(srcCond)) !== null) {
+          const text = (mc[1] || '').trim();
+          if (!text) continue;
+          conditions.push({ type: 'text', value: text });
+        }
+      }
+      const behaviorInner = extractTagText(block, 'behavior');
+      const behavior = behaviorInner ? parseSimpleChildrenBlock(behaviorInner) : {};
+      const rule = { id: id || undefined, enabled, event: event || undefined };
+      if (conditions.length > 0) {
+        rule.conditions = conditions;
+      }
+      if (behavior && Object.keys(behavior).length > 0) {
+        rule.behavior = behavior;
+      }
+      rules.push(rule);
+    }
+  }
+
+  const result = {};
+  if (Object.keys(meta).length > 0) {
+    result.meta = meta;
+  }
+  result.parameters = parameters && typeof parameters === 'object' ? parameters : {};
+  if (rules.length > 0) {
+    result.rules = rules;
+  }
+  return result;
+}
+
 /**
  * 使用专门的轻量模型，将 .txt/.md 形式的角色预设转换为结构化 JSON 角色卡
  *
@@ -156,16 +261,17 @@ export async function convertPresetTextToJson({ agent, rawText, fileName, model 
   }
 
   const systemPrompt = [
-    'You are an AI specialized in converting Chinese agent persona presets into a structured JSON role card.',
-    'The preset describes the BOT itself (name, appearance, identity, interests, personality, behavior rules, etc.).',
+    'You are an internal Sentra XML sub-agent that converts Chinese agent persona presets into a structured <sentra-agent-preset> XML block.',
+    'The preset describes the BOT itself (appearance, identity, interests, personality, behavior rules, etc.).',
     '',
-    'You MUST use the provided function tool to output the JSON object. Do NOT answer with natural language.',
-    '',
-    'Key requirements:',
-    '- The top-level JSON MUST be an object, not an array.',
-    '- All natural language content must be in fluent Chinese.',
-    '- If some sections are missing in the original preset, fill them with reasonable placeholders based on the text, but do NOT invent unrelated facts.',
-    '- Do NOT mention that you are using tools or functions.'
+    'STRICT OUTPUT REQUIREMENTS:',
+    '- Output EXACTLY ONE <sentra-agent-preset> XML block and NOTHING ELSE (no markdown, no JSON, no explanations).',
+    '- Inside <sentra-agent-preset>, include <meta>, <parameters>, and optionally <rules>.',
+    '- In <meta>, provide node_name, category, description, and optionally version/author.',
+    '- In <parameters>, create FLAT child elements (no nested tags) such as <Appearance>, <Identity>, <Interests>, <Personality>, <Other> with rich Chinese text.',
+    '- In <rules>, each <rule> should contain <id>, <enabled>, optional <event>, optional <conditions> with multiple <condition> items, and optional <behavior> with flat child elements (e.g., <instruction>, <style>, <max_length>).',
+    '- All natural language content must be fluent Chinese.',
+    '- Do NOT mention tools, functions, JSON, or Sentra XML protocol explicitly.'
   ].join('\n');
 
   const userContent = [
@@ -174,7 +280,7 @@ export async function convertPresetTextToJson({ agent, rawText, fileName, model 
     text,
     '---',
     '',
-    '请你只输出一个符合上面说明的 JSON 对象，不要输出任何额外解释。'
+    '请你只输出一个结构完整、可机读的 <sentra-agent-preset> XML 块，不要输出任何额外解释或 JSON。'
   ].join('\n');
 
   const messages = [
@@ -184,74 +290,12 @@ export async function convertPresetTextToJson({ agent, rawText, fileName, model 
 
   const chosenModel = model || process.env.AGENT_PRESET_CONVERTER_MODEL || process.env.MAIN_AI_MODEL;
 
-  logger.info(`convertPresetTextToJson: 开始转换预设，file=${fileName || ''}, model=${chosenModel || ''}`);
+  logger.info(`convertPresetTextToJson: 开始转换预设(XML 工作流)，file=${fileName || ''}, model=${chosenModel || ''}`);
 
   let reply;
   try {
-    const tools = [
-      {
-        type: 'function',
-        function: {
-          name: 'build_agent_preset',
-          description: 'Convert the Chinese/Markdown agent preset text into a structured JSON role card for the BOT itself.',
-          parameters: {
-            type: 'object',
-            properties: {
-              meta: {
-                type: 'object',
-                description: 'High-level metadata of this agent persona node.',
-                properties: {
-                  node_name: { type: 'string', description: 'Node identifier, e.g. 失语_Aphasia_Character_Core' },
-                  category: { type: 'string', description: 'Category, e.g. 角色生成/Character_Loader' },
-                  description: { type: 'string', description: 'High level Chinese description of this persona' },
-                  version: { type: 'string' },
-                  author: { type: 'string' }
-                },
-                required: ['node_name', 'description']
-              },
-              parameters: {
-                type: 'object',
-                description: 'Structured persona sections such as Appearance, Identity, Interests, Personality, Other.',
-                additionalProperties: true
-              },
-              rules: {
-                type: 'array',
-                description: 'Optional behavior rules with event/condition/behavior.',
-                items: {
-                  type: 'object',
-                  properties: {
-                    id: { type: 'string' },
-                    enabled: { type: 'boolean' },
-                    event: { type: 'string' },
-                    conditions: {
-                      type: 'array',
-                      items: {
-                        type: 'object',
-                        properties: {
-                          type: { type: 'string' },
-                          value: {}
-                        },
-                        required: ['type']
-                      }
-                    },
-                    behavior: {
-                      type: 'object',
-                      additionalProperties: true
-                    }
-                  }
-                }
-              }
-            },
-            required: ['meta', 'parameters']
-          }
-        }
-      }
-    ];
-
     reply = await agent.chat(messages, {
       model: chosenModel,
-      tools,
-      tool_choice: { type: 'function', function: { name: 'build_agent_preset' } },
       temperature: 0
     });
   } catch (e) {
@@ -262,26 +306,28 @@ export async function convertPresetTextToJson({ agent, rawText, fileName, model 
     };
   }
 
-  let extracted = null;
-  if (reply && typeof reply === 'object') {
-    extracted = Array.isArray(reply) && reply.length > 0 ? reply[0] : reply;
-  } else {
-    const replyText = typeof reply === 'string' ? reply : String(reply ?? '');
-    try {
-      const arr = extractJsonSync(replyText, 1) || [];
-      if (Array.isArray(arr) && arr.length > 0) {
-        const candidate = arr[0];
-        if (candidate && (typeof candidate === 'object' || Array.isArray(candidate))) {
-          extracted = candidate;
-        }
-      }
-    } catch (e) {
-      logger.warn('convertPresetTextToJson: 使用 extractJsonSync 解析失败，将使用最小 JSON 回退', { err: String(e) });
-    }
+  const replyText = typeof reply === 'string' ? reply : String(reply ?? '');
+  const presetXml = extractFirstTagBlock(replyText, 'sentra-agent-preset');
+
+  if (!presetXml) {
+    logger.warn('convertPresetTextToJson: 未找到 <sentra-agent-preset> 块，使用最小 JSON 回退');
+    return {
+      presetJson: normalizePresetJson({}, { rawText: text, fileName }),
+      rawText: text
+    };
   }
 
-  if (!extracted) {
-    logger.warn('convertPresetTextToJson: 未能从 LLM 输出中提取有效 JSON，使用最小 JSON 回退');
+  let extracted = null;
+  try {
+    extracted = parseSentraAgentPresetXml(presetXml);
+  } catch (e) {
+    logger.warn('convertPresetTextToJson: 解析 <sentra-agent-preset> 失败，将使用最小 JSON 回退', {
+      err: String(e)
+    });
+  }
+
+  if (!extracted || typeof extracted !== 'object') {
+    logger.warn('convertPresetTextToJson: 未能从 XML 中提取有效预设，使用最小 JSON 回退');
     return {
       presetJson: normalizePresetJson({}, { rawText: text, fileName }),
       rawText: text
@@ -290,7 +336,7 @@ export async function convertPresetTextToJson({ agent, rawText, fileName, model 
 
   const normalized = normalizePresetJson(extracted, { rawText: text, fileName });
   savePresetCache(normalized, text, fileName);
-  logger.success('convertPresetTextToJson: 预设文本已成功结构化为 JSON');
+  logger.success('convertPresetTextToJson: 预设文本已通过 Sentra XML 成功结构化为 JSON');
 
   return {
     presetJson: normalized,

@@ -627,10 +627,26 @@ export async function shouldReply(msg, options = {}) {
 
     if (intervention && typeof intervention.shouldReply === 'boolean') {
       shouldReplyFlag = intervention.shouldReply;
-      if (typeof intervention.confidence === 'number') {
-        probability = intervention.confidence;
+      let interventionConfidence = probability;
+      if (typeof intervention.confidence === 'number' && Number.isFinite(intervention.confidence)) {
+        const c = intervention.confidence;
+        interventionConfidence = c < 0 ? 0 : c > 1 ? 1 : c;
       }
+      probability = interventionConfidence;
       reason = `ReplyIntervention: ${intervention.reason || (shouldReplyFlag ? '需要回复' : '无需回复')}`;
+
+      if (!shouldReplyFlag && Number.isFinite(interventionConfidence)) {
+        const noReplyConfidence = interventionConfidence < 0 ? 0 : interventionConfidence > 1 ? 1 : interventionConfidence;
+        const replyProb = noReplyConfidence >= 1 ? 0 : 1 - noReplyConfidence;
+        if (replyProb > 0) {
+          const r = Math.random();
+          if (r < replyProb) {
+            shouldReplyFlag = true;
+            probability = replyProb;
+            reason = `${reason}（低置信度随机保守回复, p=${replyProb.toFixed(2)}）`;
+          }
+        }
+      }
     }
 
     // 配置强制：显式 @ 且 mentionMustReply=true 时，覆盖为必须回复
