@@ -9,6 +9,8 @@ import { decideSendDedupPair } from './replyIntervention.js';
 
 const logger = createLogger('ReplySendQueue');
 const SEND_DEDUP_MIN_SIMILARITY = parseFloat(process.env.SEND_DEDUP_MIN_SIMILARITY || '0.8');
+const SEND_DEDUP_EMB_LOW = parseFloat(process.env.SEND_DEDUP_EMB_LOW || '0.6');
+const SEND_DEDUP_EMB_HIGH = parseFloat(process.env.SEND_DEDUP_EMB_HIGH || '0.85');
 const PURE_REPLY_SKIP_THRESHOLD = parseInt(process.env.PURE_REPLY_SKIP_THRESHOLD || '3', 10);
 const PURE_REPLY_SKIP_COOLDOWN_MS = parseInt(process.env.PURE_REPLY_SKIP_COOLDOWN_MS || '300000', 10);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -200,36 +202,64 @@ class ReplySendQueue {
     }
 
     let embeddingSim = null;
-    let llmResult = null;
-
-    await Promise.all([
-      (async () => {
-        try {
-          embeddingSim = await computeSemanticSimilarity(a, b);
-        } catch {
-          embeddingSim = null;
-        }
-      })(),
-      (async () => {
-        try {
-          llmResult = await decideSendDedupPair(a, b);
-        } catch {
-          llmResult = null;
-        }
-      })()
-    ]);
-
-    let areSimilar = false;
-
-    // 优先使用 LLM 的结构化判断
-    if (llmResult && typeof llmResult.areSimilar === 'boolean') {
-      areSimilar = llmResult.areSimilar;
-    } else if (embeddingSim != null && embeddingSim >= SEND_DEDUP_MIN_SIMILARITY) {
-      // LLM 不可用时，回退为仅基于向量相似度
-      areSimilar = true;
+    try {
+      embeddingSim = await computeSemanticSimilarity(a, b);
+    } catch {
+      embeddingSim = null;
     }
 
-    return { areSimilar, embeddingSim };
+    // 如果向量相似度不可用，回退为仅依赖 LLM 判断
+    if (embeddingSim == null || Number.isNaN(embeddingSim)) {
+      let llmResult = null;
+      try {
+        llmResult = await decideSendDedupPair(a, b);
+      } catch {
+        llmResult = null;
+      }
+
+      if (llmResult && typeof llmResult.areSimilar === 'boolean') {
+        return { areSimilar: llmResult.areSimilar, embeddingSim: null };
+      }
+
+      // LLM 也不可用时，保守地认为不相似，避免误删回复
+      return { areSimilar: false, embeddingSim: null };
+    }
+
+    // 确保阈值配置合理（low <= high），否则回退为单一阈值策略
+    let low = Number.isFinite(SEND_DEDUP_EMB_LOW) ? SEND_DEDUP_EMB_LOW : 0.6;
+    let high = Number.isFinite(SEND_DEDUP_EMB_HIGH) ? SEND_DEDUP_EMB_HIGH : 0.85;
+    if (low > high) {
+      // 配置异常时，退回到旧的单阈值行为
+      if (embeddingSim >= SEND_DEDUP_MIN_SIMILARITY) {
+        return { areSimilar: true, embeddingSim };
+      }
+      return { areSimilar: false, embeddingSim };
+    }
+
+    // 先使用 embedding 做快速决策
+    if (embeddingSim <= low) {
+      // 明显不相似
+      return { areSimilar: false, embeddingSim };
+    }
+    if (embeddingSim >= high) {
+      // 明显相似
+      return { areSimilar: true, embeddingSim };
+    }
+
+    // 仅在中间不确定区间 [low, high] 时调用 LLM 精判
+    let llmResult = null;
+    try {
+      llmResult = await decideSendDedupPair(a, b);
+    } catch {
+      llmResult = null;
+    }
+
+    if (llmResult && typeof llmResult.areSimilar === 'boolean') {
+      return { areSimilar: llmResult.areSimilar, embeddingSim };
+    }
+
+    // LLM 不可用且处于中间区间时，保守地认为不相似，避免误删
+    return { areSimilar: false, embeddingSim };
   }
 
   /**

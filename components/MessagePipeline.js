@@ -32,7 +32,8 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
     drainPendingMessagesForSender,
     shouldReply,
     sendAndWaitResult,
-    randomUUID
+    randomUUID,
+    saveMessageCache
   } = ctx;
 
   const userid = String(msg?.sender_id ?? '');
@@ -237,6 +238,16 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
 
         // 实时获取最新的消息列表
         senderMessages = getAllSenderMessages();
+
+        // 保存消息缓存（用于插件通过 runId 反查 user_id / group_id 等上下文）
+        if (typeof saveMessageCache === 'function') {
+          try {
+            const cacheMsg = senderMessages[senderMessages.length - 1] || msg;
+            await saveMessageCache(ev.runId, cacheMsg);
+          } catch (e) {
+            logger.debug(`保存消息缓存失败: ${groupId} runId=${ev.runId}`, { err: String(e) });
+          }
+        }
 
         // 检查是否有新消息到达
         if (senderMessages.length > initialMessageCount) {

@@ -1,4 +1,6 @@
+import logger from '../../src/logger/index.js';
 import wsCall from '../../src/utils/ws_rpc.js';
+import { getIdsWithCache } from '../../src/utils/message_cache_helper.js';
 
 function decodeHtmlEntities(text) {
   if (!text || typeof text !== 'string') return text;
@@ -61,6 +63,47 @@ export default async function handler(args = {}, options = {}) {
         ? `检测到 group_id=${groupIdRaw}，但本插件仅用于发送私聊消息。请提供目标用户的 QQ 号 user_id（不是群号）。`
         : `user_id 无效: ${userIdRaw}（必须是目标用户的 QQ 号，而不是群号或其他标识）。`;
     return { success: false, code: 'INVALID_USER_ID', error: errorMsg };
+  }
+
+  const { user_id: cachedUserId, group_id: cachedGroupId, source: idSource } = await getIdsWithCache({}, options, 'qq_message_send');
+  const cachedGroupNum = cachedGroupId != null ? Number(cachedGroupId) : NaN;
+  const cachedUserNum = cachedUserId != null ? Number(cachedUserId) : NaN;
+  const runId = options?.runId || options?.context?.runId;
+
+  if (Number.isFinite(cachedGroupNum) && cachedGroupNum > 0 && user_id === cachedGroupNum) {
+    logger.warn?.('qq_message_send:user_id_matches_group_id', {
+      label: 'PLUGIN',
+      runId,
+      user_id: String(user_id),
+      group_id: String(cachedGroupId),
+      source: idSource
+    });
+    return {
+      success: false,
+      code: 'INVALID_USER_ID_GROUP',
+      error: `当前会话为群聊（group_id=${cachedGroupId}），但提供的 user_id=${userIdRaw} 与群号相同。本插件仅支持发送私聊消息，请提供目标好友的 QQ 号（不是群号）。`
+    };
+  }
+
+  if (!cachedGroupId && Number.isFinite(cachedUserNum) && cachedUserNum > 0 && user_id === cachedUserNum) {
+    logger.info?.('qq_message_send:skip_already_private', {
+      label: 'PLUGIN',
+      runId,
+      user_id: String(user_id),
+      cachedUserId: String(cachedUserId),
+      source: idSource
+    });
+    const msg = '当前会话已经是与该用户的私聊，无需再次通过 qq_message_send 发送重复消息。';
+    return {
+      success: true,
+      code: 'ALREADY_IN_PRIVATE',
+      message: msg,
+      data: {
+        summary: msg,
+        user_id: String(user_id),
+        from: idSource || 'cache'
+      }
+    };
   }
 
   // 归一化文本：支持字符串或字符串数组，自动做 HTML 实体反转义并按空行拆段

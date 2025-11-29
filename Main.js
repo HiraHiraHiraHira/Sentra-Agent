@@ -6,7 +6,7 @@ import fs from 'fs';
 import { createWebSocketClient } from './components/WebSocketClient.js';
 import { buildSentraResultBlock, buildSentraUserQuestionBlock, convertHistoryToMCPFormat } from './utils/protocolUtils.js';
 import { smartSend } from './utils/sendUtils.js';
-import { cleanupExpiredCache } from './utils/messageCache.js';
+import { cleanupExpiredCache, saveMessageCache } from './utils/messageCache.js';
 import SentraEmo from './sentra-emo/sdk/index.js';
 import { timeParser } from './src/time-parser.js';
 import { buildSentraEmoSection } from './utils/emoXml.js';
@@ -287,14 +287,15 @@ async function handleOneMessage(msg, taskId) {
       drainPendingMessagesForSender,
       shouldReply,
       sendAndWaitResult,
-      randomUUID
+      randomUUID,
+      saveMessageCache
     },
     msg,
     taskId
   );
 }
 
-const baseSystemText = "{{sandbox_system_prompt}}\n{{sentra_tools_rules}}\n现在时间：{{time}}\n\n平台：\n{{qq_system_prompt}}";
+const baseSystemText = "{{sandbox_system_prompt}}\n{{sentra_tools_rules}}\n\n{{qq_system_prompt}}";
 const baseSystem = await SentraPromptsSDK(baseSystemText);
 
 function sendAndWaitResult(message) {
