@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto';
 import { createLogger } from './logger.js';
 import { planGroupReplyDecision } from './replyIntervention.js';
 import { assessReplyWorth } from '../components/ReplyGate.js';
+import { loadAttentionStats, updateAttentionStatsAfterDecision } from './attentionStats.js';
 
 const logger = createLogger('ReplyPolicy');
 
@@ -464,6 +465,41 @@ export async function shouldReply(msg, options = {}) {
 
   const isGroup = msg.type === 'group';
   const selfId = msg.self_id;
+  let attentionSession = null;
+  if (isGroup && msg.group_id) {
+    try {
+      const stats = await loadAttentionStats(msg.group_id, senderId);
+      if (stats && typeof stats === 'object') {
+        const considered = Number.isFinite(stats.consideredCount) ? stats.consideredCount : 0;
+        const replied = Number.isFinite(stats.repliedCount) ? stats.repliedCount : 0;
+        const avgAnalyzerProb =
+          considered > 0 && typeof stats.sumAnalyzerProb === 'number'
+            ? stats.sumAnalyzerProb / considered
+            : null;
+        const avgGateProb =
+          considered > 0 && typeof stats.sumGateProb === 'number'
+            ? stats.sumGateProb / considered
+            : null;
+        const avgFusedProb =
+          considered > 0 && typeof stats.sumFusedProb === 'number'
+            ? stats.sumFusedProb / considered
+            : null;
+        const replyRatio = considered > 0 ? (replied / considered) : null;
+        attentionSession = {
+          consideredCount: considered,
+          repliedCount: replied,
+          avgAnalyzerProb,
+          avgGateProb,
+          avgFusedProb,
+          replyRatio
+        };
+      }
+    } catch (e) {
+      logger.debug(`loadAttentionStats 失败: group ${msg.group_id} sender ${senderId}`, {
+        err: String(e)
+      });
+    }
+  }
   const isExplicitMention = Array.isArray(msg.at_users) && msg.at_users.some(at => String(at) === String(selfId));
   const groupInfo = msg.group_id ? `群${msg.group_id}` : '私聊';
 
@@ -560,16 +596,18 @@ export async function shouldReply(msg, options = {}) {
   };
 
   let probability = 1.0;
+  let gateProb = null;
   let reason = isGroup ? '群聊消息' : '消息';
   let mandatory = false;
   let shouldReplyFlag = true;
+  let gateResult = null;
 
   // 群聊 + 非显式 @ 的消息先通过 ReplyGate 进行价值预判：
   //  - decision = 'ignore'  => 直接不回
   //  - decision = 'llm'     => 继续交给 XML 决策 LLM
   if (isGroup && !isExplicitMention) {
     try {
-      const gateResult = assessReplyWorth(
+      gateResult = assessReplyWorth(
         msg,
         {
           mentionedByAt: isExplicitMention,
@@ -578,7 +616,8 @@ export async function shouldReply(msg, options = {}) {
           groupReplyCountWindow: groupFatigueInfo.count,
           senderFatigue: senderFatigueInfo.fatigue,
           groupFatigue: groupFatigueInfo.fatigue,
-          isFollowupAfterBotReply
+          isFollowupAfterBotReply,
+          attentionSession
         },
         {
           decisionContext
@@ -588,6 +627,34 @@ export async function shouldReply(msg, options = {}) {
       if (gateResult && gateResult.decision === 'ignore') {
         const gateReason = `ReplyGate: ${gateResult.reason || 'low_interest_score'}`;
         logger.info(`[${groupInfo}] 用户${senderId} 预判为不回复: ${gateReason}`);
+        if (isGroup && msg.group_id) {
+          try {
+            let analyzerProb = null;
+            if (
+              gateResult.debug &&
+              gateResult.debug.analyzer &&
+              typeof gateResult.debug.analyzer.probability === 'number'
+            ) {
+              analyzerProb = gateResult.debug.analyzer.probability;
+            }
+            const gateP =
+              typeof gateResult.normalizedScore === 'number' && Number.isFinite(gateResult.normalizedScore)
+                ? gateResult.normalizedScore
+                : null;
+            await updateAttentionStatsAfterDecision({
+              groupId: msg.group_id,
+              senderId,
+              analyzerProb,
+              gateProb: gateP,
+              fusedProb: 0,
+              didReply: false
+            });
+          } catch (e) {
+            logger.debug(`updateAttentionStatsAfterDecision 失败: group ${msg.group_id} sender ${senderId}`, {
+              err: String(e)
+            });
+          }
+        }
         return {
           needReply: false,
           reason: gateReason,
@@ -598,7 +665,11 @@ export async function shouldReply(msg, options = {}) {
         };
       }
       // 其余情况（包括 gateResult.decision === 'llm' 或 gateResult 为空）
-      // 继续走后面的 planGroupReplyDecision XML 决策
+      // 继续走后面的 planGroupReplyDecision XML 决策，并保留 gate 概率用于后续融合
+      if (gateResult && typeof gateResult.normalizedScore === 'number' && Number.isFinite(gateResult.normalizedScore)) {
+        const p = gateResult.normalizedScore;
+        gateProb = p < 0 ? 0 : p > 1 ? 1 : p;
+      }
     } catch (e) {
       logger.debug(`ReplyGate 预判失败，回退为正常 LLM 决策: ${groupInfo} sender ${senderId}`, {
         err: String(e)
@@ -636,14 +707,38 @@ export async function shouldReply(msg, options = {}) {
       reason = `ReplyIntervention: ${intervention.reason || (shouldReplyFlag ? '需要回复' : '无需回复')}`;
 
       if (!shouldReplyFlag && Number.isFinite(interventionConfidence)) {
-        const noReplyConfidence = interventionConfidence < 0 ? 0 : interventionConfidence > 1 ? 1 : interventionConfidence;
-        const replyProb = noReplyConfidence >= 1 ? 0 : 1 - noReplyConfidence;
-        if (replyProb > 0) {
+        const llmConf = interventionConfidence < 0 ? 0 : interventionConfidence > 1 ? 1 : interventionConfidence;
+        const pLlmReply = 1 - llmConf;
+
+        let fusedReplyProb = pLlmReply;
+
+        if (gateProb != null && gateProb > 0) {
+          const cap = 0.55;
+          const pGateNorm = gateProb <= 0 ? 0 : gateProb >= cap ? 1 : (gateProb / cap);
+          const eps = 1e-6;
+          const clamp01eps = (v) => {
+            if (!(Number.isFinite(v))) return 0.5;
+            if (v <= 0) return eps;
+            if (v >= 1) return 1 - eps;
+            return v;
+          };
+          const logit = (p) => Math.log(p / (1 - p));
+          const sigmoid = (x) => 1 / (1 + Math.exp(-x));
+
+          const lGate = logit(clamp01eps(pGateNorm));
+          const lLlm = logit(clamp01eps(pLlmReply));
+          const wGate = 0.35;
+          const wLlm = 0.65;
+          const lComb = wGate * lGate + wLlm * lLlm;
+          fusedReplyProb = sigmoid(lComb);
+        }
+
+        if (fusedReplyProb > 0) {
           const r = Math.random();
-          if (r < replyProb) {
+          if (r < fusedReplyProb) {
             shouldReplyFlag = true;
-            probability = replyProb;
-            reason = `${reason}（低置信度随机保守回复, p=${replyProb.toFixed(2)}）`;
+            probability = fusedReplyProb;
+            reason = `${reason}（本地gate与LLM融合后保守回复, p=${fusedReplyProb.toFixed(2)}）`;
           }
         }
       }
@@ -658,6 +753,32 @@ export async function shouldReply(msg, options = {}) {
       mandatory = true;
       reason = '显式@（配置必须回复）';
       probability = 1.0;
+    }
+  }
+
+  if (isGroup && msg.group_id) {
+    try {
+      let analyzerProb = null;
+      if (
+        gateResult &&
+        gateResult.debug &&
+        gateResult.debug.analyzer &&
+        typeof gateResult.debug.analyzer.probability === 'number'
+      ) {
+        analyzerProb = gateResult.debug.analyzer.probability;
+      }
+      await updateAttentionStatsAfterDecision({
+        groupId: msg.group_id,
+        senderId,
+        analyzerProb,
+        gateProb,
+        fusedProb: probability,
+        didReply: shouldReplyFlag
+      });
+    } catch (e) {
+      logger.debug(`updateAttentionStatsAfterDecision 失败: group ${msg.group_id} sender ${senderId}`, {
+        err: String(e)
+      });
     }
   }
 
