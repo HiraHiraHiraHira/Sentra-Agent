@@ -112,6 +112,16 @@ function toGitPath(absolutePath) {
     return rel.split(path.sep).join('/');
 }
 
+async function isGitTracked(gitPath) {
+    try {
+        // 如果文件未被 Git 跟踪，ls-files --error-unmatch 会抛错
+        await execCommandOutput('git', ['ls-files', '--error-unmatch', gitPath], ROOT_DIR);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 async function ensureSkipWorktreeForLockFiles(lockFiles) {
     if (!lockFiles.length) return;
 
@@ -120,6 +130,11 @@ async function ensureSkipWorktreeForLockFiles(lockFiles) {
     for (const file of lockFiles) {
         const gitPath = toGitPath(file);
         try {
+            const tracked = await isGitTracked(gitPath);
+            if (!tracked) {
+                console.log(chalk.gray(`  - ${gitPath}: not tracked by git, skip skip-worktree`));
+                continue;
+            }
             await execCommand('git', ['update-index', '--skip-worktree', gitPath], ROOT_DIR);
             console.log(chalk.gray(`  - ${gitPath}: marked as skip-worktree`));
         } catch (e) {
