@@ -298,12 +298,13 @@
   width: 100%;
   background: transparent;
   border: none;
-  padding: 6px 8px;
+  padding: 0 12px;
   color: var(--text-primary);
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 13px;
   outline: none;
-  height: 32px;
+  height: 36px;
+  line-height: 36px;
 }
 
 /* Modal */

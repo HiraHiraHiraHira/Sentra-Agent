@@ -39,6 +39,8 @@
     "langchain": "^0.2.0",
     "leven": "^4.0.0",
     "linkify-it": "^5.0.0",
+    "get-urls": "^11.0.0",
+    "extract-path": "^2.0.0",
     "luxon": "^3.4.4",
     "natural": "^6.5.0",
     "node-fetch": "^3.3.2",

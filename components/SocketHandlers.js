@@ -13,7 +13,9 @@ export function setupSocketHandlers(ctx) {
     cancelRunsForSender,
     collectBundleForSender,
     shouldReply,
-    handleOneMessage
+    handleOneMessage,
+    handleGroupReplyCandidate,
+    completeTask
   } = ctx;
 
   socket.on('message', async (data) => {
@@ -164,7 +166,22 @@ export function setupSocketHandlers(ctx) {
           return;
         }
 
-        await handleOneMessage(bundledMsg, taskId);
+        if (bundledMsg.type === 'group' && typeof handleGroupReplyCandidate === 'function') {
+          await handleGroupReplyCandidate(
+            {
+              groupId: msg.group_id,
+              senderId: userid,
+              bundledMsg,
+              taskId
+            },
+            {
+              handleOneMessage,
+              completeTask
+            }
+          );
+        } else {
+          await handleOneMessage(bundledMsg, taskId);
+        }
         return;
       }
     } catch (e) {

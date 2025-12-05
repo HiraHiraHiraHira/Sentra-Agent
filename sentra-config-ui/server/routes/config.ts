@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { scanAllConfigs } from '../utils/configScanner';
 import { writeEnvFile } from '../utils/envParser';
 import { join, resolve } from 'path';
+import { copyFileSync, existsSync } from 'fs';
 import { EnvVariable } from '../types';
 
 function getRootDir(): string {
@@ -28,7 +29,7 @@ export async function configRoutes(fastify: FastifyInstance) {
   }>('/api/configs/module', async (request, reply) => {
     try {
       const { moduleName, variables } = request.body;
-      
+
       if (!moduleName || !variables) {
         return reply.code(400).send({ error: 'Missing moduleName or variables' });
       }
@@ -53,7 +54,7 @@ export async function configRoutes(fastify: FastifyInstance) {
   }>('/api/configs/plugin', async (request, reply) => {
     try {
       const { pluginName, variables } = request.body;
-      
+
       if (!pluginName || !variables) {
         return reply.code(400).send({ error: 'Missing pluginName or variables' });
       }
@@ -67,6 +68,42 @@ export async function configRoutes(fastify: FastifyInstance) {
     } catch (error) {
       reply.code(500).send({
         error: 'Failed to save plugin configuration',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // 恢复默认配置
+  fastify.post<{
+    Body: { moduleName?: string; pluginName?: string };
+  }>('/api/configs/restore', async (request, reply) => {
+    try {
+      const { moduleName, pluginName } = request.body;
+
+      if (!moduleName && !pluginName) {
+        return reply.code(400).send({ error: 'Missing moduleName or pluginName' });
+      }
+
+      let targetPath = '';
+      if (moduleName) {
+        targetPath = join(getRootDir(), moduleName);
+      } else if (pluginName) {
+        targetPath = join(getRootDir(), 'sentra-mcp', 'plugins', pluginName);
+      }
+
+      const envPath = join(targetPath, '.env');
+      const examplePath = join(targetPath, '.env.example');
+
+      if (!existsSync(examplePath)) {
+        return reply.code(404).send({ error: '.env.example not found' });
+      }
+
+      copyFileSync(examplePath, envPath);
+
+      return { success: true, message: 'Configuration restored from .env.example' };
+    } catch (error) {
+      reply.code(500).send({
+        error: 'Failed to restore configuration',
         message: error instanceof Error ? error.message : String(error),
       });
     }

@@ -2,6 +2,7 @@ import logger from '../../logger/index.js';
 import { config, getStageModel } from '../../config/index.js';
 import { chatCompletion } from '../../openai/client.js';
 import { buildPlanningManifest, manifestToBulletedText } from './manifest.js';
+import { rerankManifest } from './router.js';
 import { getPreThought } from '../stages/prethought.js';
 import { upsertPlanMemory, searchPlanMemories } from '../../memory/index.js';
 import { loadPrompt, renderTemplate, composeSystem } from '../prompts/loader.js';
@@ -9,7 +10,7 @@ import { compactMessages } from '../utils/messages.js';
 import { clip } from '../../utils/text.js';
 import { buildPlanFunctionCallInstruction, parseFunctionCalls, buildFCPolicy, buildFunctionCallInstruction, formatSentraResult } from '../../utils/fc.js';
 import { HistoryStore } from '../../history/store.js';
-import { rerankManifest } from './router.js';
+import { isRunCancelled } from '../../bus/runCancel.js';
 
 function now() { return Date.now(); }
 
@@ -269,6 +270,8 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
   const maxRetries = Math.max(1, Number(fc.planMaxRetries ?? 3));
   const top_p = Number.isFinite(config.fcLlm?.planTopP) ? config.fcLlm.planTopP : undefined;
 
+  const runId = context?.runId;
+
   let steps = [];
   let lastContent = '';
   const enableMulti = !!config.planner?.multiEnable && Number(config.planner?.multiCandidates || 0) > 1;
@@ -313,6 +316,12 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
     }
 
     while (finished < K) {
+      if (runId && isRunCancelled(runId)) {
+        if (config.flags.enableVerboseSteps) {
+          logger.info('FC 多计划：检测到运行已取消，提前结束候选收集', { label: 'PLAN', runId, finished, K });
+        }
+        break;
+      }
       let waiter;
       if (deadline > 0) {
         const remain = Math.max(0, deadline - now());
@@ -341,6 +350,13 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
     if (config.flags.enableVerboseSteps) {
       logger.info('FC 多计划：生成候选数量', { label: 'PLAN', count: candidates.length });
     }
+    if (runId && isRunCancelled(runId)) {
+      if (config.flags.enableVerboseSteps) {
+        logger.info('FC 规划：运行已取消，返回空计划', { label: 'PLAN', runId });
+      }
+      return { manifest, steps: [] };
+    }
+
     if (candidates.length === 0) {
       const one = await generateSinglePlan({ baseMessages: messages, allowedAiNames, fc, planningTemp, top_p, maxRetries, policyText, planInstrText });
       steps = Array.isArray(one.steps) ? one.steps : [];
@@ -363,10 +379,23 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
       } catch {}
     }
   } else {
-    // 单计划路径（保持原有行为）
+    if (runId && isRunCancelled(runId)) {
+      if (config.flags.enableVerboseSteps) {
+        logger.info('FC 单计划：运行已取消，跳过规划', { label: 'PLAN', runId });
+      }
+      return { manifest, steps: [] };
+    }
+
     const one = await generateSinglePlan({ baseMessages: messages, allowedAiNames, fc, planningTemp, top_p, maxRetries, policyText, planInstrText });
     steps = Array.isArray(one.steps) ? one.steps : [];
     lastContent = one.raw || '';
+
+    if (runId && isRunCancelled(runId)) {
+      if (config.flags.enableVerboseSteps) {
+        logger.info('FC 单计划：运行在规划完成后被取消，返回空计划', { label: 'PLAN', runId });
+      }
+      return { manifest, steps: [] };
+    }
   }
 
   if (steps.length === 0) {

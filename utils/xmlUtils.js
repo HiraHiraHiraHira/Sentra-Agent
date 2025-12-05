@@ -3,6 +3,11 @@
  * 包含XML标签提取、JSON转XML、敏感信息过滤等功能
  */
 
+import getUrls from 'get-urls';
+import extractPathModule from 'extract-path';
+
+const extractPath = extractPathModule.default || extractPathModule;
+
 // 敏感字段列表
 const SENSITIVE_KEYS = [
   'apikey', 'api_key', 'api-key', 'token', 'access_token', 'refresh_token', 'authorization',
@@ -333,14 +338,29 @@ export function extractFilesFromContent(data, basePath = []) {
   
   const checkAndAdd = (value, key) => {
     if (typeof value !== 'string') return;
-    const lower = value.toLowerCase();
-    if (lower.includes('.webp') || lower.includes('.png') || lower.includes('.jpg') || 
-        lower.includes('.jpeg') || lower.includes('.gif') || lower.includes('.mp4') || 
-        lower.includes('.mp3') || lower.includes('.wav')) {
-      const match = value.match(/[ECD]:[\\\/][^\s\)\]]+|https?:\/\/[^\s\)\]]+/);
-      if (match) {
-        files.push({ key: [...basePath, key].join('.'), path: match[0] });
+    const keyPath = [...basePath, key].join('.');
+    const text = value;
+
+    // 使用 get-urls 提取任意 URL（包括 markdown 里的链接 / 图片）
+    try {
+      const urlSet = getUrls(text) || new Set();
+      for (const url of urlSet) {
+        if (!url) continue;
+        files.push({ key: keyPath, path: String(url) });
       }
+    } catch {}
+
+    // 如果字符串本身不是以 http/https 开头，再尝试通过 extract-path 提取本地 / 相对文件路径
+    if (!/^https?:\/\//i.test(text)) {
+      try {
+        const localPath = extractPath(text, {
+          validateFileExists: false,
+          resolveWithFallback: false
+        });
+        if (localPath && typeof localPath === 'string') {
+          files.push({ key: keyPath, path: localPath });
+        }
+      } catch {}
     }
   };
   
@@ -355,6 +375,17 @@ export function extractFilesFromContent(data, basePath = []) {
       else if (v && typeof v === 'object') files.push(...extractFilesFromContent(v, [...basePath, k]));
     });
   }
+
+  // 自动按 path 去重（优先保留第一次出现的 key）
+  const seen = new Set();
+  const unique = [];
+  for (const f of files) {
+    const p = (f && typeof f.path === 'string') ? f.path.trim() : '';
+    if (!p) continue;
+    if (seen.has(p)) continue;
+    seen.add(p);
+    unique.push(f);
+  }
   
-  return files;
+  return unique;
 }

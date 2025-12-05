@@ -8,13 +8,14 @@ const logger = createLogger('ReplySimilarityJudge');
 
 const SEND_DEDUP_MIN_SIMILARITY = parseFloat(getEnv('SEND_DEDUP_MIN_SIMILARITY', '0.8'));
 const SEND_DEDUP_USE_LLM = getEnvBool('SEND_DEDUP_USE_LLM', false);
+const SEND_DEDUP_LOCAL_DEBUG = getEnvBool('SEND_DEDUP_LOCAL_DEBUG', false);
 
 function buildAnalyzer() {
   try {
     return new ConversationAnalyzer({
       contextWindow: 4,
       maxSimilarity: 1,
-      debug: false
+      debug: SEND_DEDUP_LOCAL_DEBUG
     });
   } catch (e) {
     logger.warn('初始化 ConversationAnalyzer 失败，将仅使用 Embedding 相似度', { err: String(e) });
@@ -73,6 +74,17 @@ export async function judgeReplySimilarity(textA, textB) {
   }
 
   const candidates = [embSim, localSim].filter((x) => x != null && !Number.isNaN(x));
+  if (SEND_DEDUP_LOCAL_DEBUG) {
+    try {
+      logger.debug('judgeReplySimilarity 输入与初始相似度', {
+        aPreview: a.slice(0, 80),
+        bPreview: b.slice(0, 80),
+        embSim,
+        localSim,
+        hasCandidates: candidates.length > 0
+      });
+    } catch {}
+  }
   if (!candidates.length) {
     if (!SEND_DEDUP_USE_LLM) {
       return { areSimilar: false, similarity: null, source: 'none' };
@@ -89,6 +101,18 @@ export async function judgeReplySimilarity(textA, textB) {
   const combined = Math.max(...candidates);
   const threshold = Number.isFinite(SEND_DEDUP_MIN_SIMILARITY) ? SEND_DEDUP_MIN_SIMILARITY : 0.8;
   const useLlm = SEND_DEDUP_USE_LLM;
+
+   if (SEND_DEDUP_LOCAL_DEBUG) {
+    try {
+      logger.debug('judgeReplySimilarity 综合相似度', {
+        combined,
+        threshold,
+        useLlm,
+        embSim,
+        localSim
+      });
+    } catch {}
+  }
 
   if (!useLlm) {
     return { areSimilar: combined >= threshold, similarity: combined, source: 'local_only' };

@@ -11,8 +11,10 @@ import natural from 'natural';
 import leven from 'leven';
 import { distance as fastLeven } from 'fastest-levenshtein';
 import { createRequire } from 'node:module';
+import { createLogger } from '../../utils/logger.js';
 
 const require = createRequire(import.meta.url);
+const logger = createLogger('ConversationAnalyzer');
 const { Segment, useDefault } = require('segmentit');
 let bm25Factory = null; try { bm25Factory = require('wink-bm25-text-search'); } catch {}
 let sw = null; try { sw = require('stopword'); } catch {}
@@ -24,7 +26,7 @@ try {
   const m = require('bad-words-chinese');
   BadWordsChinese = m?.default || m;
 } catch (e) {
-  console.warn('`bad-words-chinese` not installed, Chinese compliance check will be limited.');
+  logger.warn('`bad-words-chinese` not installed, Chinese compliance check will be limited.', { err: String(e) });
 }
 
 let SensitiveWordFilter = null;
@@ -32,7 +34,7 @@ try {
   const m = require('sensitive-word-filter');
   SensitiveWordFilter = m?.default || m; 
 } catch (e) {
-  console.warn('`sensitive-word-filter` not installed, Chinese compliance check will be limited.');
+  logger.warn('`sensitive-word-filter` not installed, Chinese compliance check will be limited.', { err: String(e) });
 }
 
 const linkify = new LinkifyIt();
@@ -391,7 +393,7 @@ function createDefaultZhDetector() {
       }
     }
   } catch (e) {
-    console.log('`sensitive-word-filter` load failed:', e);
+    logger.warn('`sensitive-word-filter` load failed', { err: String(e) });
   }
   if (!swfDetector) return null;
   return (text) => {
@@ -497,7 +499,7 @@ export class ConversationAnalyzer {
     };
 
     if (this.config.debug) {
-      console.log('[Analyzer] 初始化:', {
+      logger.debug('[Analyzer] 初始化', {
         externalZhDetector: typeof this.config.compliance.zhDetector === 'function',
         swfAvailable: !!SensitiveWordFilter,
         compiledCtaRules: Array.isArray(this.config.resources?.ctaRules) ? this.config.resources.ctaRules.length : 0
@@ -637,6 +639,26 @@ export class ConversationAnalyzer {
       minhashNearnessMax: minhashNear
     });
 
+    // 将多种局部特征组合成“谁最像听谁”的策略（取最大值），
+    // 这样能覆盖“完全复读”“局部重合”“顺序打乱”等多种重复形态。
+    if (debug) {
+      try {
+        // debug 仅在调用者设置 config.debug 时输出，避免默认噪音。
+        logger.debug('ConversationAnalyzer 相似度特征', {
+          cleanTextPreview: cleanText.slice(0, 80),
+          historySize: recent.length,
+          tfidfMaxCosine: tfidfCos,
+          jaccardMax: jac,
+          overlapCoefMax: ovl,
+          bm25Max,
+          bm25MaxNorm: normBm25Score(bm25Max),
+          simhashNearnessMax: simhashNear,
+          minhashNearnessMax: minhashNear,
+          maxSimilarity: result.features.maxSimilarity
+        });
+      } catch {}
+    }
+
     const hasQuestionPunct = (this.config.punct?.questionMarks || ['?', '？']).some(ch => currentText.includes(ch));
     Object.assign(result.features, {
       youMention: mentionCount > 0 ? 1 : 0,
@@ -724,7 +746,9 @@ export class ConversationAnalyzer {
           zhResult.score = clamp(r.score || 0, 0, 1); zhResult.matches = r.matches || 0;
         }
       } catch (e) {
-        if (debug) console.error("Chinese detector failed:", e);
+        if (debug) {
+          logger.debug('Chinese detector failed', { err: String(e) });
+        }
       }
     }
 

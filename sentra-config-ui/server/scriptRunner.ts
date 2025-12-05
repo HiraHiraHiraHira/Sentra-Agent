@@ -60,6 +60,7 @@ export class ScriptRunner {
                     ...process.env,
                     ...runtimeEnv,
                     FORCE_COLOR: '3',
+                    CLICOLOR_FORCE: '1',
                     TERM: 'xterm-256color',
                     COLORTERM: 'truecolor',
                     PYTHONUNBUFFERED: '1'

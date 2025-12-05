@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense, lazy } from 'react';
 import { ConfigData } from './types/config';
 import { fetchConfigs, verifyToken, waitForBackend } from './services/api';
 import { LoginScreen } from './components/LoginScreen';
@@ -9,8 +9,9 @@ import { useDevice } from './hooks/useDevice';
 import 'react-contexify/dist/ReactContexify.css';
 import './styles/macOS.css';
 import './styles/ios.css';
-import { MobileView } from './views/MobileView';
-import { DesktopView } from './views/DesktopView';
+// Lazy load views
+const MobileView = lazy(() => import('./views/MobileView').then(module => ({ default: module.MobileView })));
+const DesktopView = lazy(() => import('./views/DesktopView').then(module => ({ default: module.DesktopView })));
 import { FileItem, DesktopIcon, AppFolder } from './types/ui';
 import { DEFAULT_WALLPAPERS, BING_WALLPAPER, SOLID_COLORS } from './constants/wallpaper';
 import { useIOSEditor } from './hooks/useIOSEditor';
@@ -63,6 +64,7 @@ function App() {
     handleVarChange,
     handleAddVar,
     handleDeleteVar,
+    handleRestore,
   } = useDesktopWindows({ setSaving, addToast, loadConfigs, onLogout: handleLogout });
 
   const [launchpadOpen, setLaunchpadOpen] = useState(false);
@@ -466,103 +468,108 @@ function App() {
   // iOS / Mobile / Tablet View
   if (isMobile || isTablet) {
     return (
-      <MobileView
-        allItems={allItems}
-        usageCounts={usageCounts}
-        recordUsage={recordUsage}
-        desktopIcons={desktopIcons}
-        launchpadOpen={launchpadOpen}
-        setLaunchpadOpen={setLaunchpadOpen}
-        handleIOSOpenWindow={openIOSWindow}
-        iosEditorWindows={iosEditorWindows}
-        activeIOSEditorId={activeIOSEditorId}
-        saving={saving}
-        handleIOSVarChange={handleIOSVarChange}
-        handleIOSAddVar={handleIOSAddVar}
-        handleIOSDeleteVar={handleIOSDeleteVar}
-        handleIOSSave={handleIOSSave}
-        handleIOSMinimizeEditor={handleIOSMinimizeEditor}
-        handleIOSCloseEditor={handleIOSCloseEditor}
-        toasts={toasts}
-        removeToast={removeToast}
-        terminalWindows={terminalWindows}
-        handleMinimizeTerminal={handleMinimizeTerminal}
-        handleCloseTerminal={handleCloseTerminal}
-        desktopFolders={desktopFolders}
-        iosPresetsEditorOpen={iosPresetsEditorOpen}
-        setIosPresetsEditorOpen={setIosPresetsEditorOpen}
-        iosFileManagerOpen={iosFileManagerOpen}
-        setIosFileManagerOpen={setIosFileManagerOpen}
-        addToast={addToast}
-        presetsState={presetsState}
-        redisState={redisState}
-      />
+      <Suspense fallback={<div className="loading-screen">加载中...</div>}>
+        <MobileView
+          allItems={allItems}
+          usageCounts={usageCounts}
+          recordUsage={recordUsage}
+          desktopIcons={desktopIcons}
+          launchpadOpen={launchpadOpen}
+          setLaunchpadOpen={setLaunchpadOpen}
+          handleIOSOpenWindow={openIOSWindow}
+          iosEditorWindows={iosEditorWindows}
+          activeIOSEditorId={activeIOSEditorId}
+          saving={saving}
+          handleIOSVarChange={handleIOSVarChange}
+          handleIOSAddVar={handleIOSAddVar}
+          handleIOSDeleteVar={handleIOSDeleteVar}
+          handleIOSSave={handleIOSSave}
+          handleIOSMinimizeEditor={handleIOSMinimizeEditor}
+          handleIOSCloseEditor={handleIOSCloseEditor}
+          toasts={toasts}
+          removeToast={removeToast}
+          terminalWindows={terminalWindows}
+          handleMinimizeTerminal={handleMinimizeTerminal}
+          handleCloseTerminal={handleCloseTerminal}
+          desktopFolders={desktopFolders}
+          iosPresetsEditorOpen={iosPresetsEditorOpen}
+          setIosPresetsEditorOpen={setIosPresetsEditorOpen}
+          iosFileManagerOpen={iosFileManagerOpen}
+          setIosFileManagerOpen={setIosFileManagerOpen}
+          addToast={addToast}
+          presetsState={presetsState}
+          redisState={redisState}
+        />
+      </Suspense>
     );
   }
 
   // Desktop View
   return (
-    <DesktopView
-      isSolidColor={isSolidColor}
-      currentWallpaper={currentWallpaper}
-      wallpaperFit={wallpaperFit}
-      brightness={brightness}
-      setBrightness={setBrightness}
-      theme={theme}
-      toggleTheme={toggleTheme}
-      showDock={showDock}
-      toggleDock={toggleDock}
-      openWindows={openWindows}
-      setOpenWindows={setOpenWindows}
-      activeWinId={activeWinId}
-      setActiveWinId={setActiveWinId}
-      bringToFront={bringToFront}
-      handleClose={handleClose}
-      handleSave={handleSave}
-      handleVarChange={handleVarChange}
-      handleAddVar={handleAddVar}
-      handleDeleteVar={handleDeleteVar}
-      saving={saving}
-      desktopIcons={desktopIcons}
-      desktopFolders={desktopFolders}
-      terminalWindows={terminalWindows}
-      setTerminalWindows={setTerminalWindows}
-      activeTerminalId={activeTerminalId}
-      bringTerminalToFront={bringTerminalToFront}
-      handleCloseTerminal={handleCloseTerminal}
-      handleMinimizeTerminal={handleMinimizeTerminal}
-      launchpadOpen={launchpadOpen}
-      setLaunchpadOpen={setLaunchpadOpen}
-      allItems={allItems}
-      recordUsage={recordUsage}
-      openWindow={openWindow}
-      dockFavorites={dockFavorites}
-      setDockFavorites={setDockFavorites}
-      uniqueDockItems={uniqueDockItems}
-      toasts={toasts}
-      removeToast={removeToast}
-      dialogOpen={dialogOpen}
-      dialogConfig={dialogConfig}
-      setDialogOpen={setDialogOpen}
-      wallpapers={wallpapers}
-      defaultWallpapers={DEFAULT_WALLPAPERS}
-      BING_WALLPAPER={BING_WALLPAPER}
-      SOLID_COLORS={SOLID_COLORS}
-      handleWallpaperSelect={handleWallpaperSelect}
-      handleUploadWallpaper={handleUploadWallpaper}
-      handleDeleteWallpaper={handleDeleteWallpaper}
-      setWallpaperFit={setWallpaperFit}
-      wallpaperInterval={wallpaperInterval}
-      setWallpaperInterval={setWallpaperInterval}
-      loadConfigs={loadConfigs}
-      presetsEditorOpen={presetsEditorOpen}
-      setPresetsEditorOpen={setPresetsEditorOpen}
-      fileManagerOpen={fileManagerOpen}
-      setFileManagerOpen={setFileManagerOpen}
-      presetsState={presetsState}
-      redisState={redisState}
-      addToast={addToast}
-    />
+    <Suspense fallback={<div className="loading-screen">加载中...</div>}>
+      <DesktopView
+        isSolidColor={isSolidColor}
+        currentWallpaper={currentWallpaper}
+        wallpaperFit={wallpaperFit}
+        brightness={brightness}
+        setBrightness={setBrightness}
+        theme={theme}
+        toggleTheme={toggleTheme}
+        showDock={showDock}
+        toggleDock={toggleDock}
+        openWindows={openWindows}
+        setOpenWindows={setOpenWindows}
+        activeWinId={activeWinId}
+        setActiveWinId={setActiveWinId}
+        bringToFront={bringToFront}
+        handleClose={handleClose}
+        handleSave={handleSave}
+        handleVarChange={handleVarChange}
+        handleAddVar={handleAddVar}
+        handleDeleteVar={handleDeleteVar}
+        handleRestore={handleRestore}
+        saving={saving}
+        desktopIcons={desktopIcons}
+        desktopFolders={desktopFolders}
+        terminalWindows={terminalWindows}
+        setTerminalWindows={setTerminalWindows}
+        activeTerminalId={activeTerminalId}
+        bringTerminalToFront={bringTerminalToFront}
+        handleCloseTerminal={handleCloseTerminal}
+        handleMinimizeTerminal={handleMinimizeTerminal}
+        launchpadOpen={launchpadOpen}
+        setLaunchpadOpen={setLaunchpadOpen}
+        allItems={allItems}
+        recordUsage={recordUsage}
+        openWindow={openWindow}
+        dockFavorites={dockFavorites}
+        setDockFavorites={setDockFavorites}
+        uniqueDockItems={uniqueDockItems}
+        toasts={toasts}
+        removeToast={removeToast}
+        dialogOpen={dialogOpen}
+        dialogConfig={dialogConfig}
+        setDialogOpen={setDialogOpen}
+        wallpapers={wallpapers}
+        defaultWallpapers={DEFAULT_WALLPAPERS}
+        BING_WALLPAPER={BING_WALLPAPER}
+        SOLID_COLORS={SOLID_COLORS}
+        handleWallpaperSelect={handleWallpaperSelect}
+        handleUploadWallpaper={handleUploadWallpaper}
+        handleDeleteWallpaper={handleDeleteWallpaper}
+        setWallpaperFit={setWallpaperFit}
+        wallpaperInterval={wallpaperInterval}
+        setWallpaperInterval={setWallpaperInterval}
+        loadConfigs={loadConfigs}
+        presetsEditorOpen={presetsEditorOpen}
+        setPresetsEditorOpen={setPresetsEditorOpen}
+        fileManagerOpen={fileManagerOpen}
+        setFileManagerOpen={setFileManagerOpen}
+        presetsState={presetsState}
+        redisState={redisState}
+        addToast={addToast}
+      />
+    </Suspense>
   );
 }
 

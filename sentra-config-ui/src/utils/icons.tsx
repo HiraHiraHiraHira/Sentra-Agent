@@ -102,6 +102,7 @@ export const getDisplayName = (name: string): string => {
     'qq_group_setcard': 'QQ设置群昵称',
     'qq_group_setname': 'QQ设置昵称',
     'qq_group_wholeban': 'QQ全体禁言',
+    'qq_message_send': 'QQ私聊回复',
     'qq_message_emojilike': 'QQ群贴表情',
     'qq_message_getfriendhistory': 'QQ获取私聊历史',
     'qq_message_getgrouphistory': 'QQ获取群历史',

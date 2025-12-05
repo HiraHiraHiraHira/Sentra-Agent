@@ -89,6 +89,32 @@ export async function savePluginConfig(
   }
 }
 
+export async function restoreModuleConfig(moduleName: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/configs/restore`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ moduleName }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || 'Failed to restore module configuration');
+  }
+}
+
+export async function restorePluginConfig(pluginName: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/configs/restore`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ pluginName }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || 'Failed to restore plugin configuration');
+  }
+}
+
 export async function fetchPresets(): Promise<any[]> {
   const response = await fetch(`${API_BASE}/presets`, {
     headers: getAuthHeaders()

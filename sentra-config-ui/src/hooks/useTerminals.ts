@@ -14,11 +14,11 @@ export function useTerminals({ addToast, allocateZ }: UseTerminalsParams) {
 
   const bringTerminalToFront = (id: string) => {
     const z = allocateZ ? allocateZ() : undefined;
-    setTerminalWindows(prev => prev.map(t => t.id === id ? { ...t, z: z ?? (t.z + 1) } : t));
+    setTerminalWindows(prev => prev.map(t => t.id === id ? { ...t, z: z ?? (t.z + 1), minimized: false } : t));
     setActiveTerminalId(id);
   };
 
-  const spawnTerminal = (title: string, appKey: string, processId: string) => {
+  const spawnTerminal = (title: string, appKey: string, processId: string, options?: { theme?: any, headerText?: string }) => {
     const id = `terminal-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
     const z = allocateZ ? allocateZ() : 1001;
     const terminal: TerminalWin = {
@@ -29,13 +29,15 @@ export function useTerminals({ addToast, allocateZ }: UseTerminalsParams) {
       pos: { x: window.innerWidth / 2 - 350, y: window.innerHeight / 2 - 250 },
       z,
       minimized: false,
+      theme: options?.theme,
+      headerText: options?.headerText,
     };
     setTerminalWindows(prev => [...prev, terminal]);
     setActiveTerminalId(id);
     return id;
   };
 
-  const runScript = async (path: string, title: string, appKey: string, args: string[]) => {
+  const runScript = async (path: string, title: string, appKey: string, args: string[], options?: { theme?: any, headerText?: string }) => {
     const existing = terminalWindows.find(t => t.appKey === appKey);
     if (existing) {
       if (existing.minimized) {
@@ -52,7 +54,7 @@ export function useTerminals({ addToast, allocateZ }: UseTerminalsParams) {
       });
       const data = await response.json();
       if (data.success && data.processId) {
-        spawnTerminal(title, appKey, data.processId);
+        spawnTerminal(title, appKey, data.processId, options);
       }
     } catch (error) {
       addToast('error', `Failed to run ${title}`, error instanceof Error ? error.message : undefined);
@@ -65,7 +67,31 @@ export function useTerminals({ addToast, allocateZ }: UseTerminalsParams) {
   const handleRunNapcatStart = async () => runScript('/api/scripts/napcat', 'Napcat Start', 'napcat-start', ['start']);
   const handleRunUpdate = async () => runScript('/api/scripts/update', 'Update Project', 'update', []);
   const handleRunForceUpdate = async () => runScript('/api/scripts/update', 'Force Update Project', 'force-update', ['force']);
-  const handleRunSentiment = async () => runScript('/api/scripts/sentiment', '情感分析服务', 'sentiment', []);
+  const handleRunSentiment = async () => runScript('/api/scripts/sentiment', '情感分析服务', 'sentiment', [], {
+    headerText: 'Sentra Emotion Analysis Engine v1.0',
+    theme: {
+      background: '#1a0b1c',
+      foreground: '#ffb7b2',
+      cursor: '#ff9a9e',
+      selectionBackground: 'rgba(255, 154, 158, 0.3)',
+      black: '#1a0b1c',
+      red: '#ff6b6b',
+      green: '#f093fb',
+      yellow: '#fecfef',
+      blue: '#a18cd1',
+      magenta: '#ff9a9e',
+      cyan: '#a18cd1',
+      white: '#fad0c4',
+      brightBlack: '#4a2b4f',
+      brightRed: '#ff8787',
+      brightGreen: '#f5576c',
+      brightYellow: '#fecfef',
+      brightBlue: '#bc93d1',
+      brightMagenta: '#ffc3a0',
+      brightCyan: '#bc93d1',
+      brightWhite: '#ffffff',
+    }
+  });
 
   const handleCloseTerminal = async (id: string) => {
     const terminal = terminalWindows.find(t => t.id === id);

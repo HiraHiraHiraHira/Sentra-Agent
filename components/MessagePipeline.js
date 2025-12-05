@@ -1,3 +1,39 @@
+import { getEnvBool, getEnvInt } from '../utils/envHotReloader.js';
+
+const swallowOnceStateByConversation = new Map();
+
+const SWALLOW_ON_SUPPLEMENT_ENABLED = getEnvBool('SWALLOW_ON_SUPPLEMENT_ENABLED', true);
+const SWALLOW_ON_SUPPLEMENT_MAX_WAIT_MS = getEnvInt('SWALLOW_ON_SUPPLEMENT_MAX_WAIT_MS', 0);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * 针对“补充消息”的单次吞吐策略（按会话维度）：
+ * - 每个会话在两次真实发送之间，若本次任务期间检测到补充消息，则允许吞掉一次已生成的回复；
+ * - 吞掉时仅跳过外发（不调用 smartSend），但仍保留内部对话记录；
+ * - 一旦有一次真实发送成功，则重置该会话的吞吐状态；
+ * - 受 SWALLOW_ON_SUPPLEMENT_ENABLED / SWALLOW_ON_SUPPLEMENT_MAX_WAIT_MS 控制，可通过 .env 开关与调参。
+ */
+function shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTask) {
+  if (!SWALLOW_ON_SUPPLEMENT_ENABLED || !conversationId || !hasSupplementDuringTask) return false;
+
+  const existing = swallowOnceStateByConversation.get(conversationId);
+  if (existing && existing.used) {
+    return false;
+  }
+
+  swallowOnceStateByConversation.set(conversationId, {
+    used: true,
+    lastUpdatedAt: Date.now()
+  });
+  return true;
+}
+
+function markReplySentForConversation(conversationId) {
+  if (!conversationId) return;
+  swallowOnceStateByConversation.delete(conversationId);
+}
+
 export async function handleOneMessageCore(ctx, msg, taskId) {
   const {
     logger,
@@ -40,6 +76,9 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
   const groupId = msg?.group_id ? `G:${msg.group_id}` : `U:${userid}`;
   const currentTaskId = taskId;
 
+  const mergedUsers = Array.isArray(msg?._mergedUsers) ? msg._mergedUsers : null;
+  const isMergedGroup = !!msg?._merged && mergedUsers && mergedUsers.length > 1 && msg?.type === 'group';
+
   const isProactive = !!msg?._proactive;
   const isProactiveFirst = !!msg?._proactiveFirst;
   const proactiveRootXml =
@@ -56,6 +95,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
   let currentUserContent = '';
   let isCancelled = false; // 任务取消标记：检测到新消息时设置为 true
   let hasReplied = false; // 引用控制标记：记录是否已经发送过第一次回复（只有第一次引用消息）
+  let hasSupplementDuringTask = false; // 本次任务期间是否检测到补充消息，用于单次吞吐控制
 
   // 从主动 root 指令 XML 中提取 <objective> 文本，用于 MCP 的 objective
   const extractObjectiveFromRoot = (xml) => {
@@ -113,7 +153,21 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
     // objective: 主动场景优先使用 root 指令中的 <objective>，否则回退为用户消息拼接
     // 确保 bot 在所有阶段都能看到清晰的“本轮意图”，而不是简单重复上一条用户文本
     let userObjective;
-    if (isProactive && proactiveRootXml) {
+    if (isMergedGroup) {
+      const mergedLines = [];
+      mergedUsers.forEach((u, idx) => {
+        if (!u) return;
+        const name = (u.sender_name || u.nickname || `User${idx + 1}`).trim();
+        const baseText =
+          (typeof u.text === 'string' && u.text.trim()) ||
+          (u.raw && ((u.raw.summary && String(u.raw.summary).trim()) || (u.raw.text && String(u.raw.text).trim()))) ||
+          '';
+        if (!baseText) return;
+        mergedLines.push(name ? `${name}: ${baseText}` : baseText);
+      });
+      const mergedText = mergedLines.join('\n\n');
+      userObjective = mergedText || buildConcatenatedContent(senderMessages);
+    } else if (isProactive && proactiveRootXml) {
       userObjective = extractObjectiveFromRoot(proactiveRootXml) || buildConcatenatedContent(senderMessages);
     } else {
       userObjective = buildConcatenatedContent(senderMessages);
@@ -186,7 +240,8 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
       currentUserContent = proactiveRootXml || '';
     } else {
       const pendingContextXml = historyManager.getPendingMessagesContext(groupId, userid);
-      const userQuestionXml = buildSentraUserQuestionBlock(latestMsg);
+      const baseUserMsg = isMergedGroup ? msg : latestMsg;
+      const userQuestionXml = buildSentraUserQuestionBlock(baseUserMsg);
       const combinedUserContent = pendingContextXml
         ? pendingContextXml + '\n\n' + userQuestionXml
         : userQuestionXml;
@@ -274,6 +329,57 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
     // 记录初始消息数量
     const initialMessageCount = senderMessages.length;
 
+    // 在 Judge / ToolResult 最终发送前，按需做一次额外静默等待：
+    // - 若在 SWALLOW_ON_SUPPLEMENT_MAX_WAIT_MS 时间内检测到新消息，则标记 hasSupplementDuringTask=true，触发单次吞吐逻辑；
+    // - 若未检测到新消息，则直接发送当前结果，避免无限等待。
+    const maybeWaitForSupplementBeforeSend = async () => {
+      if (!SWALLOW_ON_SUPPLEMENT_ENABLED || SWALLOW_ON_SUPPLEMENT_MAX_WAIT_MS <= 0) {
+        return;
+      }
+
+      const baseMessages = getAllSenderMessages();
+      const baseCount = Array.isArray(baseMessages) ? baseMessages.length : 0;
+
+      // 若此时已经出现补充消息，则无需额外等待，直接让吞吐策略生效
+      if (baseCount > initialMessageCount) {
+        hasSupplementDuringTask = true;
+        ctx.logger.info(
+          `补充消息静默等待: ${groupId} 发送前已存在补充消息 ${initialMessageCount} -> ${baseCount}，无需额外等待`
+        );
+        return;
+      }
+
+      const maxWait = SWALLOW_ON_SUPPLEMENT_MAX_WAIT_MS;
+      const pollInterval = Math.min(500, Math.max(100, Math.floor(maxWait / 5)));
+      const startWaitAt = Date.now();
+      ctx.logger.debug(
+        `补充消息静默等待: ${groupId} 最多等待 ${maxWait}ms 观察是否有新消息 (base=${baseCount})`
+      );
+
+      while (Date.now() - startWaitAt < maxWait) {
+        if (currentTaskId && isTaskCancelled(currentTaskId)) {
+          ctx.logger.info(`任务已取消: ${groupId} 结束发送前静默等待`);
+          return;
+        }
+
+        await sleep(pollInterval);
+
+        const latest = getAllSenderMessages();
+        const latestCount = Array.isArray(latest) ? latest.length : 0;
+        if (latestCount > baseCount) {
+          hasSupplementDuringTask = true;
+          ctx.logger.info(
+            `补充消息静默等待: ${groupId} 等待期间检测到新消息 ${baseCount} -> ${latestCount}，触发吞吐条件`
+          );
+          return;
+        }
+      }
+
+      ctx.logger.debug(
+        `补充消息静默等待: ${groupId} 等待 ${Date.now() - startWaitAt}ms 内未检测到新消息，直接发送`
+      );
+    };
+
     for await (const ev of sdk.stream({
       objective: userObjective,
       conversation: conversation,
@@ -307,6 +413,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
 
         // 检查是否有新消息到达
         if (senderMessages.length > initialMessageCount) {
+          hasSupplementDuringTask = true;
           logger.info(
             `动态感知: ${groupId} 检测到新消息 ${initialMessageCount} -> ${senderMessages.length}，将更新上下文`
           );
@@ -410,6 +517,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
 
           const latestSenderMessages = getAllSenderMessages();
           if (latestSenderMessages.length > initialMessageCount) {
+            hasSupplementDuringTask = true;
             logger.info(
               `动态感知Judge: ${groupId} 检测到补充消息 ${initialMessageCount} -> ${latestSenderMessages.length}，整合到上下文`
             );
@@ -421,20 +529,31 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
           }
 
           if (!noReply) {
+            await maybeWaitForSupplementBeforeSend();
+
             senderMessages = getAllSenderMessages();
             const finalMsg = senderMessages[senderMessages.length - 1] || msg;
             const allowReply = true;
-            logger.debug(
-              `引用消息Judge: ${groupId} 消息${finalMsg.message_id}, sender ${finalMsg.sender_id}, 队列${senderMessages.length}条, 允许引用 ${allowReply}`
-            );
-            await smartSend(finalMsg, response, sendAndWaitWithConv, allowReply, { hasTool: false });
-            hasReplied = true;
-            if (ctx.desireManager) {
-              try {
-                await ctx.desireManager.onBotMessage(finalMsg, { proactive: !!msg?._proactive });
-              } catch (e) {
-                logger.debug('DesireManager onBotMessage(Judge) failed', { err: String(e) });
+
+            const swallow = shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTask);
+            if (swallow) {
+              logger.info(
+                `补充消息吞吐策略: ${groupId} 本轮Judge阶段检测到补充消息，跳过外发，仅保留内部对话记录 (conversation=${conversationId})`
+              );
+            } else {
+              logger.debug(
+                `引用消息Judge: ${groupId} 消息${finalMsg.message_id}, sender ${finalMsg.sender_id}, 队列${senderMessages.length}条, 允许引用 ${allowReply}`
+              );
+              await smartSend(finalMsg, response, sendAndWaitWithConv, allowReply, { hasTool: false });
+              hasReplied = true;
+              if (ctx.desireManager) {
+                try {
+                  await ctx.desireManager.onBotMessage(finalMsg, { proactive: !!msg?._proactive });
+                } catch (e) {
+                  logger.debug('DesireManager onBotMessage(Judge) failed', { err: String(e) });
+                }
               }
+              markReplySentForConversation(conversationId);
             }
           } else {
             logger.info(`Judge 阶段: 模型选择保持沉默 (noReply=true)，跳过发送`);
@@ -557,6 +676,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
 
         const latestSenderMessages = getAllSenderMessages();
         if (latestSenderMessages.length > initialMessageCount) {
+          hasSupplementDuringTask = true;
           logger.info(
             `动态感知ToolResult: ${groupId} 检测到补充消息 ${initialMessageCount} -> ${latestSenderMessages.length}，整合到上下文`
           );
@@ -571,6 +691,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
           senderMessages = getAllSenderMessages();
           const finalMsg = senderMessages[senderMessages.length - 1] || msg;
           const allowReply = true;
+
           logger.debug(
             `引用消息ToolResult: ${groupId} 消息${finalMsg.message_id}, sender ${finalMsg.sender_id}, 队列${senderMessages.length}条, 允许引用 ${allowReply}`
           );
@@ -583,6 +704,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
               logger.debug('DesireManager onBotMessage(ToolResult) failed', { err: String(e) });
             }
           }
+          markReplySentForConversation(conversationId);
         } else {
           logger.info(`ToolResult 阶段: 模型选择保持沉默 (noReply=true)，跳过发送`);
         }

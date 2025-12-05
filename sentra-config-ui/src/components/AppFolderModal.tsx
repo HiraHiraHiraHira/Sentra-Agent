@@ -20,9 +20,7 @@ export const AppFolderModal: React.FC<AppFolderProps> = ({ folder, onAppClick, o
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    background: 'rgba(0, 0, 0, 0.6)',
-                    backdropFilter: 'blur(20px)',
-                    WebkitBackdropFilter: 'blur(20px)',
+                    background: 'rgba(0, 0, 0, 0.4)', // Slightly more transparent since no blur
                     zIndex: 10000,
                     animation: 'fadeIn 0.2s ease-out',
                 }}
@@ -35,16 +33,17 @@ export const AppFolderModal: React.FC<AppFolderProps> = ({ folder, onAppClick, o
                     top: '50%',
                     left: '50%',
                     transform: 'translate(-50%, -50%)',
-                    background: 'linear-gradient(145deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
-                    backdropFilter: 'blur(40px)',
-                    WebkitBackdropFilter: 'blur(40px)',
+                    background: 'rgba(30, 30, 30, 0.85)', // Fallback / stronger bg for performance
+                    backdropFilter: 'blur(20px)', // Reduced from 40px
+                    WebkitBackdropFilter: 'blur(20px)',
                     borderRadius: '24px',
-                    border: '1px solid rgba(255, 255, 255, 0.2)',
-                    boxShadow: '0 30px 80px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    boxShadow: '0 20px 60px rgba(0, 0, 0, 0.4)',
                     zIndex: 10001,
                     minWidth: '450px',
                     maxWidth: '600px',
-                    animation: 'scaleIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                    willChange: 'transform, opacity', // Performance hint
+                    animation: 'scaleIn 0.2s cubic-bezier(0.2, 0.8, 0.2, 1)',
                 }}
             >
                 {/* Header */}

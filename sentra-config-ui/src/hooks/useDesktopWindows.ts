@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { saveModuleConfig, savePluginConfig } from '../services/api';
+import { saveModuleConfig, savePluginConfig, restoreModuleConfig, restorePluginConfig } from '../services/api';
 import { getDisplayName } from '../utils/icons';
 import type { DeskWindow, FileItem } from '../types/ui';
 import type { EnvVariable } from '../types/config';
@@ -66,7 +66,7 @@ export function useDesktopWindows({ setSaving, addToast, loadConfigs, onLogout }
   const bringToFront = (id: string) => {
     setOpenWindows(ws => {
       const nextZ = zNext + 1;
-      return ws.map(w => (w.id === id ? { ...w, z: nextZ } : w));
+      return ws.map(w => (w.id === id ? { ...w, z: nextZ, minimized: false } : w));
     });
     setZNext(z => z + 1);
     setActiveWinId(id);
@@ -183,6 +183,26 @@ export function useDesktopWindows({ setSaving, addToast, loadConfigs, onLogout }
     addToast('success', '删除成功', `已删除变量 "${targetVar.key}"`);
   };
 
+  const handleRestore = async (id: string) => {
+    const win = openWindows.find(w => w.id === id);
+    if (!win) return;
+
+    try {
+      setSaving(true);
+      if (win.file.type === 'module') {
+        await restoreModuleConfig(win.file.name);
+      } else {
+        await restorePluginConfig(win.file.name);
+      }
+      addToast('success', '恢复成功', `已恢复 ${getDisplayName(win.file.name)} 配置为默认值`);
+      await loadConfigs(true);
+    } catch (error) {
+      addToast('error', '恢复失败', error instanceof Error ? error.message : '未知错误');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return {
     openWindows,
     setOpenWindows,
@@ -196,5 +216,6 @@ export function useDesktopWindows({ setSaving, addToast, loadConfigs, onLogout }
     handleVarChange,
     handleAddVar,
     handleDeleteVar,
+    handleRestore,
   } as const;
 }

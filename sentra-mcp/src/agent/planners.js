@@ -1063,8 +1063,8 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     };
     emitToolResultGrouped(ev, i);
     await HistoryStore.append(runId, ev);
-    if (config.memory?.enable) {
-      await upsertToolMemory({ runId, stepIndex: i, aiName, objective, reason: formatReason(step.reason), args: toolArgs, result: res, success: !!res.success });
+    if (config.memory?.enable && res?.success) {
+      await upsertToolMemory({ runId, stepIndex: i, aiName, objective, reason: formatReason(step.reason), args: toolArgs, result: res, success: true });
     }
     if (config.flags.enableVerboseSteps) logger.info('执行结果', { label: 'RESULT', aiName, success: res.success, code: res.code, dataPreview: clip(res?.data) });
 

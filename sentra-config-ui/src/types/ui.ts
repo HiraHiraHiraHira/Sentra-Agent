@@ -21,6 +21,8 @@ export type TerminalWin = {
   pos: { x: number; y: number };
   z: number;
   minimized: boolean;
+  theme?: any; // ITheme from xterm is not exported here, using any for now or need to import
+  headerText?: string;
 };
 
 export type DesktopIcon = {

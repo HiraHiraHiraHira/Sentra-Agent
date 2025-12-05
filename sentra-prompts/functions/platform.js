@@ -366,8 +366,43 @@ export async function getSandboxSystemPrompt() {
       '  <group_name>Group Name</group_name>\n' +
       '</sentra-user-question>\n' +
       '\n\n' +
+      'Multi-user merged group chat example (short window, multiple different users merged into one question):\n' +
+      '\n' +
+      '<sentra-user-question>\n' +
+      '  <mode>group_multi_user_merge</mode>\n' +
+      '  <type>group</type>\n' +
+      '  <group_id>1047175021</group_id>\n' +
+      '  <primary_sender_id>474764004</primary_sender_id>\n' +
+      '  <primary_sender_name>Alice</primary_sender_name>\n' +
+      '  <user_count>2</user_count>\n' +
+      '  <text>Alice: 请帮我看一下这个报错日志。\\n\\nBob: 我这边也遇到了类似的问题，可能和配置有关。</text>\n' +
+      '  <multi_user merge="true">\n' +
+      '    <user index="1">\n' +
+      '      <user_id>474764004</user_id>\n' +
+      '      <nickname>Alice</nickname>\n' +
+      '      <message_id>695540884</message_id>\n' +
+      '      <text>请帮我看一下这个报错日志。</text>\n' +
+      '      <time>2025/11/09 20:13:05</time>\n' +
+      '    </user>\n' +
+      '    <user index="2">\n' +
+      '      <user_id>2166683295</user_id>\n' +
+      '      <nickname>Bob</nickname>\n' +
+      '      <message_id>695540900</message_id>\n' +
+      '      <text>我这边也遇到了类似的问题，可能和配置有关。</text>\n' +
+      '      <time>2025/11/09 20:13:07</time>\n' +
+      '    </user>\n' +
+      '  </multi_user>\n' +
+      '</sentra-user-question>\n' +
+      '\n\n' +
+      'Variant semantics for `<sentra-user-question>`:\n' +
+      '- **Private chat (single user)**: `<type>private</type>`, no `<group_id>`, no `<multi_user>` block. Treat as a one-to-one conversation; you can safely use direct second-person address, and focus entirely on this single user\'s needs.\n' +
+      '- **Group chat (single sender)**: `<type>group</type>` with `<group_id>` present, but no `<multi_user>` block and no `<mode>group_multi_user_merge</mode>`. Treat it as one person speaking in a group context; keep tone neutral and concise, and only directly address them when appropriate (e.g., when you are @mentioned).\n' +
+      '- **Group chat (multi-user merged)**: `<type>group</type>` **AND** `<mode>group_multi_user_merge</mode>` **AND** `<user_count> > 1` **AND** a `<multi_user merge="true">` list with multiple `<user>` entries. This means several different users asked related questions in a short time window and have been merged into ONE logical user question. You MUST answer in a single `<sentra-response>` that reasonably covers all users\' questions together, and you may explicitly mention names (e.g., "Alice" / "Bob") when clarifying whose situation you are talking about.\n' +
+      '- In the multi-user merged case, treat the outer `<text>` as a **summary view** (often combining "Name: content" lines) and the `<multi_user>` block as the **authoritative structured source** (per-user id, nickname, original text, time). When in doubt, trust `<multi_user>` fields for who said what and in which order.\n' +
+      '- DO NOT try to split the merged question into multiple separate replies or simulate multiple outbound messages; always synthesize **one** coherent reply that addresses the merged group of users as a whole (while still being clear which part applies to whom if necessary).\n' +
+      '\n\n' +
       
-      'CRITICAL: In normal (non-proactive) turns, focus on this content as the message you must respond to. When `<sentra-root-directive>` has `<type>proactive</type>`, your first duty is to follow the root directive; in that proactive mode, `<sentra-user-question>` is often just the latest message for context and you should NOT keep extending or re-explaining the same question.\n\n' +
+      'CRITICAL: In normal (non-proactive) turns, focus on this content as the message you must respond to. When `<sentra-root-directive>` has `<type>proactive</type>`, your first duty is to follow the root directive; in that proactive mode, `<sentra-user-question>` (including its multi-user merged form) is often just the latest foreground context and you should NOT keep endlessly extending or re-explaining the same question.\n\n' +
       
       '#### 2. `<sentra-pending-messages>` - Conversation Context (REFERENCE)\n' +
       '**Purpose**: Recent conversation history for context\n' +

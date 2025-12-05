@@ -39,6 +39,7 @@ import { setupSocketHandlers } from './components/SocketHandlers.js';
 import { initAgentPresetCore } from './components/AgentPresetInitializer.js';
 import DesireManager from './utils/desireManager.js';
 import { buildProactiveRootDirectiveXml } from './components/ProactiveDirectivePlanner.js';
+import { handleGroupReplyCandidate } from './utils/groupReplyMerger.js';
 
 const ENV_PATH = process.env.ENV_FILE || '.env';
 loadEnv(ENV_PATH);
@@ -558,7 +559,9 @@ setupSocketHandlers({
   collectBundleForSender,
   shouldReply,
   handleOneMessage,
-  desireManager
+  desireManager,
+  handleGroupReplyCandidate,
+  completeTask
 });
 
 const DESIRE_TICK_INTERVAL_MS = getEnvInt('DESIRE_TICK_INTERVAL_MS', 60000);

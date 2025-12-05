@@ -23,6 +23,15 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       outDir: 'dist',
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'monaco-editor': ['monaco-editor'],
+            'react-vendor': ['react', 'react-dom', 'framer-motion'],
+            'icons': ['react-icons']
+          }
+        }
+      }
     },
   };
 });

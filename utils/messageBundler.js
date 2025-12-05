@@ -9,12 +9,38 @@ const BUNDLE_MAX_MS = getEnvInt('BUNDLE_MAX_MS', 15000);
 const BUNDLE_MIN_SIMILARITY = parseFloat(getEnv('BUNDLE_MIN_SIMILARITY', '0.6'));
 const BUNDLE_MAX_LOW_SIM_COUNT = getEnvInt('BUNDLE_MAX_LOW_SIM_COUNT', 2);
 
+// 向量相似度计算的保护参数：防止 Embedding 请求过慢拖垮整体消息处理
+const BUNDLE_EMBEDDING_TIMEOUT_MS = getEnvInt('BUNDLE_EMBEDDING_TIMEOUT_MS', 8000);
+const BUNDLE_EMBEDDING_MAX_RETRIES = getEnvInt('BUNDLE_EMBEDDING_MAX_RETRIES', 0);
+
 // senderId -> { collecting: true, messages: [], lastUpdate: number }
 const senderBundles = new Map();
 // senderId -> messages[] （等待活跃任务完成后处理）
 const pendingMessagesByUser = new Map();
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function withTimeout(promiseFactory, timeoutMs, label) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return promiseFactory();
+  }
+
+  let timer = null;
+  try {
+    return await Promise.race([
+      promiseFactory(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error(`${label || 'Operation'} timed out after ${timeoutMs}ms`);
+          err.code = 'EMBED_TIMEOUT';
+          reject(err);
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function normalizeSenderId(senderId) {
   return String(senderId ?? '');
@@ -73,17 +99,41 @@ export async function computeSemanticSimilarity(textA, textB) {
   const b = (textB || '').trim();
   if (!a || !b) return null;
 
-  try {
-    const vectors = await client.embedDocuments([a, b]);
-    if (!Array.isArray(vectors) || vectors.length < 2) return null;
-    const vA = vectors[0];
-    const vB = vectors[1];
-    const similarity = dot(vA, vB) / (norm(vA) * norm(vB));
-    return similarity;
-  } catch (e) {
-    logger.warn('Embedding 相似度计算失败，回退为纯时间聚合', { err: String(e) });
-    return null;
+  const maxAttempts = Math.max(0, BUNDLE_EMBEDDING_MAX_RETRIES) + 1;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const vectors = await withTimeout(
+        () => client.embedDocuments([a, b]),
+        BUNDLE_EMBEDDING_TIMEOUT_MS,
+        'Embedding 相似度计算'
+      );
+
+      if (!Array.isArray(vectors) || vectors.length < 2) {
+        logger.warn('Embedding 相似度计算返回结果不完整，回退为纯时间聚合');
+        return null;
+      }
+
+      const vA = vectors[0];
+      const vB = vectors[1];
+      const similarity = dot(vA, vB) / (norm(vA) * norm(vB));
+      return similarity;
+    } catch (e) {
+      const isTimeout = e && e.code === 'EMBED_TIMEOUT';
+      const reason = isTimeout ? '超时' : '失败';
+      logger.warn(
+        `Embedding 相似度计算${reason}，回退为纯时间聚合 (attempt=${attempt + 1}/${maxAttempts}, timeoutMs=${BUNDLE_EMBEDDING_TIMEOUT_MS})`,
+        { err: String(e) }
+      );
+
+      // 默认不重试：BUNDLE_EMBEDDING_MAX_RETRIES=0；即使配置了重试，也不会影响最终回复，只影响是否使用语义聚合
+      if (attempt >= maxAttempts - 1) {
+        return null;
+      }
+    }
   }
+
+  return null;
 }
 
 function extractText(m) {
@@ -235,19 +285,68 @@ export async function collectBundleForSender(senderId) {
   }
 
   const start = Date.now();
+  const hasWindow = Number.isFinite(BUNDLE_WINDOW_MS) && BUNDLE_WINDOW_MS > 0;
+  const hasMax = Number.isFinite(BUNDLE_MAX_MS) && BUNDLE_MAX_MS > 0;
+
+  let endReason = 'idle';
+
   while (true) {
-    const snap = bucket.lastUpdate;
-    await sleep(BUNDLE_WINDOW_MS);
-    const elapsed = Date.now() - start;
-    // 若窗口期间有新消息，且未超过最大等待，则继续等待一个窗口
-    if (bucket.lastUpdate > snap && elapsed < BUNDLE_MAX_MS) {
-      continue;
+    const now = Date.now();
+    const elapsed = now - start;
+    const lastUpdate = bucket.lastUpdate || start;
+    const sinceLast = now - lastUpdate;
+
+    // 若整体等待时间已超过最大上限，则立即结束（防止长时间不收束）
+    if (hasMax && elapsed >= BUNDLE_MAX_MS) {
+      endReason = 'max_wait';
+      break;
     }
-    break;
+
+    // 若距离最后一条消息已静默至少一个窗口，则结束聚合
+    if (hasWindow && sinceLast >= BUNDLE_WINDOW_MS) {
+      endReason = 'idle';
+      break;
+    }
+
+    // 计算下一次睡眠时间：尽量睡到最近的一个阈值
+    let waitMs = Infinity;
+
+    if (hasWindow) {
+      const remainIdle = BUNDLE_WINDOW_MS - sinceLast;
+      if (remainIdle > 0 && Number.isFinite(remainIdle)) {
+        waitMs = Math.min(waitMs, remainIdle);
+      }
+    }
+
+    if (hasMax) {
+      const remainTotal = BUNDLE_MAX_MS - elapsed;
+      if (remainTotal > 0 && Number.isFinite(remainTotal)) {
+        waitMs = Math.min(waitMs, remainTotal);
+      }
+    }
+
+    if (!Number.isFinite(waitMs) || waitMs <= 0) {
+      // 回退为一个小的睡眠间隔，避免忙等
+      waitMs = hasWindow ? BUNDLE_WINDOW_MS : 50;
+      if (!Number.isFinite(waitMs) || waitMs <= 0) {
+        waitMs = 50;
+      }
+    }
+
+    await sleep(waitMs);
   }
 
   bucket.collecting = false;
   senderBundles.delete(key);
+
+  try {
+    const now = Date.now();
+    const durationMs = now - start;
+    const idleMs = now - (bucket.lastUpdate || start);
+    logger.debug(
+      `聚合: 结束窗口 (sender=${key}, messages=${bucket.messages.length}, reason=${endReason}, durationMs=${durationMs}, idleMs=${idleMs})`
+    );
+  } catch {}
 
   // 组合文本
   const texts = bucket.messages.map((m) => {

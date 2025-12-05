@@ -82,7 +82,25 @@ export function buildSentraResultBlock(ev) {
         lines.push(indented);
       }
       // 附带一次性提取到的文件资源（可选）
-      const files = extractFilesFromContent(ev);
+      const collected = [];
+      ev.events.forEach((item, idx) => {
+        if (!item || !item.result) return;
+        const root = item.result && (item.result.data !== undefined ? item.result.data : item.result);
+        if (!root || typeof root !== 'object') return;
+        const fromResult = extractFilesFromContent(root, ['events', idx, 'result']);
+        collected.push(...fromResult);
+      });
+
+      // 去重：按 path 聚合，避免同一文件被多次包含
+      const seenPaths = new Set();
+      const files = [];
+      for (const f of collected) {
+        const p = (f && typeof f.path === 'string') ? f.path.trim() : '';
+        if (!p || seenPaths.has(p)) continue;
+        seenPaths.add(p);
+        files.push(f);
+      }
+
       if (files.length > 0) {
         lines.push('  <extracted_files>');
         for (const f of files) {
@@ -100,7 +118,8 @@ export function buildSentraResultBlock(ev) {
     // 兜底：旧行为（用完整 ev 填充 <sentra-result>），保证向后兼容
     const xmlLines = ['<sentra-result>'];
     xmlLines.push(...jsonToXMLLines(ev, 1, 0, 8));
-    const files = extractFilesFromContent(ev);
+    const root = ev?.result && (ev.result.data !== undefined ? ev.result.data : ev.result);
+    const files = root ? extractFilesFromContent(root) : [];
     if (files.length > 0) {
       xmlLines.push('  <extracted_files>');
       files.forEach(f => {
@@ -168,7 +187,8 @@ function buildSingleResultXML(ev) {
   }
 
   // 附带文件路径（可选）
-  const files = extractFilesFromContent(ev);
+  const fileRoot = ev?.result && (ev.result.data !== undefined ? ev.result.data : ev.result);
+  const files = fileRoot ? extractFilesFromContent(fileRoot) : [];
   if (files.length > 0) {
     lines.push('  <extracted_files>');
     for (const f of files) {
@@ -190,10 +210,68 @@ function buildSingleResultXML(ev) {
  */
 export function buildSentraUserQuestionBlock(msg) {
   const xmlLines = ['<sentra-user-question>'];
-  
+
+  const isMerged = !!msg?._merged && Array.isArray(msg?._mergedUsers) && msg._mergedUsers.length > 1 && msg?.type === 'group';
+
+  if (isMerged) {
+    const mergedUsers = msg._mergedUsers;
+    const mergedLines = [];
+    mergedUsers.forEach((u, idx) => {
+      if (!u) return;
+      const name = (u.sender_name || u.nickname || `User${idx + 1}`).trim();
+      const baseText =
+        (typeof u.text === 'string' && u.text.trim()) ||
+        (u.raw && ((u.raw.summary && String(u.raw.summary).trim()) || (u.raw.text && String(u.raw.text).trim()))) ||
+        '';
+      if (!baseText) return;
+      mergedLines.push(name ? `${name}: ${baseText}` : baseText);
+    });
+
+    const mergedText = mergedLines.join('\n\n');
+
+    xmlLines.push('  <mode>group_multi_user_merge</mode>');
+    if (msg.group_id != null) {
+      xmlLines.push(`  <group_id>${valueToXMLString(String(msg.group_id), 0)}</group_id>`);
+    }
+    if (msg._mergedPrimarySenderId != null) {
+      xmlLines.push(
+        `  <primary_sender_id>${valueToXMLString(String(msg._mergedPrimarySenderId), 0)}</primary_sender_id>`
+      );
+    }
+    if (typeof msg.sender_name === 'string' && msg.sender_name.trim()) {
+      xmlLines.push(`  <primary_sender_name>${valueToXMLString(msg.sender_name, 0)}</primary_sender_name>`);
+    }
+    xmlLines.push(`  <user_count>${mergedUsers.length}</user_count>`);
+    if (mergedText) {
+      xmlLines.push(`  <text>${valueToXMLString(mergedText, 0)}</text>`);
+    }
+
+    xmlLines.push('  <multi_user merge="true">');
+    mergedUsers.forEach((u, idx) => {
+      if (!u) return;
+      const uid = u.sender_id != null ? String(u.sender_id) : '';
+      const uname = u.sender_name || '';
+      const mid = u.message_id != null ? String(u.message_id) : '';
+      const text =
+        (typeof u.text === 'string' && u.text.trim()) ||
+        (u.raw && ((u.raw.summary && String(u.raw.summary).trim()) || (u.raw.text && String(u.raw.text).trim()))) ||
+        '';
+      const time = u.time_str || (u.raw && u.raw.time_str) || '';
+
+      xmlLines.push(`    <user index="${idx + 1}">`);
+      if (uid) xmlLines.push(`      <user_id>${valueToXMLString(uid, 0)}</user_id>`);
+      if (uname) xmlLines.push(`      <nickname>${valueToXMLString(uname, 0)}</nickname>`);
+      if (mid) xmlLines.push(`      <message_id>${valueToXMLString(mid, 0)}</message_id>`);
+      if (text) xmlLines.push(`      <text>${valueToXMLString(text, 0)}</text>`);
+      if (time) xmlLines.push(`      <time>${valueToXMLString(time, 0)}</time>`);
+      xmlLines.push('    </user>');
+    });
+    xmlLines.push('  </multi_user>');
+  }
+
   // 递归遍历msg对象，过滤指定的键
   xmlLines.push(...jsonToXMLLines(msg, 1, 0, 6, USER_QUESTION_FILTER_KEYS));
-  
+
   xmlLines.push('</sentra-user-question>');
   return xmlLines.join('\n');
 }

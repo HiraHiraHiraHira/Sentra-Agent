@@ -14,6 +14,7 @@ const GROUP_MIN_SINCE_USER_SEC = getEnvInt('DESIRE_GROUP_MIN_SINCE_USER_SEC', 60
 const PRIVATE_MIN_SINCE_USER_SEC = getEnvInt('DESIRE_PRIVATE_MIN_SINCE_USER_SEC', 30);
 
 const MAX_PROACTIVE_PER_HOUR = getEnvInt('DESIRE_MAX_PROACTIVE_PER_HOUR', 3);
+const MAX_PROACTIVE_PER_DAY = getEnvInt('DESIRE_MAX_PROACTIVE_PER_DAY', 0);
 
 const MSG_WINDOW_SEC = getEnvInt('DESIRE_MSG_WINDOW_SEC', 120);
 const GROUP_MAX_MSG_PER_WINDOW = getEnvInt('DESIRE_GROUP_MAX_MSG_PER_WINDOW', 8);
@@ -24,6 +25,11 @@ const ACTIVE_HOUR_START = getEnvInt('DESIRE_ACTIVE_HOUR_START', 8);
 const ACTIVE_HOUR_END = getEnvInt('DESIRE_ACTIVE_HOUR_END', 23);
 
 const PROACTIVE_INTENSITY = Number.parseFloat(getEnv('DESIRE_PROACTIVE_INTENSITY', '1'));
+
+const MIN_INTERVAL_BETWEEN_PROACTIVE_SEC = getEnvInt(
+  'DESIRE_MIN_INTERVAL_BETWEEN_PROACTIVE_SEC',
+  300
+);
 
 const USER_FATIGUE_ENABLED = getEnvBool('DESIRE_USER_FATIGUE_ENABLED', true);
 const USER_FATIGUE_RESPONSE_WINDOW_SEC = getEnvInt('DESIRE_USER_FATIGUE_RESPONSE_WINDOW_SEC', 300);
@@ -58,6 +64,8 @@ function getBaseState() {
     msgCount: 0,
     proactiveWindowStart: 0,
     proactiveCount: 0,
+    dailyProactiveDay: 0,
+    dailyProactiveCount: 0,
     lastMsg: null
   };
 }
@@ -80,6 +88,10 @@ export default class DesireManager {
     this.maxProactivePerHour = Number.isFinite(options.maxProactivePerHour)
       ? options.maxProactivePerHour
       : MAX_PROACTIVE_PER_HOUR;
+
+    this.maxProactivePerDay = Number.isFinite(options.maxProactivePerDay)
+      ? options.maxProactivePerDay
+      : MAX_PROACTIVE_PER_DAY;
 
     this.msgWindowSec = Number.isFinite(options.msgWindowSec)
       ? options.msgWindowSec
@@ -395,6 +407,17 @@ export default class DesireManager {
       } else {
         state.proactiveCount = (state.proactiveCount || 0) + 1;
       }
+
+      // 每日主动次数统计（基于固定 24 小时窗口）
+      const dayMs = 24 * 60 * 60 * 1000;
+      const todayKey = Math.floor(now / dayMs);
+      const storedDay = Number.isFinite(state.dailyProactiveDay) ? state.dailyProactiveDay : 0;
+      if (!storedDay || storedDay !== todayKey) {
+        state.dailyProactiveDay = todayKey;
+        state.dailyProactiveCount = 1;
+      } else {
+        state.dailyProactiveCount = (state.dailyProactiveCount || 0) + 1;
+      }
     }
 
     state.lastUpdateAt = now;
@@ -475,6 +498,22 @@ export default class DesireManager {
       const sinceBotSec = Number.isFinite(sinceBotMs) ? sinceBotMs / 1000 : Infinity;
       const sinceProactiveSec = Number.isFinite(sinceProactiveMs) ? sinceProactiveMs / 1000 : Infinity;
 
+      const minIntervalSec = MIN_INTERVAL_BETWEEN_PROACTIVE_SEC;
+      if (
+        minIntervalSec > 0 &&
+        Number.isFinite(sinceProactiveSec) &&
+        sinceProactiveSec >= 0 &&
+        sinceProactiveSec < minIntervalSec
+      ) {
+        logger.debug('DesireManager: skip proactive due to per-conversation min interval', {
+          conversationKey,
+          chatType,
+          sinceProactiveSec,
+          minIntervalSec
+        });
+        continue;
+      }
+
       // 频率窗口
       const windowMs = (this.msgWindowSec || MSG_WINDOW_SEC) * 1000;
       let msgCount = state.msgCount || 0;
@@ -487,6 +526,33 @@ export default class DesireManager {
       const withinHour = windowStart && now - windowStart < hourMs;
       const proactiveCount = state.proactiveCount || 0;
       if (withinHour && this.maxProactivePerHour > 0 && proactiveCount >= this.maxProactivePerHour) {
+        logger.debug('DesireManager: skip proactive due to hourly cap', {
+          conversationKey,
+          chatType,
+          proactiveCount,
+          maxPerHour: this.maxProactivePerHour
+        });
+        continue;
+      }
+
+      // 每日主动次数限制（基于固定 24 小时窗口）
+      const dayMs = 24 * 60 * 60 * 1000;
+      let dailyCount = 0;
+      const storedDayRaw = state.dailyProactiveDay;
+      if (Number.isFinite(storedDayRaw)) {
+        const todayKey = Math.floor(now / dayMs);
+        if (storedDayRaw === todayKey) {
+          dailyCount = state.dailyProactiveCount || 0;
+        }
+      }
+
+      if (this.maxProactivePerDay > 0 && dailyCount >= this.maxProactivePerDay) {
+        logger.debug('DesireManager: skip proactive due to daily cap', {
+          conversationKey,
+          chatType,
+          dailyCount,
+          maxPerDay: this.maxProactivePerDay
+        });
         continue;
       }
 
@@ -527,11 +593,9 @@ export default class DesireManager {
         coolFactor = sinceProactiveSec / 600;
       }
 
-      // 消息频率因子：无互动 / 过度刷屏时削弱概率
+      // 消息频率因子：主要针对刷屏场景退避，不阻断长时间无消息的会话
       let trafficFactor = 1;
-      if (!msgCount) {
-        trafficFactor = 0;
-      } else if (maxMsg > 0 && msgCount > maxMsg) {
+      if (maxMsg > 0 && msgCount > maxMsg) {
         trafficFactor = 0;
       } else if (maxMsg > 0 && msgCount > maxMsg / 2) {
         trafficFactor = 0.5;
@@ -587,8 +651,16 @@ export default class DesireManager {
         sinceBotSec,
         sinceProactiveSec,
         proactiveCount,
+        dailyProactiveCount: dailyCount,
         userId: userIdForFatigue,
         fatigueFactor,
+        idleFactor,
+        coolFactor,
+        trafficFactor,
+        quotaFactor,
+        maxProactivePerHour: this.maxProactivePerHour,
+        maxProactivePerDay: this.maxProactivePerDay,
+        baseProbPerTick: Number(baseProbPerTick.toFixed(4)),
         prob: Number(p.toFixed(4)),
         isFirstAfterUser
       });

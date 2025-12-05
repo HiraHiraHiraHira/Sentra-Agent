@@ -2,17 +2,16 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { SearchAddon } from '@xterm/addon-search';
 import '@xterm/xterm/css/xterm.css';
 import styles from './TerminalWindow.module.css';
 
 interface TerminalWindowProps {
     processId: string;
+    theme?: 'light' | 'dark';
+    headerText?: string;
 }
 
-export const TerminalWindow: React.FC<TerminalWindowProps> = ({
-    processId,
-}) => {
+export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme, headerText }) => {
     const terminalRef = useRef<HTMLDivElement>(null);
     const xtermInstance = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
@@ -24,72 +23,45 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
     useEffect(() => {
         if (!terminalRef.current) return;
 
-        // Initialize xterm with comprehensive options
         const term = new Terminal({
             cursorBlink: true,
-            cursorStyle: 'block',
-            fontSize: 14,
-            lineHeight: 1.2,
-            fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-            fontWeight: 400,
-            fontWeightBold: 700,
-            theme: {
-                background: '#000000',
+            theme: theme === 'light' ? {
+                background: '#ffffff',
+                foreground: '#000000',
+                cursor: '#000000',
+                selectionBackground: 'rgba(0, 0, 0, 0.3)'
+            } : {
+                background: '#1e1e1e',
                 foreground: '#ffffff',
                 cursor: '#ffffff',
-                cursorAccent: '#000000',
-                selectionBackground: 'rgba(255, 255, 255, 0.3)',
-                black: '#000000',
-                red: '#ff6b6b',
-                green: '#51cf66',
-                yellow: '#ffd43b',
-                blue: '#339af0',
-                magenta: '#cc5de8',
-                cyan: '#22b8cf',
-                white: '#f8f9fa',
-                brightBlack: '#495057',
-                brightRed: '#ff8787',
-                brightGreen: '#8ce99a',
-                brightYellow: '#ffe066',
-                brightBlue: '#74c0fc',
-                brightMagenta: '#e599f7',
-                brightCyan: '#66d9e8',
-                brightWhite: '#ffffff',
+                selectionBackground: 'rgba(255, 255, 255, 0.3)'
             },
-            allowProposedApi: true,
-            convertEol: true,
-            scrollback: 10000,
-            fastScrollModifier: 'shift',
-            fastScrollSensitivity: 5,
-            scrollSensitivity: 1,
-            altClickMovesCursor: true,
-            allowTransparency: false,
-            tabStopWidth: 4,
-            rightClickSelectsWord: true,
-            smoothScrollDuration: 100,
+            fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+            fontSize: 14,
+            allowProposedApi: true
         });
 
         const fitAddon = new FitAddon();
-        const webLinksAddon = new WebLinksAddon((event, uri) => {
-            if (event.ctrlKey || event.metaKey) {
-                window.open(uri, '_blank');
-            }
-        });
-        const searchAddon = new SearchAddon();
-
         term.loadAddon(fitAddon);
-        term.loadAddon(webLinksAddon);
-        term.loadAddon(searchAddon);
 
-        // Open terminal in container
+        term.loadAddon(new WebLinksAddon((event, uri) => {
+            window.open(uri, '_blank');
+        }));
+
         term.open(terminalRef.current);
 
-        // Initial fit
+        try {
+            fitAddon.fit();
+        } catch (e) {
+            console.warn('Initial fit failed', e);
+        }
+
+        // Initial fit retry
         setTimeout(() => {
             try {
                 fitAddon.fit();
             } catch (e) {
-                console.warn('Initial fit failed', e);
+                console.warn('Retry fit failed', e);
             }
         }, 50);
 
@@ -206,6 +178,7 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
         // Right-click context menu for copy/paste
         const handleContextMenu = (e: MouseEvent) => {
             e.preventDefault();
+            e.stopPropagation(); // Prevent desktop context menu
             const selection = term.getSelection();
 
             if (selection) {
@@ -273,7 +246,7 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
             term.dispose();
             eventSource.close();
         };
-    }, [processId, autoScroll]);
+    }, [processId, autoScroll, theme]); // Added theme to dependency array to re-init on theme change
 
     // Re-fit observer with debouncing
     useEffect(() => {

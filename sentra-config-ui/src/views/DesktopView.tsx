@@ -1,20 +1,23 @@
-import { useState, type Dispatch, type SetStateAction } from 'react';
+import { useState, Suspense, lazy, type Dispatch, type SetStateAction } from 'react';
 import { MenuBar } from '../components/MenuBar';
 import { MacWindow } from '../components/MacWindow';
 import { EnvEditor } from '../components/EnvEditor';
-import { PresetsEditor } from '../components/PresetsEditor';
+// Lazy load heavy components
+const PresetsEditor = lazy(() => import('../components/PresetsEditor').then(module => ({ default: module.PresetsEditor })));
+const FileManager = lazy(() => import('../components/FileManager').then(module => ({ default: module.FileManager })));
+const RedisEditor = lazy(() => import('../components/RedisEditor/RedisEditor').then(module => ({ default: module.RedisEditor })));
+
 import { Dock } from '../components/Dock';
 import { Launchpad } from '../components/Launchpad';
 import { TerminalWindow } from '../components/TerminalWindow';
+import { TopTaskbar } from '../components/TopTaskbar';
 import { ToastContainer, ToastMessage } from '../components/Toast';
 import { Dialog } from '../components/Dialog';
 import { Menu, Item, Submenu, useContextMenu } from 'react-contexify';
 import { getDisplayName, getIconForType } from '../utils/icons';
 import { IoCubeOutline, IoTerminalOutline, IoFolderOpen, IoServer } from 'react-icons/io5';
-import { FileManager } from '../components/FileManager';
 import type { DeskWindow, DesktopIcon, FileItem, TerminalWin, AppFolder } from '../types/ui';
 import { AppFolderModal } from '../components/AppFolderModal';
-import { RedisEditor } from '../components/RedisEditor/RedisEditor';
 
 export type DesktopViewProps = {
   isSolidColor: boolean;
@@ -38,6 +41,7 @@ export type DesktopViewProps = {
   handleVarChange: (id: string, index: number, field: 'key' | 'value' | 'comment', val: string) => void;
   handleAddVar: (id: string) => void;
   handleDeleteVar: (id: string, index: number) => void;
+  handleRestore: (id: string) => void;
   saving: boolean;
 
   // icons and folders
@@ -118,6 +122,7 @@ export function DesktopView(props: DesktopViewProps) {
     handleVarChange,
     handleAddVar,
     handleDeleteVar,
+    handleRestore,
     saving,
     desktopIcons,
     desktopFolders,
@@ -187,6 +192,12 @@ export function DesktopView(props: DesktopViewProps) {
       onContextMenu={handleContextMenu}
     >
       <MenuBar
+        brightness={brightness}
+        setBrightness={setBrightness}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        showDock={showDock}
+        onToggleDock={toggleDock}
         menus={[
           {
             label: '文件',
@@ -218,12 +229,17 @@ export function DesktopView(props: DesktopViewProps) {
           }
         ]}
         onAppleClick={() => { }}
-        brightness={brightness}
-        setBrightness={setBrightness}
-        theme={theme}
-        onToggleTheme={toggleTheme}
-        showDock={showDock}
-        onToggleDock={toggleDock}
+      />
+
+      <TopTaskbar
+        openWindows={openWindows}
+        terminalWindows={terminalWindows}
+        activeWinId={activeWinId}
+        activeTerminalId={activeTerminalId}
+        onActivateWindow={(id) => bringToFront(id)}
+        onActivateTerminal={(id) => bringTerminalToFront(id)}
+        onCloseWindow={(id) => handleClose(id)}
+        onCloseTerminal={(id) => handleCloseTerminal(id)}
       />
 
       {openWindows.map(w => (
@@ -254,6 +270,7 @@ export function DesktopView(props: DesktopViewProps) {
             onAdd={() => handleAddVar(w.id)}
             onDelete={(idx) => handleDeleteVar(w.id, idx)}
             onSave={() => handleSave(w.id)}
+            onRestore={() => handleRestore(w.id)}
             saving={saving}
             isExample={!w.file.hasEnv && w.file.hasExample}
             theme={theme}
@@ -277,12 +294,14 @@ export function DesktopView(props: DesktopViewProps) {
           onFocus={() => bringToFront('presets-editor')}
           onMove={() => { }}
         >
-          <PresetsEditor
-            onClose={() => setPresetsEditorOpen(false)}
-            theme={theme}
-            addToast={addToast}
-            state={presetsState}
-          />
+          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载中...</div>}>
+            <PresetsEditor
+              onClose={() => setPresetsEditorOpen(false)}
+              theme={theme}
+              addToast={addToast}
+              state={presetsState}
+            />
+          </Suspense>
         </MacWindow>
       )}
 
@@ -302,11 +321,13 @@ export function DesktopView(props: DesktopViewProps) {
           onFocus={() => bringToFront('file-manager')}
           onMove={() => { }}
         >
-          <FileManager
-            onClose={() => setFileManagerOpen(false)}
-            theme={theme}
-            addToast={addToast}
-          />
+          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载中...</div>}>
+            <FileManager
+              onClose={() => setFileManagerOpen(false)}
+              theme={theme}
+              addToast={addToast}
+            />
+          </Suspense>
         </MacWindow>
       )}
 
@@ -326,7 +347,9 @@ export function DesktopView(props: DesktopViewProps) {
           onFocus={() => bringToFront('redis-editor')}
           onMove={() => { }}
         >
-          <RedisEditor theme={theme} state={redisState} />
+          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载中...</div>}>
+            <RedisEditor theme={theme} state={redisState} />
+          </Suspense>
         </MacWindow>
       )}
 
@@ -537,7 +560,11 @@ export function DesktopView(props: DesktopViewProps) {
           onFocus={() => bringTerminalToFront(terminal.id)}
           onMove={(x, y) => { setTerminalWindows(prev => prev.map(w => w.id === terminal.id ? { ...w, pos: { x, y } } : w)); }}
         >
-          <TerminalWindow processId={terminal.processId} />
+          <TerminalWindow
+            processId={terminal.processId}
+            theme={terminal.theme}
+            headerText={terminal.headerText}
+          />
         </MacWindow>
       ))}
 
