@@ -4,7 +4,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 
 export async function systemRoutes(fastify: FastifyInstance) {
-    fastify.post('/api/system/restart', async (request, reply) => {
+    fastify.post('/api/system/restart', async (_request, reply) => {
         const clientPort = process.env.CLIENT_PORT || '7244';
         const serverPort = process.env.SERVER_PORT || '7245';
 
