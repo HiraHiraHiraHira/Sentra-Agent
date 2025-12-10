@@ -438,6 +438,94 @@ export default class DesireManager {
     }
   }
 
+  async getUserEngagementSummary(conversationKey, userId, now = Date.now()) {
+    const nowMs = now;
+
+    let state = null;
+    if (conversationKey) {
+      try {
+        state = await this._loadState(conversationKey);
+      } catch (e) {
+        logger.debug('DesireManager: getUserEngagementSummary _loadState failed', {
+          conversationKey,
+          err: String(e)
+        });
+      }
+    }
+    if (!state) {
+      state = getBaseState();
+    }
+
+    const safeTs = (v) => (Number.isFinite(v) && v > 0 ? v : 0);
+    const safeDiffSec = (ts) => {
+      const t = safeTs(ts);
+      if (!t) return null;
+      const d = nowMs - t;
+      if (!Number.isFinite(d) || d < 0) return null;
+      return d / 1000;
+    };
+
+    const lastUserAt = safeTs(state.lastUserAt);
+    const lastBotAt = safeTs(state.lastBotAt);
+    const lastProactiveAt = safeTs(state.lastProactiveAt);
+
+    const timeSinceLastUserSec = safeDiffSec(lastUserAt);
+    const timeSinceLastBotSec = safeDiffSec(lastBotAt);
+    const timeSinceLastProactiveSec = safeDiffSec(lastProactiveAt);
+
+    const uid = userId
+      || state.userId
+      || (state.lastMsg && state.lastMsg.sender_id != null
+        ? String(state.lastMsg.sender_id)
+        : '');
+
+    let strikes = 0;
+    let lastUserReplyAt = 0;
+    let fatigueLastProactiveAt = 0;
+    let penaltyUntil = 0;
+    let penaltyActive = false;
+    let timeSinceLastUserReplySec = null;
+
+    if (uid) {
+      try {
+        const uf = await this._loadUserFatigue(uid);
+        strikes = Number.isFinite(uf.strikes) ? uf.strikes : 0;
+        lastUserReplyAt = safeTs(uf.lastUserReplyAt);
+        fatigueLastProactiveAt = safeTs(uf.lastProactiveAt);
+        penaltyUntil = Number.isFinite(uf.penaltyUntil) ? uf.penaltyUntil : 0;
+        timeSinceLastUserReplySec = safeDiffSec(lastUserReplyAt);
+        penaltyActive = penaltyUntil > nowMs;
+      } catch (e) {
+        logger.debug('DesireManager: getUserEngagementSummary _loadUserFatigue failed', {
+          userId: uid,
+          err: String(e)
+        });
+      }
+    }
+
+    const repliedSinceLastProactive =
+      fatigueLastProactiveAt > 0
+      && lastUserReplyAt >= fatigueLastProactiveAt
+      && lastUserReplyAt <= nowMs;
+
+    return {
+      conversationKey: conversationKey || null,
+      userId: uid || null,
+      lastUserAt,
+      lastBotAt,
+      lastProactiveAt,
+      timeSinceLastUserSec,
+      timeSinceLastBotSec,
+      timeSinceLastProactiveSec,
+      lastUserReplyAt,
+      timeSinceLastUserReplySec,
+      ignoredProactiveStrikes: strikes,
+      penaltyUntil,
+      penaltyActive,
+      repliedSinceLastProactive
+    };
+  }
+
   async collectProactiveCandidates(now = Date.now()) {
     const result = [];
     const hourMs = 60 * 60 * 1000;

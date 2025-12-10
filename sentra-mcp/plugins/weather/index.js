@@ -504,10 +504,13 @@ async function fetchAndCacheWeather(cityName, queryType, weatherKey, weatherUrl)
 
 export default async function handler(args = {}, options = {}) {
   const penv = pluginEnv(options);
-  const city = String(args.city || '').trim();
-  
-  if (!city) {
-    return { success: false, code: 'INVALID', error: 'city 参数是必填的，请提供城市名称，如：北京、上海、广州等' };
+  // 严格使用 cities 数组（不再兼容单一 city 字符串）
+  const cities = Array.isArray(args.cities)
+    ? args.cities.map((c) => String(c || '').trim()).filter((c) => !!c)
+    : [];
+
+  if (!cities.length) {
+    return { success: false, code: 'INVALID', error: 'cities 为必填参数，请提供至少一个城市名称数组，如：["北京", "上海"]' };
   }
 
   const queryType = (args.queryType || 'all').toLowerCase();
@@ -524,26 +527,56 @@ export default async function handler(args = {}, options = {}) {
     return { success: false, code: 'INVALID', error: `无效的查询类型: ${queryType}。支持的类型: ${validTypes.join(', ')}` };
   }
 
-  logger.info?.('天气报告', `开始处理天气查询: 城市=${city}, 类型=${queryType}`, { label: 'PLUGIN' });
+  const results = [];
 
-  const result = await fetchAndCacheWeather(city, queryType, weatherKey, weatherUrl);
+  for (const city of cities) {
+    logger.info?.('天气报告', `开始处理天气查询: 城市=${city}, 类型=${queryType}`, { label: 'PLUGIN' });
 
-  if (result.success && result.data) {
-    logger.info?.('天气报告', `天气查询成功，内容长度: ${result.data.length} 字符${result.fromCache ? ' (来自缓存)' : ''}`, { label: 'PLUGIN' });
-    
-    return {
-      success: true,
-      data: {
+    const result = await fetchAndCacheWeather(city, queryType, weatherKey, weatherUrl);
+
+    if (result.success && result.data) {
+      logger.info?.('天气报告', `天气查询成功，城市=${city}，内容长度: ${result.data.length} 字符${result.fromCache ? ' (来自缓存)' : ''}`, { label: 'PLUGIN' });
+      results.push({
         city,
         queryType,
         formatted: result.data,
         fromCache: result.fromCache || false,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        success: true
+      });
+    } else {
+      const errorMessage = result.error ? result.error.message : '天气查询失败';
+      logger.error?.('天气报告', `天气查询失败: 城市=${city}, 错误=${errorMessage}`, { label: 'PLUGIN' });
+      results.push({
+        city,
+        queryType,
+        success: false,
+        error: errorMessage,
+        code: 'WEATHER_API_FAILED'
+      });
+    }
+  }
+
+  const anyOk = results.some((r) => r.success);
+
+  if (anyOk) {
+    return {
+      success: true,
+      data: {
+        queryType,
+        results
       }
     };
-  } else {
-    const errorMessage = result.error ? result.error.message : '天气查询失败';
-    logger.error?.('天气报告', `天气查询失败: ${errorMessage}`, { label: 'PLUGIN' });
-    return { success: false, code: 'WEATHER_API_FAILED', error: errorMessage };
   }
+
+  // 所有城市都失败时，顶层也标记为失败，但仍返回详细 results 便于上层展示
+  return {
+    success: false,
+    code: 'WEATHER_API_FAILED',
+    error: '所有城市的天气查询均失败',
+    data: {
+      queryType,
+      results
+    }
+  };
 }

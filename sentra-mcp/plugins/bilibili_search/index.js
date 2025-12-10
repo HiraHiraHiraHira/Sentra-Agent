@@ -195,7 +195,7 @@ async function sendMusicCardViaWS({ wsUrl, timeoutMs, pathList, argStyle }, targ
   return { ok: false };
 }
 
-export default async function handler(args = {}, options = {}) {
+async function singleBilibiliSearchHandler(args = {}, options = {}) {
   const keyword = String(args.keyword || '').trim();
   const pick = (args.pick || 'first');
   
@@ -503,4 +503,44 @@ export default async function handler(args = {}, options = {}) {
     logger.error?.('bilibili_search:error', { label: 'PLUGIN', error: String(e?.message || e), stack: e?.stack });
     return { success: false, code: 'ERR', error: String(e?.message || e) };
   }
+}
+
+export default async function handler(args = {}, options = {}) {
+  const rawKeywords = Array.isArray(args.keywords) ? args.keywords : [];
+  const keywords = rawKeywords
+    .map((k) => String(k || '').trim())
+    .filter((k) => !!k);
+
+  if (!keywords.length) {
+    return { success: false, code: 'INVALID', error: 'keywords 为必填参数，请提供至少一个搜索关键词数组，如：["鬼灭之刃 MAD", "进击的巨人 AMV"]' };
+  }
+
+  const results = [];
+  for (const kw of keywords) {
+    const singleArgs = { ...args, keyword: kw };
+    const res = await singleBilibiliSearchHandler(singleArgs, options);
+    results.push({
+      keyword: kw,
+      ...res
+    });
+  }
+
+  const anyOk = results.some((r) => r.success);
+  if (anyOk) {
+    return {
+      success: true,
+      data: {
+        results
+      }
+    };
+  }
+
+  return {
+    success: false,
+    code: 'BILIBILI_SEARCH_FAILED',
+    error: '所有关键词的视频搜索或处理均失败',
+    data: {
+      results
+    }
+  };
 }

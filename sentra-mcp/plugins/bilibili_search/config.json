@@ -4,7 +4,12 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "keyword": { "type": "string", "description": "搜索关键词（视频标题/关键字）" },
+      "keywords": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 1,
+        "description": "搜索关键词数组（视频标题/关键字），例如：[\"鬼灭之刃 MAD\", \"进击的巨人 AMV\"]"
+      },
       "pick": { "type": "string", "enum": ["first", "random"], "description": "选择第一条或随机一条，默认 first" },
       "user_id": {
         "type": "string",
@@ -30,7 +35,7 @@
         "description": "仅控制反馈时间，不延迟执行。如超时则先反馈进行中状态。"
       }
     },
-    "required": ["keyword"],
+    "required": ["keywords"],
     "additionalProperties": true
   },
   "timeoutMs": 180000,

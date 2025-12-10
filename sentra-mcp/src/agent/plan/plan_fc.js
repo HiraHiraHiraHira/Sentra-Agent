@@ -80,8 +80,13 @@ async function generateSinglePlan({
     let candidate = [];
     try {
       const parsed = call?.arguments || {};
-      const arr = Array.isArray(parsed?.plan?.steps) ? parsed.plan.steps : [];
-      candidate = arr.map((s) => ({
+      // 新协议：直接使用顶层 overview 和 steps 参数
+      // 兼容旧协议：如果 steps 缺失但存在 plan.steps，则回退使用 plan.steps
+      const stepsArr = Array.isArray(parsed?.steps)
+        ? parsed.steps
+        : (Array.isArray(parsed?.plan?.steps) ? parsed.plan.steps : []);
+
+      candidate = stepsArr.map((s) => ({
         aiName: s?.aiName,
         reason: normalizeReason(s?.reason),
         nextStep: s?.nextStep || '',

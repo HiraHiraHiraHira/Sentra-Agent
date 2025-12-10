@@ -4,9 +4,11 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "query": {
-        "type": "string",
-        "description": "搜索关键词或自然语言描述，例如：'动漫 少女 高清 壁纸 4k'，支持中文/英文及风格、分辨率等组合提示词。"
+      "queries": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 1,
+        "description": "搜索关键词数组，例如：[ '动漫 少女 高清 壁纸 4k', '风景 高清 壁纸' ]，支持中文/英文及风格、分辨率等组合提示词。"
       },
       "count": {
         "type": "integer",
@@ -68,7 +70,7 @@
         "description": "可选：延迟反馈时间。仅控制反馈时间，不延迟执行。如超时则先反馈进行中状态。"
       }
     },
-    "required": ["query", "count", "bingImageType"],
+    "required": ["queries", "count", "bingImageType"],
     "additionalProperties": true
   },
   "timeoutMs": 180000,

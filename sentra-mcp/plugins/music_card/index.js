@@ -87,7 +87,7 @@ async function sendViaWS({ url, timeoutMs, pathList, argStyle }, target, segment
   return { ok: false };
 }
 
-export default async function handler(args = {}, options = {}) {
+async function singleMusicCardHandler(args = {}, options = {}) {
   const penv = options?.pluginEnv || {};
   const keyword = String(args.keyword || '').trim();
   if (!keyword) return { success: false, code: 'INVALID', error: 'keyword 为必填参数' };
@@ -146,4 +146,44 @@ export default async function handler(args = {}, options = {}) {
     logger.warn?.('music_card:error', { label: 'PLUGIN', error: String(e?.message || e) });
     return { success: false, code: 'ERR', error: String(e?.message || e) };
   }
+}
+
+export default async function handler(args = {}, options = {}) {
+  const rawKeywords = Array.isArray(args.keywords) ? args.keywords : [];
+  const keywords = rawKeywords
+    .map((k) => String(k || '').trim())
+    .filter((k) => !!k);
+
+  if (!keywords.length) {
+    return { success: false, code: 'INVALID', error: 'keywords 为必填参数，请提供至少一个关键词数组，如：["稻香 周杰伦", "夜曲 周杰伦"]' };
+  }
+
+  const results = [];
+  for (const kw of keywords) {
+    const singleArgs = { ...args, keyword: kw };
+    const res = await singleMusicCardHandler(singleArgs, options);
+    results.push({
+      keyword: kw,
+      ...res
+    });
+  }
+
+  const anyOk = results.some((r) => r.success);
+  if (anyOk) {
+    return {
+      success: true,
+      data: {
+        results
+      }
+    };
+  }
+
+  return {
+    success: false,
+    code: 'MUSIC_CARD_FAILED',
+    error: '所有关键词的音乐搜索或发送均失败',
+    data: {
+      results
+    }
+  };
 }

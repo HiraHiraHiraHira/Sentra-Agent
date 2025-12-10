@@ -412,6 +412,16 @@ async function runProactiveReply(candidate) {
 	    logger.debug('runProactiveReply: 从上下文记忆提取高层话题失败，将继续使用原有 topicHint', { err: String(e) });
 	  }
 	}
+
+	let userEngagement = null;
+	if (desireManager && typeof desireManager.getUserEngagementSummary === 'function') {
+	  try {
+	    const conversationKey = candidate.conversationKey || groupIdKey;
+	    userEngagement = await desireManager.getUserEngagementSummary(conversationKey, userid);
+	  } catch (e) {
+	    logger.debug('runProactiveReply: 获取用户主动参与度摘要失败，将忽略该块', { err: String(e) });
+	  }
+	}
 	
 	const rootXml = await buildProactiveRootDirectiveXml({
 	  chatType: lastMsg.type === 'private' ? 'private' : 'group',
@@ -425,7 +435,8 @@ async function runProactiveReply(candidate) {
 	  emoXml,
 	  memoryXml,
 	  conversationContext,
-	  lastBotMessage
+	  lastBotMessage,
+	  userEngagement
 	});
 
     // 构造一条“虚拟”的用户消息，标记为主动触发，并通过主流程/MCP 处理

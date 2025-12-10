@@ -176,7 +176,8 @@ async function buildTimeContext() {
       isWeekend,
       timeOfDay,
       holidayHint: parsed.holidayHint || null,
-      isWorkday: toBool(parsed.isWorkday)
+      isWorkday: toBool(parsed.isWorkday),
+      timezone: tz
     };
   } catch (e) {
     logger.warn('ProactiveDirectivePlanner: 通过 sentra-prompts 获取时间/节假日信息失败，将使用本地时间作为回退', { err: String(e) });
@@ -224,8 +225,35 @@ async function buildTimeContext() {
     isWeekend,
     timeOfDay: '',
     holidayHint: null,
-    isWorkday: null
+    isWorkday: null,
+    timezone: tz
   };
+}
+
+function formatLocalDateTime(ms, timezone) {
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const tz = timezone || getEnv('CONTEXT_MEMORY_TIMEZONE', 'Asia/Shanghai');
+  try {
+    const d = new Date(ms);
+    const fmtDate = new Intl.DateTimeFormat('zh-CN', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    const fmtTime = new Intl.DateTimeFormat('zh-CN', {
+      timeZone: tz,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+    const dateStr = fmtDate.format(d);
+    const timeStr = fmtTime.format(d);
+    return `${dateStr} ${timeStr}`;
+  } catch {
+    return null;
+  }
 }
 
 function buildPendingMessagesXmlFromContext(conversationContext) {
@@ -300,7 +328,8 @@ function buildPlannerRootDirectiveXml(options) {
     emoXml,
     memoryXml,
     time,
-    lastBotMessage
+    lastBotMessage,
+    userEngagement
   } = options || {};
 
   const safeChatType = chatType === 'private' ? 'private' : 'group';
@@ -313,6 +342,40 @@ function buildPlannerRootDirectiveXml(options) {
     typeof lastBotMessage === 'string'
       ? lastBotMessage.replace(/\s+/g, ' ').trim().slice(0, 120)
       : '';
+
+  const ue = userEngagement && typeof userEngagement === 'object' ? userEngagement : null;
+  const tz = (time && time.timezone) || getEnv('CONTEXT_MEMORY_TIMEZONE', 'Asia/Shanghai');
+  const timeSinceLastUserSec =
+    ue && typeof ue.timeSinceLastUserSec === 'number' && ue.timeSinceLastUserSec >= 0
+      ? Math.round(ue.timeSinceLastUserSec)
+      : null;
+  const timeSinceLastUserReplySec =
+    ue && typeof ue.timeSinceLastUserReplySec === 'number' && ue.timeSinceLastUserReplySec >= 0
+      ? Math.round(ue.timeSinceLastUserReplySec)
+      : null;
+  const timeSinceLastProactiveSec =
+    ue && typeof ue.timeSinceLastProactiveSec === 'number' && ue.timeSinceLastProactiveSec >= 0
+      ? Math.round(ue.timeSinceLastProactiveSec)
+      : null;
+  const ignoredStrikes =
+    ue && typeof ue.ignoredProactiveStrikes === 'number' && ue.ignoredProactiveStrikes >= 0
+      ? ue.ignoredProactiveStrikes
+      : 0;
+  const penaltyActive = !!(ue && ue.penaltyActive);
+  const repliedSinceLastProactive = !!(ue && ue.repliedSinceLastProactive);
+  const lastUserAtTs = ue && Number.isFinite(ue.lastUserAt) && ue.lastUserAt > 0 ? ue.lastUserAt : 0;
+  const lastUserReplyAtTs =
+    ue && Number.isFinite(ue.lastUserReplyAt) && ue.lastUserReplyAt > 0 ? ue.lastUserReplyAt : 0;
+  const lastProactiveAtTs =
+    ue && Number.isFinite(ue.lastProactiveAt) && ue.lastProactiveAt > 0 ? ue.lastProactiveAt : 0;
+  const penaltyUntilTs =
+    ue && Number.isFinite(ue.penaltyUntil) && ue.penaltyUntil > 0 ? ue.penaltyUntil : 0;
+  const lastUserAtLocal = lastUserAtTs > 0 ? formatLocalDateTime(lastUserAtTs, tz) : null;
+  const lastUserReplyAtLocal =
+    lastUserReplyAtTs > 0 ? formatLocalDateTime(lastUserReplyAtTs, tz) : null;
+  const lastProactiveAtLocal =
+    lastProactiveAtTs > 0 ? formatLocalDateTime(lastProactiveAtTs, tz) : null;
+  const penaltyUntilLocal = penaltyUntilTs > 0 ? formatLocalDateTime(penaltyUntilTs, tz) : null;
 
   const rdLines = [];
 
@@ -379,6 +442,9 @@ function buildPlannerRootDirectiveXml(options) {
   rdLines.push(
     '    <item>当你意识到自己只是想“再补充说明一下刚才的问题”或“换一种说法继续解释同一个知识点”时，应将本轮 objective 设定为保持沉默或轻度陪伴，而不是继续输出类似内容。</item>'
   );
+  rdLines.push(
+    '    <item>当 <user_engagement> 中显示用户长时间未回复、或存在多次 ignored_proactive_strikes / penalty_active=true 时，应明显降低主动规划的频率，更倾向将本轮 objective 规划为保持沉默或仅作轻度陪伴。</item>'
+  );
   rdLines.push('  </constraints>');
   rdLines.push('  <meta>');
   rdLines.push(`    <desire_score>${scoreText}</desire_score>`);
@@ -411,6 +477,48 @@ function buildPlannerRootDirectiveXml(options) {
   }
   if (presetSummary) {
     rdLines.push(`    <preset_plain_text>${escapeXml(presetSummary)}</preset_plain_text>`);
+  }
+  if (ue) {
+    rdLines.push('    <user_engagement>');
+    if (timeSinceLastUserSec != null) {
+      rdLines.push(`      <time_since_last_user_sec>${timeSinceLastUserSec}</time_since_last_user_sec>`);
+    }
+    if (timeSinceLastUserReplySec != null) {
+      rdLines.push(
+        `      <time_since_last_user_reply_sec>${timeSinceLastUserReplySec}</time_since_last_user_reply_sec>`
+      );
+    }
+    if (timeSinceLastProactiveSec != null) {
+      rdLines.push(
+        `      <time_since_last_proactive_sec>${timeSinceLastProactiveSec}</time_since_last_proactive_sec>`
+      );
+    }
+    rdLines.push(`      <ignored_proactive_strikes>${ignoredStrikes}</ignored_proactive_strikes>`);
+    rdLines.push(`      <penalty_active>${penaltyActive ? 'true' : 'false'}</penalty_active>`);
+    rdLines.push(
+      `      <replied_since_last_proactive>${repliedSinceLastProactive ? 'true' : 'false'}</replied_since_last_proactive>`
+    );
+    if (lastUserAtLocal) {
+      rdLines.push(
+        `      <last_user_at_local>${escapeXml(lastUserAtLocal)}</last_user_at_local>`
+      );
+    }
+    if (lastUserReplyAtLocal) {
+      rdLines.push(
+        `      <last_user_reply_at_local>${escapeXml(lastUserReplyAtLocal)}</last_user_reply_at_local>`
+      );
+    }
+    if (lastProactiveAtLocal) {
+      rdLines.push(
+        `      <last_proactive_at_local>${escapeXml(lastProactiveAtLocal)}</last_proactive_at_local>`
+      );
+    }
+    if (penaltyUntilLocal) {
+      rdLines.push(
+        `      <penalty_until_local>${escapeXml(penaltyUntilLocal)}</penalty_until_local>`
+      );
+    }
+    rdLines.push('    </user_engagement>');
   }
   rdLines.push('  </meta>');
   rdLines.push('</sentra-root-directive>');
@@ -490,7 +598,8 @@ export async function planProactiveObjective(payload = {}) {
     emoXml = '',
     memoryXml = '',
     conversationContext = null,
-    lastBotMessage = ''
+    lastBotMessage = '',
+    userEngagement = null
   } = payload || {};
 
   let effectivePresetXml = typeof presetXml === 'string' ? presetXml : '';
@@ -520,7 +629,8 @@ export async function planProactiveObjective(payload = {}) {
     emoXml,
     memoryXml,
     time,
-    lastBotMessage
+    lastBotMessage,
+    userEngagement
   });
 
   const systemContextXml = buildPlannerSystemContextXml({
@@ -591,7 +701,8 @@ export async function buildProactiveRootDirectiveXml(payload = {}) {
     emoXml = '',
     memoryXml = '',
     conversationContext = null,
-    lastBotMessage = ''
+    lastBotMessage = '',
+    userEngagement = null
   } = payload || {};
 
   const chatType = rawChatType === 'private' ? 'private' : 'group';
@@ -604,6 +715,27 @@ export async function buildProactiveRootDirectiveXml(payload = {}) {
   const lastBotMessagePreview = lastBotMessageSafe
     ? lastBotMessageSafe.replace(/\s+/g, ' ').slice(0, 200)
     : '';
+
+  const ue = userEngagement && typeof userEngagement === 'object' ? userEngagement : null;
+  const tz = getEnv('CONTEXT_MEMORY_TIMEZONE', 'Asia/Shanghai');
+  const timeSinceLastUserSec =
+    ue && typeof ue.timeSinceLastUserSec === 'number' && ue.timeSinceLastUserSec >= 0
+      ? Math.round(ue.timeSinceLastUserSec)
+      : null;
+  const timeSinceLastUserReplySec =
+    ue && typeof ue.timeSinceLastUserReplySec === 'number' && ue.timeSinceLastUserReplySec >= 0
+      ? Math.round(ue.timeSinceLastUserReplySec)
+      : null;
+  const timeSinceLastProactiveSec =
+    ue && typeof ue.timeSinceLastProactiveSec === 'number' && ue.timeSinceLastProactiveSec >= 0
+      ? Math.round(ue.timeSinceLastProactiveSec)
+      : null;
+  const ignoredStrikes =
+    ue && typeof ue.ignoredProactiveStrikes === 'number' && ue.ignoredProactiveStrikes >= 0
+      ? ue.ignoredProactiveStrikes
+      : 0;
+  const penaltyActive = !!(ue && ue.penaltyActive);
+  const repliedSinceLastProactive = !!(ue && ue.repliedSinceLastProactive);
 
   const lines = [];
   lines.push('<sentra-root-directive>');
@@ -634,7 +766,8 @@ export async function buildProactiveRootDirectiveXml(payload = {}) {
       emoXml,
       memoryXml,
       conversationContext,
-      lastBotMessage
+      lastBotMessage,
+      userEngagement
     });
   } catch (e) {
     logger.warn('主动 root 指令规划失败，将回退为默认 objective', { err: String(e) });
@@ -682,6 +815,7 @@ export async function buildProactiveRootDirectiveXml(payload = {}) {
   lines.push('    <item>如果主动发言的内容与上一轮或最近几轮你的发言高度相似（仅是改写或同义复述），应选择保持沉默。</item>');
   lines.push('    <item>如无明显价值或可能打扰用户，应选择保持沉默。</item>');
   lines.push('    <item>在适当时机，优先通过工具（例如搜索、知识库、历史上下文分析等）获取有趣或有用的信息，再结合你的人设进行分享或提问，以带出更有深度的新话题。</item>');
+  lines.push('    <item>当 <user_engagement> 中显示用户长时间未回复、或存在多次 ignored_proactive_strikes / penalty_active=true 时，应明显降低主动发言频率，优先将本轮规划为保持沉默或仅作轻度陪伴。</item>');
   lines.push('  </constraints>');
   lines.push('  <meta>');
   lines.push(`    <desire_score>${score}</desire_score>`);
@@ -689,6 +823,48 @@ export async function buildProactiveRootDirectiveXml(payload = {}) {
     lines.push(
       `    <last_bot_message_preview>${escapeXml(lastBotMessagePreview)}</last_bot_message_preview>`
     );
+  }
+  if (ue) {
+    lines.push('    <user_engagement>');
+    if (timeSinceLastUserSec != null) {
+      lines.push(`      <time_since_last_user_sec>${timeSinceLastUserSec}</time_since_last_user_sec>`);
+    }
+    if (timeSinceLastUserReplySec != null) {
+      lines.push(
+        `      <time_since_last_user_reply_sec>${timeSinceLastUserReplySec}</time_since_last_user_reply_sec>`
+      );
+    }
+    if (timeSinceLastProactiveSec != null) {
+      lines.push(
+        `      <time_since_last_proactive_sec>${timeSinceLastProactiveSec}</time_since_last_proactive_sec>`
+      );
+    }
+    lines.push(`      <ignored_proactive_strikes>${ignoredStrikes}</ignored_proactive_strikes>`);
+    lines.push(`      <penalty_active>${penaltyActive ? 'true' : 'false'}</penalty_active>`);
+    lines.push(
+      `      <replied_since_last_proactive>${repliedSinceLastProactive ? 'true' : 'false'}</replied_since_last_proactive>`
+    );
+    if (lastUserAtLocal) {
+      lines.push(
+        `      <last_user_at_local>${escapeXml(lastUserAtLocal)}</last_user_at_local>`
+      );
+    }
+    if (lastUserReplyAtLocal) {
+      lines.push(
+        `      <last_user_reply_at_local>${escapeXml(lastUserReplyAtLocal)}</last_user_reply_at_local>`
+      );
+    }
+    if (lastProactiveAtLocal) {
+      lines.push(
+        `      <last_proactive_at_local>${escapeXml(lastProactiveAtLocal)}</last_proactive_at_local>`
+      );
+    }
+    if (penaltyUntilLocal) {
+      lines.push(
+        `      <penalty_until_local>${escapeXml(penaltyUntilLocal)}</penalty_until_local>`
+      );
+    }
+    lines.push('    </user_engagement>');
   }
   lines.push('  </meta>');
   lines.push('</sentra-root-directive>');

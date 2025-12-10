@@ -4,9 +4,11 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "keyword": {
-        "type": "string",
-        "description": "音乐的标题或关键词, 可为 歌曲名 或 歌曲名+歌手名"
+      "keywords": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 1,
+        "description": "音乐标题或关键词数组，每项可为 歌曲名 或 歌曲名+歌手名，例如：[\"稻香 周杰伦\", \"夜曲 周杰伦\"]"
       },
       "provider": {
         "type": "string",
@@ -63,7 +65,7 @@
         "description": "可选：当用户需要延迟处理/延迟反馈时使用；仅控制反馈时间，不延迟执行。若到点未完成，将先反馈进行中状态。"
       }
     },
-    "required": ["keyword"],
+    "required": ["keywords"],
     "additionalProperties": true
   },
   "timeoutMs": 40000,

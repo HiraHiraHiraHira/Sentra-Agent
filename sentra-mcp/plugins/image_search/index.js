@@ -844,11 +844,11 @@ async function searchUnsplash(query, count, options = {}) {
   }
 }
 
-export default async function handler(args = {}, options = {}) {
+async function singleImageSearchHandler(args = {}, options = {}) {
   const query = String(args.query || '').trim();
   const count = Number(args.count || 0);
   
-  // 参数验证
+  // 参数验证（单次查询）
   if (!query) {
     return { 
       success: false, 

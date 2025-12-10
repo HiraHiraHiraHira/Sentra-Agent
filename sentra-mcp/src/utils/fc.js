@@ -48,8 +48,29 @@ export function parseFunctionCalls(text = '', opts = {}) {
 export async function buildFunctionCallInstruction({ name, parameters, locale = 'zh-CN' } = {}) {
   const prettySchema = parameters ? JSON.stringify(parameters, null, 2) : '{}';
   const req = Array.isArray(parameters?.required) ? parameters.required : [];
-  const reqHintZh = req.length ? `- 必须包含必填字段: ${req.join(', ')}` : '- 如 schema 未列出必填字段：仅包含必要字段，避免冗余';
-  const reqHintEn = req.length ? `- Must include required fields: ${req.join(', ')}` : '- If no required fields: include only necessary fields, avoid extras';
+  let reqHintZh = req.length ? `- 必须包含必填字段: ${req.join(', ')}` : '- 如 schema 未列出必填字段：仅包含必要字段，避免冗余';
+  let reqHintEn = req.length ? `- Must include required fields: ${req.join(', ')}` : '- If no required fields: include only necessary fields, avoid extras';
+
+  // Highlight batch / array-style parameters for higher efficiency
+  const arrayFields = [];
+  if (parameters && typeof parameters === 'object' && parameters.properties && typeof parameters.properties === 'object') {
+    for (const [key, value] of Object.entries(parameters.properties)) {
+      const type = value && value.type;
+      if (type === 'array' || (Array.isArray(type) && type.includes('array'))) {
+        arrayFields.push(key);
+      }
+    }
+  }
+
+  if (arrayFields.length > 0) {
+    const list = arrayFields.join(', ');
+    reqHintZh += `\n- 下列参数在 schema 中是数组类型，适合批量处理：${list}。当用户希望对多个同类实体执行相同操作时，必须将它们合并到这些数组参数中，一次性调用该工具，而不是拆成多次单独调用。即便当前只有一个实体，只要 schema 要求 array，也要传入数组形式（例如 ["北京"]、["关键词"]）。`;
+    reqHintEn += `\n- The following parameters are array-typed in the schema and are intended for batch processing: ${list}. When the user wants to apply the same operation to multiple similar items, you MUST combine them into these array parameters in a single tool call instead of issuing many nearly identical calls. Even for a single item, if the schema requires an array, you MUST still pass an array (e.g., ["Beijing"], ["keyword"]).`;
+  } else {
+    reqHintZh += '\n- 如果 schema 中出现数组类型参数（例如表示城市列表、查询列表、关键词列表等），应优先将多个同类目标合并到该数组中，一次性批量调用该工具，而不是多次单独调用。';
+    reqHintEn += '\n- When the schema contains array-typed parameters (for example lists of cities, queries, or keywords), you should prefer batching multiple similar targets into that array and calling the tool once, instead of issuing many separate calls.';
+  }
+
   const pf = await loadPrompt('fc_function_sentra');
   const tpl = String(locale).toLowerCase().startsWith('zh') ? pf.zh : pf.en;
   const vars = {
@@ -67,30 +88,31 @@ export async function buildPlanFunctionCallInstruction({ allowedAiNames = [], lo
   const allow = Array.isArray(allowedAiNames) && allowedAiNames.length ? allowedAiNames.join(', ') : '(无)';
   const hasAllow = Array.isArray(allowedAiNames) && allowedAiNames.length > 0;
   const schemaHint = JSON.stringify({
-    plan: {
-      overview: 'string (可选)',
-      steps: [
-        {
-          aiName: 'string (必须在允许列表中)',
-          reason: ['string', 'string', '...'] + ' (数组，每项为一个具体操作或理由)',
-          nextStep: 'string',
-          draftArgs: { '...': '...' },
-          dependsOn: ['number 索引数组，可省略']
-        }
-      ]
-    }
+    overview: 'string (可选，总体目标与策略简述)',
+    steps: [
+      {
+        aiName: 'string (必须在允许列表中)',
+        reason: ['string', 'string', '...'] + ' (数组，每项为一个具体操作或理由)',
+        nextStep: 'string',
+        draftArgs: { '...': '...' },
+        dependsOn: ['number 索引数组，可省略']
+      }
+    ]
   }, null, 2);
   const pf = await loadPrompt('fc_plan_sentra');
   const tpl = String(locale).toLowerCase().startsWith('zh') ? pf.zh : pf.en;
+
+  // 加载规划约束提示（中英文+是否有 allowed 列表 两种分支）
+  const pfReq = await loadPrompt('fc_plan_require_line');
+  const isZh = String(locale).toLowerCase().startsWith('zh');
+  const localeKey = isZh ? 'zh' : 'en';
+  const reqBlock = (pfReq && pfReq[localeKey]) || {};
+  const rawReqTpl = hasAllow ? reqBlock.has_allow : reqBlock.no_allow;
+  const require_line = renderTemplate(rawReqTpl || '', { allowed_list: allow });
+
   const vars = {
     allowed_list: allow,
-    require_line: hasAllow
-      ? (String(locale).toLowerCase().startsWith('zh')
-        ? '- 允许列表非空：优先从列表中选择 1 个或多个 MCP operations 组成步骤；若所有 operation 确实不适用，可以输出空 steps 数组，但绝不能发明列表外的 operation。'
-        : '- When allowed tools exist: prefer selecting one or more operations from the list; if none truly fit, you MAY return an empty steps array, but MUST NOT invent operations outside the list.')
-      : (String(locale).toLowerCase().startsWith('zh')
-        ? '- 若确无合适工具，可输出空 steps 数组，并且禁止创建列表外的虚构 operation。'
-        : '- If truly no tool fits, you may output an empty steps array, and you MUST NOT invent any operation outside the (possibly empty) list.'),
+    require_line,
     schema_hint: schemaHint,
   };
   return renderTemplate(tpl, vars);
@@ -102,7 +124,14 @@ export async function buildPlanFunctionCallInstruction({ allowedAiNames = [], lo
 export async function buildFCPolicy({ locale = 'en' } = {}) {
   const pf = await loadPrompt('fc_policy_sentra');
   const tpl = String(locale).toLowerCase().startsWith('zh') ? pf.zh : pf.en;
-  return renderTemplate(tpl, { tag: '<sentra-tools>' });
+  const isZh = String(locale).toLowerCase().startsWith('zh');
+  const base = renderTemplate(tpl, { tag: '<sentra-tools>' });
+
+  const batchSectionZh = '\n\n## 批量调用与数组参数（效率优先）\n\n- 许多工具支持使用数组类型参数（例如 cities、queries、keywords 等）在一次调用中处理多个实体。\n- 在规划步骤和生成工具调用时，如果多个子需求可以由同一个工具完成，并且该工具有数组参数可用于批量输入，你必须优先将这些目标合并到一次批量调用中，而不是拆成多次几乎相同的调用。\n- 示例：用户要求“同时查询北京和上海的天气”，应规划并生成一次 weather 调用，参数形如 {"cities": ["北京", "上海"]}，而不是分别调用两次 weather。\n- 当某个工具已经将旧的单值参数升级为数组参数（例如 city → cities, query → queries, keyword → keywords），严禁继续使用旧的单值参数名称，也不要为每个实体分别创建步骤来模拟批量。\n- 始终关注用户体验与系统资源消耗，在保证正确性的前提下优先采用高效的批量调用方案。';
+
+  const batchSectionEn = '\n\n## Batch Calls and Array Parameters (Efficiency First)\n\n- Many tools support array-typed parameters (for example cities, queries, keywords) to process multiple entities in a single call.\n- When planning steps and generating tool invocations, if multiple sub-tasks can be handled by the same tool and that tool exposes array parameters for batch input, you MUST prefer merging these targets into one batched call instead of issuing many nearly identical calls.\n- Example: when the user asks to "check the weather for both Beijing and Shanghai", you should plan and emit a single weather call with arguments like {"cities": ["Beijing", "Shanghai"]}, instead of calling weather twice.\n- When a tool has migrated from single-value parameters to array parameters (for example city → cities, query → queries, keyword → keywords), you MUST NOT keep using the old single-value parameter names, and you MUST NOT simulate batching by creating one step per entity.\n- Always care about user experience and resource usage: under correctness constraints, prefer efficient batched calls whenever possible.';
+
+  return base + (isZh ? batchSectionZh : batchSectionEn);
 }
 
 function safeParseJson(s) {

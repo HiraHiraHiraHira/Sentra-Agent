@@ -16,7 +16,6 @@ async function getDecisionAgentPresetContext() {
   if (!presetInitPromiseForDecision) {
     presetInitPromiseForDecision = (async () => {
       try {
-        // 复用 ReplyIntervention 的 Agent 实例，确保与主站点配置一致
         const presetAgent = getAgent && typeof getAgent === 'function' ? getAgent() : null;
         const snapshot = await initAgentPresetCore(presetAgent || null);
         const xml = snapshot && typeof snapshot.xml === 'string' ? snapshot.xml.trim() : '';

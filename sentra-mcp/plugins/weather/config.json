@@ -4,9 +4,13 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "city": {
-        "type": "string",
-        "description": "城市名称，如：北京、上海、广州、深圳、杭州等。支持中文和拼音。City name in Chinese or Pinyin, e.g., Beijing, Shanghai, Guangzhou"
+      "cities": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "minItems": 1,
+        "description": "城市名称数组，如：[\"北京\", \"上海\"]。支持中文和拼音。Array of city names in Chinese or Pinyin, e.g., [Beijing, Shanghai]."
       },
       "queryType": {
         "type": "string",
@@ -63,7 +67,7 @@
       }
     },
     "required": [
-      "city"
+      "cities"
     ],
     "additionalProperties": true
   },

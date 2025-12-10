@@ -111,13 +111,16 @@ async function generateSingleNativePlan({ messages, tools, allowedAiNames, tempe
   });
   const call = res.choices?.[0]?.message?.tool_calls?.[0];
   let parsed; try { parsed = call?.function?.arguments ? JSON.parse(call.function.arguments) : {}; } catch { parsed = {}; }
-  let rawSteps = Array.isArray(parsed?.plan?.steps) ? parsed.plan.steps.map((s) => ({
+  const stepsArr = Array.isArray(parsed?.steps)
+    ? parsed.steps
+    : (Array.isArray(parsed?.plan?.steps) ? parsed.plan.steps : []);
+  let rawSteps = stepsArr.map((s) => ({
     aiName: s?.aiName,
     reason: normalizeReason(s?.reason),
     nextStep: s?.nextStep || '',
     draftArgs: s?.draftArgs || {},
     dependsOn: Array.isArray(s?.dependsOn) ? s.dependsOn : undefined
-  })) : [];
+  }));
   // 过滤未知工具
   const validNames = new Set(allowedAiNames || []);
   const steps = (validNames.size ? rawSteps.filter((s) => s.aiName && validNames.has(s.aiName)) : rawSteps);
@@ -240,11 +243,32 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
     toolPath: './tools/internal/emit_plan.tool.json',
     schemaPath: './tools/internal/emit_plan.schema.json',
     mutateSchema: (schema) => {
-      const aiNameProp = schema?.properties?.plan?.properties?.steps?.items?.properties?.aiName;
+      const aiNameProp = schema?.properties?.steps?.items?.properties?.aiName;
       if (aiNameProp && Array.isArray(allowedAiNames)) aiNameProp.enum = allowedAiNames;
     },
-    fallbackTool: { type: 'function', function: { name: 'emit_plan', description: '产出工具执行顺序的 JSON 计划。每一步仅包含一个工具(aiName)与draftArgs(仅需包含必填字段)。', parameters: { type: 'object', properties: {} } } },
-    fallbackSchema: { type: 'object', properties: { plan: { type: 'object', properties: { steps: { type: 'array', items: { type: 'object', properties: { aiName: { type: 'string' } }, required: ['aiName'] } } }, required: ['steps'], additionalProperties: true } }, required: ['plan'] },
+    fallbackTool: {
+      type: 'function',
+      function: {
+        name: 'emit_plan',
+        description: '产出工具执行顺序的 JSON 计划。每一步仅包含一个工具(aiName)与draftArgs(仅需包含必填字段)。',
+        parameters: { type: 'object', properties: {} }
+      }
+    },
+    fallbackSchema: {
+      type: 'object',
+      properties: {
+        overview: { type: 'string' },
+        steps: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { aiName: { type: 'string' } },
+            required: ['aiName']
+          }
+        }
+      },
+      required: ['steps']
+    },
   });
   const tools = [emitPlanTool];
   // 加载 emit_plan 提示模板，构造消息
@@ -387,7 +411,10 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
   if (steps.length === 0 || removedUnknown) {
     try {
       if (config.flags.enableVerboseSteps) {
-        const dropped = (parsed?.plan?.steps || []).filter((s) => !validNames.has(s?.aiName)).map((s) => s?.aiName);
+        const allSteps = Array.isArray(parsed?.steps)
+          ? parsed.steps
+          : (Array.isArray(parsed?.plan?.steps) ? parsed.plan.steps : []);
+        const dropped = allSteps.filter((s) => !validNames.has(s?.aiName)).map((s) => s?.aiName);
         logger.warn?.('触发严格重规划：上次计划包含未知工具或为空', { label: 'PLAN', dropped, allowedAiNames });
       }
       const replanMessages2 = compactMessages([
@@ -403,7 +430,16 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
       const re2 = await chatCompletion({ messages: replanMessages2, tools, tool_choice: { type: 'function', function: { name: 'emit_plan' } }, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1) });
       const rcall2 = re2.choices?.[0]?.message?.tool_calls?.[0];
       let reparsed2; try { reparsed2 = rcall2?.function?.arguments ? JSON.parse(rcall2.function.arguments) : {}; } catch { reparsed2 = {}; }
-      let rsteps2 = Array.isArray(reparsed2?.plan?.steps) ? reparsed2.plan.steps.map((s) => ({ aiName: s?.aiName, reason: normalizeReason(s?.reason), nextStep: s?.nextStep || '', draftArgs: s?.draftArgs || {}, dependsOn: Array.isArray(s?.dependsOn) ? s.dependsOn : undefined })) : [];
+      const stepsArr2 = Array.isArray(reparsed2?.steps)
+        ? reparsed2.steps
+        : (Array.isArray(reparsed2?.plan?.steps) ? reparsed2.plan.steps : []);
+      let rsteps2 = stepsArr2.map((s) => ({
+        aiName: s?.aiName,
+        reason: normalizeReason(s?.reason),
+        nextStep: s?.nextStep || '',
+        draftArgs: s?.draftArgs || {},
+        dependsOn: Array.isArray(s?.dependsOn) ? s.dependsOn : undefined
+      }));
       const rfiltered2 = rsteps2.filter((s) => s.aiName && validNames.has(s.aiName));
       steps = rfiltered2;
     } catch (e) {
@@ -462,7 +498,16 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
     const re = await chatCompletion({ messages: replanMessages, tools, tool_choice: { type: 'function', function: { name: 'emit_plan' } }, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1) });
     const rcall = re.choices?.[0]?.message?.tool_calls?.[0];
     let reparsed; try { reparsed = rcall?.function?.arguments ? JSON.parse(rcall.function.arguments) : {}; } catch { reparsed = {}; }
-    let rsteps = Array.isArray(reparsed?.plan?.steps) ? reparsed.plan.steps.map((s) => ({ aiName: s?.aiName, reason: normalizeReason(s?.reason), nextStep: s?.nextStep || '', draftArgs: s?.draftArgs || {}, dependsOn: Array.isArray(s?.dependsOn) ? s.dependsOn : undefined })) : [];
+    const stepsArr = Array.isArray(reparsed?.steps)
+      ? reparsed.steps
+      : (Array.isArray(reparsed?.plan?.steps) ? reparsed.plan.steps : []);
+    let rsteps = stepsArr.map((s) => ({
+      aiName: s?.aiName,
+      reason: normalizeReason(s?.reason),
+      nextStep: s?.nextStep || '',
+      draftArgs: s?.draftArgs || {},
+      dependsOn: Array.isArray(s?.dependsOn) ? s.dependsOn : undefined
+    }));
     // 过滤未知工具
     const rfiltered = rsteps.filter((s) => s.aiName && validNames.has(s.aiName));
     rsteps = rfiltered;
