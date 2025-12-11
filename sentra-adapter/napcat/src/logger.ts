@@ -18,14 +18,57 @@ const levelWeight: Record<LogLevel, number> = {
   silent: 99,
 };
 
-function fmt(args: any[]): string {
-  return args
-    .map((a) =>
-      typeof a === 'string'
-        ? a
-        : util.inspect(a, { colors: false, depth: null, maxArrayLength: 50 }),
-    )
-    .join(' ');
+function stringifyValue(v: any): string {
+  if (v === null || v === undefined) return String(v);
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (v instanceof Error) return v.message || v.name || 'Error';
+  try {
+    const json = JSON.stringify(v);
+    // 避免过长的 JSON 串刷屏
+    if (json.length > 300) return json.slice(0, 297) + '...';
+    return json;
+  } catch {
+    return util.inspect(v, { colors: false, depth: 3, maxArrayLength: 20 });
+  }
+}
+
+function formatMetaPretty(args: any[]): string {
+  const parts: string[] = [];
+  for (const a of args) {
+    if (a === undefined || a === null) continue;
+    if (a instanceof Error) {
+      parts.push(`error=${stringifyValue(a)}`);
+      continue;
+    }
+    if (typeof a === 'object' && !Array.isArray(a)) {
+      for (const [k, v] of Object.entries(a)) {
+        parts.push(`${k}=${stringifyValue(v)}`);
+      }
+      continue;
+    }
+    parts.push(stringifyValue(a));
+  }
+  return parts.join(' ');
+}
+
+function formatLogLine(args: any[]): string {
+  if (!args || args.length === 0) return '';
+  let message = '';
+  const metaArgs: any[] = [];
+
+  for (const a of args) {
+    if (!message && typeof a === 'string') {
+      message = a;
+    } else {
+      metaArgs.push(a);
+    }
+  }
+
+  const meta = formatMetaPretty(metaArgs);
+  if (message && meta) return `${message} ${meta}`;
+  if (message) return message;
+  return meta;
 }
 
 function localTimestamp(): string {
@@ -67,7 +110,8 @@ export function createLogger(level: LogLevel = 'info'): Logger {
       else console.log(line);
       return;
     }
-    const line = colorTag + fmt(args);
+    const text = formatLogLine(args);
+    const line = colorTag + text;
     if (lvl === 'error') console.error(line);
     else if (lvl === 'warn') console.warn(line);
     else console.log(line);

@@ -1,5 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import type { MessageEvent } from './types/onebot';
+import type { MessageEvent, NoticeEvent } from './types/onebot';
 import type { SdkInvoke } from './sdk';
 import { createLogger } from './logger';
 
@@ -114,6 +114,15 @@ export interface FormattedMessage {
   raw?: any;
 }
 
+export interface PokeNotice extends FormattedMessage {
+  /** 事件类型：戳一戳 */
+  event_type: 'poke';
+  /** 被戳者 QQ 号 */
+  target_id: number;
+  /** 被戳者名称（昵称/群名片/QQ 号字符串） */
+  target_name?: string;
+}
+
 /**
  * 消息流服务
  * 通过WebSocket实时推送格式化后的消息给外部应用
@@ -129,6 +138,7 @@ export class MessageStream {
   private rpcRetryEnabled: boolean;
   private rpcRetryIntervalMs: number;
   private rpcRetryMaxAttempts: number;
+  private botName?: string;
 
   constructor(options: {
     /** WebSocket服务器端口 */
@@ -150,6 +160,167 @@ export class MessageStream {
     this.rpcRetryEnabled = options.rpcRetryEnabled ?? true;
     this.rpcRetryIntervalMs = options.rpcRetryIntervalMs ?? 10000;
     this.rpcRetryMaxAttempts = options.rpcRetryMaxAttempts ?? 60;
+  }
+
+  private async getBotName(selfId?: number): Promise<string | undefined> {
+    if (!selfId || !this.invoker) return undefined;
+    if (this.botName) return this.botName;
+    try {
+      const call = async () => await this.invoker!.data('get_login_info', {});
+      const info: any = this.rpcRetryEnabled
+        ? await this.withRpcRetry(call, 'get_login_info', selfId)
+        : await call();
+      const nick = info?.nickname;
+      if (nick && typeof nick === 'string') {
+        this.botName = nick;
+      }
+    } catch {
+      // 忽略获取失败，后续可重试
+    }
+    return this.botName;
+  }
+
+  private async formatPoke(ev: NoticeEvent): Promise<PokeNotice> {
+    const time = ev.time ?? Math.floor(Date.now() / 1000);
+    const timeStr = new Date(time * 1000).toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+
+    const isGroup = !!(ev as any).group_id;
+    const msgType: 'group' | 'private' = isGroup ? 'group' : 'private';
+    const selfId = (ev as any).self_id as number | undefined;
+    const groupId = (ev as any).group_id as number | undefined;
+    const senderId = (ev as any).user_id as number;
+    const targetId = (ev as any).target_id as number;
+
+    let groupName: string | undefined;
+    if (msgType === 'group' && groupId && this.getGroupNameFn) {
+      try {
+        groupName = await this.getGroupNameFn(groupId);
+      } catch {}
+    }
+
+    let senderName = String(senderId || '');
+    let senderCard: string | undefined;
+    let senderRole: 'owner' | 'admin' | 'member' | undefined;
+
+    const inv = this.invoker;
+    if (inv && senderId) {
+      try {
+        if (msgType === 'group' && groupId) {
+          const call = async () => await inv.data('get_group_member_info', { group_id: groupId, user_id: senderId });
+          const info: any = this.rpcRetryEnabled
+            ? await this.withRpcRetry(call, 'get_group_member_info', senderId)
+            : await call();
+          const nick = info?.nickname;
+          const card = info?.card;
+          const role = info?.role;
+          senderName = nick || card || String(senderId);
+          senderCard = card || undefined;
+          if (role === 'owner' || role === 'admin' || role === 'member') senderRole = role;
+        } else if (msgType === 'private') {
+          const call = async () => await inv.data('get_stranger_info', { user_id: senderId });
+          const info: any = this.rpcRetryEnabled
+            ? await this.withRpcRetry(call, 'get_stranger_info', senderId)
+            : await call();
+          const nick = info?.nickname;
+          senderName = nick || String(senderId);
+        }
+      } catch {}
+    }
+
+    let targetName: string | undefined;
+    if (inv && targetId) {
+      try {
+        if (msgType === 'group' && groupId) {
+          const call = async () => await inv.data('get_group_member_info', { group_id: groupId, user_id: targetId });
+          const info: any = this.rpcRetryEnabled
+            ? await this.withRpcRetry(call, 'get_group_member_info', targetId)
+            : await call();
+          const nick = info?.nickname;
+          const card = info?.card;
+          targetName = card || nick || String(targetId);
+        } else if (msgType === 'private') {
+          if (selfId && targetId === selfId) {
+            // 获取 Bot 自身昵称
+            const botName = await this.getBotName(selfId);
+            targetName = botName || String(targetId);
+          } else {
+            const call = async () => await inv.data('get_stranger_info', { user_id: targetId });
+            const info: any = this.rpcRetryEnabled
+              ? await this.withRpcRetry(call, 'get_stranger_info', targetId)
+              : await call();
+            const nick = info?.nickname;
+            targetName = nick || String(targetId);
+          }
+        }
+      } catch {}
+    }
+    if (!targetName) targetName = String(targetId);
+
+    // 拟人化的概括文案，便于直接阅读
+    let summary: string;
+    if (msgType === 'group') {
+      const gName = groupName || (groupId ? `群${groupId}` : '未知群');
+      const senderDisplay = senderName ? `${senderName}(QQ:${senderId})` : `QQ:${senderId}`;
+      let targetDisplay = targetName ? `${targetName}(QQ:${targetId})` : `QQ:${targetId}`;
+      if (selfId && targetId === selfId) {
+        // 被戳的是 Bot 自己
+        targetDisplay = targetName ? `${targetName}(我)` : `我(QQ:${targetId})`;
+      }
+      summary = `在群聊「${gName}」中，${senderDisplay} 轻轻戳了 ${targetDisplay}`;
+    } else {
+      const senderDisplay = senderName ? `${senderName}(QQ:${senderId})` : `QQ:${senderId}`;
+      if (selfId && targetId === selfId) {
+        const botDisplay = targetName || String(targetId);
+        summary = `好友 ${senderDisplay} 戳了你（${botDisplay}）`; 
+      } else {
+        const targetDisplay = targetName ? `${targetName}(QQ:${targetId})` : `QQ:${targetId}`;
+        summary = `${senderDisplay} 在私聊中戳了 ${targetDisplay}`;
+      }
+    }
+
+    const poke: PokeNotice = {
+      event_type: 'poke',
+      message_id: 0,
+      time,
+      time_str: timeStr,
+      type: msgType,
+      self_id: selfId,
+      summary,
+      sender_id: senderId,
+      sender_name: senderName,
+      sender_card: senderCard,
+      sender_role: senderRole,
+      group_id: groupId,
+      group_name: groupName,
+      text: '',
+      segments: [],
+      reply: undefined,
+      images: [],
+      videos: [],
+      files: [],
+      records: [],
+      cards: [],
+      forwards: [],
+      faces: [],
+      at_users: [],
+      at_all: false,
+      target_id: targetId,
+      target_name: targetName,
+    };
+
+    if (this.includeRaw) {
+      (poke as any).raw = ev;
+    }
+
+    return poke;
   }
 
   /**
@@ -419,6 +590,52 @@ export class MessageStream {
       }
     } catch (err) {
       log.error({ err }, '格式化消息失败');
+    }
+  }
+
+  /**
+   * 推送戳一戳通知到所有已连接的客户端
+   * 仅处理 notice_type=notify 且 sub_type=poke 的通知事件
+   * 以与普通消息相同的格式推送（type='message'，data=PokeNotice），
+   * 下游只需统一处理 message，再通过 event_type='poke' 识别
+   */
+  async pushNotice(ev: NoticeEvent) {
+    try {
+      const nt = (ev as any).notice_type;
+      const sub = (ev as any).sub_type;
+      if (nt !== 'notify' || sub !== 'poke') {
+        return;
+      }
+
+      const poke = await this.formatPoke(ev);
+
+      try {
+        log.info({
+          type: poke.type,
+          group_id: poke.group_id,
+          sender_id: poke.sender_id,
+          sender_name: poke.sender_name,
+          target_id: poke.target_id,
+          target_name: poke.target_name,
+        }, '收到戳一戳通知，准备推送到消息流');
+      } catch {}
+
+      const payload = JSON.stringify({
+        type: 'message',
+        data: poke,
+      });
+
+      for (const client of this.clients) {
+        if (client.readyState === WebSocket.OPEN) {
+          try {
+            client.send(payload);
+          } catch (err) {
+            log.error({ err }, '推送戳一戳通知失败');
+          }
+        }
+      }
+    } catch (err) {
+      log.error({ err }, '处理戳一戳通知失败');
     }
   }
 

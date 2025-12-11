@@ -230,8 +230,41 @@ async function main() {
 
   // 监听通知事件
   sdk.on.notice(async (ev: any) => {
-    if (process.env.LOG_LEVEL === 'debug') {
-      log.debug({ notice_type: ev.notice_type }, '收到通知');
+    const isPoke = ev && ev.notice_type === 'notify' && ev.sub_type === 'poke';
+
+    if (isPoke) {
+      const scene = ev.group_id ? 'group' : 'friend';
+      const summary = {
+        scene,
+        group_id: ev.group_id,
+        user_id: ev.user_id,
+        target_id: ev.target_id,
+        self_id: ev.self_id,
+      };
+
+      // 结构化日志：谁在什么场景戳了谁
+      log.info(summary, '收到戳一戳通知');
+
+      // 推送到消息流（如果启用）
+      if (sdk.stream) {
+        try {
+          const streamInstance = sdk.stream.getInstance();
+          if (streamInstance && typeof (streamInstance as any).pushNotice === 'function') {
+            await (streamInstance as any).pushNotice(ev);
+          }
+        } catch (err) {
+          log.error({ err, notice_type: ev.notice_type, sub_type: ev.sub_type }, '戳一戳通知推流失败');
+        }
+      }
+    } else if (process.env.LOG_LEVEL === 'debug') {
+      // 其他通知在 debug 模式下仍打印简要信息
+      log.debug({
+        notice_type: ev.notice_type,
+        sub_type: ev.sub_type,
+        group_id: ev.group_id,
+        user_id: ev.user_id,
+        target_id: ev.target_id,
+      }, '收到通知');
     }
   });
 

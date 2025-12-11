@@ -45,8 +45,25 @@ export function setupSocketHandlers(ctx) {
       }
 
       if (payload.type === 'message') {
-        const msg = payload.data;
-        logger.debug('<< message', msg.type, msg.group_id || msg.sender_id);
+        const msg = payload.data || {};
+        const isPoke = msg && msg.event_type === 'poke';
+
+        if (isPoke) {
+          const scene = msg.type || 'unknown';
+          const convId = msg.group_id ? `G:${msg.group_id}` : `U:${msg.sender_id || ''}`;
+          logger.info('<< poke', {
+            scene,
+            group_id: msg.group_id || null,
+            sender_id: msg.sender_id || null,
+            sender_name: msg.sender_name || '',
+            target_id: msg.target_id || null,
+            target_name: msg.target_name || '',
+            summary: msg.summary || msg.text || '',
+            conv_id: convId,
+          });
+        } else {
+          logger.debug('<< message', msg.type, msg.group_id || msg.sender_id);
+        }
         const userid = String(msg?.sender_id ?? '');
         const username = msg?.sender_name || '';
 

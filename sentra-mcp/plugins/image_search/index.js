@@ -293,6 +293,23 @@ async function fetchTextWithRetry(url, options = {}, retries = 3, timeoutMs = 20
   throw lastError;
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 5000) {
+  const { method = 'GET', headers, body } = options || {};
+  const res = await httpRequest({
+    method,
+    url,
+    headers,
+    data: body,
+    timeoutMs,
+    validateStatus: () => true,
+    responseType: 'text',
+  });
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`HTTP ${res.status} ${res.statusText || ''}`.trim());
+  }
+  return res.data;
+}
+
 /**
  * 从URL猜测文件扩展名
  */
@@ -845,7 +862,13 @@ async function searchUnsplash(query, count, options = {}) {
 }
 
 async function singleImageSearchHandler(args = {}, options = {}) {
-  const query = String(args.query || '').trim();
+  const queries = Array.isArray(args.queries)
+    ? args.queries.map((q) => String(q || '').trim()).filter(Boolean)
+    : [];
+  let query = String(args.query || '').trim();
+  if (!query && queries.length > 0) {
+    query = queries[0];
+  }
   const count = Number(args.count || 0);
   
   // 参数验证（单次查询）
@@ -1367,4 +1390,8 @@ async function singleImageSearchHandler(args = {}, options = {}) {
       details: e?.stack 
     };
   }
+}
+
+export default async function handler(args = {}, options = {}) {
+  return singleImageSearchHandler(args, options);
 }

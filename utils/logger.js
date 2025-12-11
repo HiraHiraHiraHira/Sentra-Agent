@@ -39,6 +39,8 @@ class Logger {
     const levelName = getEnv('LOG_LEVEL', '').toUpperCase();
     this.minLevel = LogLevel[levelName] ?? LogLevel.INFO;
     this.enableTimestamp = options.enableTimestamp !== false;
+    const formatName = (getEnv('LOG_FORMAT', 'pretty') || 'pretty').toLowerCase();
+    this.format = formatName === 'json' ? 'json' : 'pretty';
   }
 
   /**
@@ -55,13 +57,97 @@ class Logger {
     return this.enableTimestamp ? chalk.gray(getTimestamp()) : '';
   }
 
+  _stringifyValue(value) {
+    if (value === null || value === undefined) return String(value);
+    if (value instanceof Error) return value.message || String(value);
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  _formatMetaPretty(args) {
+    if (!args || args.length === 0) return '';
+
+    const plainObjects = [];
+    const others = [];
+    for (const a of args) {
+      if (a && typeof a === 'object' && !Array.isArray(a) && !(a instanceof Error)) {
+        plainObjects.push(a);
+      } else if (a !== undefined && a !== null) {
+        others.push(a);
+      }
+    }
+
+    const parts = [];
+
+    if (plainObjects.length) {
+      const merged = Object.assign({}, ...plainObjects);
+      const entries = Object.entries(merged);
+      if (entries.length) {
+        parts.push(
+          entries
+            .map(([key, value]) => `${chalk.gray(key)}=${chalk.white(this._stringifyValue(value))}`)
+            .join(' ')
+        );
+      }
+    }
+
+    for (const a of others) {
+      if (a instanceof Error) {
+        parts.push(chalk.red(a.message || String(a)));
+      } else if (typeof a === 'string') {
+        parts.push(a);
+      } else {
+        parts.push(this._stringifyValue(a));
+      }
+    }
+
+    return parts.length ? parts.join(' ') : '';
+  }
+
+  _buildJsonEntry(levelName, message, args, errorObj) {
+    const entry = {
+      time: new Date().toISOString(),
+      level: levelName,
+      module: this.moduleName,
+      message: String(message),
+    };
+
+    if (Array.isArray(args)) {
+      for (const a of args) {
+        if (a && typeof a === 'object' && !Array.isArray(a) && !(a instanceof Error)) {
+          Object.assign(entry, a);
+        }
+      }
+    }
+
+    if (errorObj instanceof Error) {
+      entry.errorMessage = errorObj.message;
+      entry.errorName = errorObj.name;
+      entry.errorStack = errorObj.stack;
+    }
+
+    return entry;
+  }
+
   /**
    * 调试日志（青色，更清晰）
    */
   debug(message, ...args) {
     if (this.minLevel > LogLevel.DEBUG) return;
+    if (this.format === 'json') {
+      const entry = this._buildJsonEntry('DEBUG', message, args);
+      console.log(JSON.stringify(entry));
+      return;
+    }
     const prefix = `${this._formatTimestamp()} ${chalk.cyan('[DEBUG]')} ${this._formatModule()}`;
-    console.log(prefix, chalk.white(message), ...args);
+    const meta = this._formatMetaPretty(args);
+    const text = meta ? `${message} ${meta}` : message;
+    console.log(prefix, chalk.white(text));
   }
 
   /**
@@ -69,8 +155,15 @@ class Logger {
    */
   info(message, ...args) {
     if (this.minLevel > LogLevel.INFO) return;
+    if (this.format === 'json') {
+      const entry = this._buildJsonEntry('INFO', message, args);
+      console.log(JSON.stringify(entry));
+      return;
+    }
     const prefix = `${this._formatTimestamp()} ${chalk.blue('[INFO]')} ${this._formatModule()}`;
-    console.log(prefix, chalk.blue(message), ...args);
+    const meta = this._formatMetaPretty(args);
+    const text = meta ? `${message} ${meta}` : message;
+    console.log(prefix, chalk.blue(text));
   }
 
   /**
@@ -78,8 +171,15 @@ class Logger {
    */
   success(message, ...args) {
     if (this.minLevel > LogLevel.SUCCESS) return;
+    if (this.format === 'json') {
+      const entry = this._buildJsonEntry('SUCCESS', message, args);
+      console.log(JSON.stringify(entry));
+      return;
+    }
     const prefix = `${this._formatTimestamp()} ${chalk.green('[OK]')} ${this._formatModule()}`;
-    console.log(prefix, chalk.green(message), ...args);
+    const meta = this._formatMetaPretty(args);
+    const text = meta ? `${message} ${meta}` : message;
+    console.log(prefix, chalk.green(text));
   }
 
   /**
@@ -87,8 +187,15 @@ class Logger {
    */
   warn(message, ...args) {
     if (this.minLevel > LogLevel.WARN) return;
+    if (this.format === 'json') {
+      const entry = this._buildJsonEntry('WARN', message, args);
+      console.warn(JSON.stringify(entry));
+      return;
+    }
     const prefix = `${this._formatTimestamp()} ${chalk.yellow('[WARN]')} ${this._formatModule()}`;
-    console.warn(prefix, chalk.yellow(message), ...args);
+    const meta = this._formatMetaPretty(args);
+    const text = meta ? `${message} ${meta}` : message;
+    console.warn(prefix, chalk.yellow(text));
   }
 
   /**
@@ -96,8 +203,15 @@ class Logger {
    */
   error(message, error, ...args) {
     if (this.minLevel > LogLevel.ERROR) return;
+    if (this.format === 'json') {
+      const entry = this._buildJsonEntry('ERROR', message, [error, ...args], error instanceof Error ? error : undefined);
+      console.error(JSON.stringify(entry));
+      return;
+    }
     const prefix = `${this._formatTimestamp()} ${chalk.red('[ERROR]')} ${this._formatModule()}`;
-    console.error(prefix, chalk.red(message), ...args);
+    const meta = this._formatMetaPretty([error, ...args]);
+    const text = meta ? `${message} ${meta}` : message;
+    console.error(prefix, chalk.red(text));
     if (error && error.stack) {
       console.error(chalk.red(error.stack));
     }
