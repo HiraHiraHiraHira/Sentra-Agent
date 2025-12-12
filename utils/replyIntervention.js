@@ -2,11 +2,20 @@ import { Agent } from '../agent.js';
 import { createLogger } from './logger.js';
 import { getEnv, getEnvInt, getEnvBool } from './envHotReloader.js';
 import { initAgentPresetCore } from '../components/AgentPresetInitializer.js';
+import { loadPrompt } from '../prompts/loader.js';
 
 const logger = createLogger('ReplyIntervention');
 
 let cachedPresetContextForDecision = null;
 let presetInitPromiseForDecision = null;
+
+const REPLY_DECISION_PROMPT_NAME = 'reply_decision';
+const REPLY_DEDUP_PROMPT_NAME = 'reply_dedup';
+const REPLY_OVERRIDE_PROMPT_NAME = 'reply_override';
+
+let cachedReplyDecisionSystemPrompt = null;
+let cachedReplyDedupSystemPrompt = null;
+let cachedReplyOverrideSystemPrompt = null;
 
 async function getDecisionAgentPresetContext() {
   if (cachedPresetContextForDecision !== null) {
@@ -97,164 +106,62 @@ function getAgent() {
   return sharedAgent;
 }
 
-const SYSTEM_PROMPT = [
-  '<role>reply_decision_classifier</role>',
-  '<task>',
-  '  Decide whether the QQ assistant should reply to the current message.',
-  '  You never generate natural language chat replies for the user; you only output a structured Sentra XML decision.',
-  '</task>',
-  '<input_format>',
-  '  The user message will contain exactly one <decision_input> block with structured fields.',
-  '  Structure:',
-  '  <decision_input>',
-  '    <scene>group | private | unknown</scene>',
-  '    <sender>',
-  '      <id>sender_id string</id>',
-  '      <name>sender_name string</name>',
-  '    </sender>',
-  '    <group_id>group_id string or empty for private chats</group_id>',
-  '    <message>',
-  '      <text>raw user text (may be empty)</text>',
-  '      <summary>platform summary text (may be empty)</summary>',
-  '    </message>',
-  '    <message_features>',
-  '      <text_length>length of message.text in characters</text_length>',
-  '      <summary_length>length of message.summary in characters</summary_length>',
-  '      <has_question_mark>true | false</has_question_mark>',
-  '      <has_url>true | false</has_url>',
-  '      <has_at_symbol>true | false</has_at_symbol>',
-  '    </message_features>',
-  '    <signals>',
-  '      <is_group>true | false</is_group>',
-  '      <is_private>true | false</is_private>',
-  '      <mentioned_by_at>true | false</mentioned_by_at>',
-  '      <mentioned_by_name>true | false</mentioned_by_name>',
-  '      <mentioned_names>zero or more matched bot names</mentioned_names>',
-  '      <senderReplyCountWindow>number</senderReplyCountWindow>',
-  '      <groupReplyCountWindow>number</groupReplyCountWindow>',
-  '      <senderFatigue>float between 0 and 1</senderFatigue>',
-  '      <groupFatigue>float between 0 and 1</groupFatigue>',
-  '      <senderLastReplyAgeSec>number or empty</senderLastReplyAgeSec>',
-  '      <groupLastReplyAgeSec>number or empty</groupLastReplyAgeSec>',
-  '      <is_followup_after_bot_reply>true | false</is_followup_after_bot_reply>',
-  '      <activeTaskCount>number of currently active tasks for this sender</activeTaskCount>',
-  '    </signals>',
-  '    <policy_config>',
-  '      <mention_must_reply>true | false</mention_must_reply>',
-  '      <followup_window_sec>number of seconds counted as follow-up after last bot reply</followup_window_sec>',
-  '      <attention>',
-  '        <enabled>true | false</enabled>',
-  '        <window_ms>time window in ms during which attention window applies</window_ms>',
-  '        <max_senders>max distinct senders allowed in attention window</max_senders>',
-  '      </attention>',
-  '      <user_fatigue>',
-  '        <enabled>true | false</enabled>',
-  '        <window_ms>rolling window in ms for counting user replies</window_ms>',
-  '        <base_limit>baseline allowed replies in the window</base_limit>',
-  '        <min_interval_ms>minimum interval before backoff</min_interval_ms>',
-  '        <backoff_factor>backoff growth factor</backoff_factor>',
-  '        <max_backoff_multiplier>max backoff multiplier</max_backoff_multiplier>',
-  '      </user_fatigue>',
-  '      <group_fatigue>',
-  '        <enabled>true | false</enabled>',
-  '        <window_ms>rolling window in ms for counting group replies</window_ms>',
-  '        <base_limit>baseline allowed replies in the window</base_limit>',
-  '        <min_interval_ms>minimum interval before backoff</min_interval_ms>',
-  '        <backoff_factor>backoff growth factor</backoff_factor>',
-  '        <max_backoff_multiplier>max backoff multiplier</max_backoff_multiplier>',
-  '      </group_fatigue>',
-  '    </policy_config>',
-  '    <context>',
-  '      <group_recent_messages>',
-  '        <!-- ordered from oldest to newest -->',
-  '        <message>',
-  '          <sender_id>string</sender_id>',
-  '          <sender_name>string</sender_name>',
-  '          <text>string</text>',
-  '          <time>string</time>',
-  '        </message>',
-  '        ...',
-  '      </group_recent_messages>',
-  '      <sender_recent_messages>',
-  '        <message>',
-  '          <sender_id>string</sender_id>',
-  '          <sender_name>string</sender_name>',
-  '          <text>string</text>',
-  '          <time>string</time>',
-  '        </message>',
-  '        ...',
-  '      </sender_recent_messages>',
-  '    </context>',
-  '    <payload_json>{...full JSON mirror of the same data...}</payload_json>',
-  '  </decision_input>',
-  '</input_format>',
-  '<decision_rules>',
-  '  <rule id="1">Focus mainly on scene="group". For private chats you can still make a best-effort decision.</rule>',
-  '  <rule id="2">Use the mention signals with strict priority: mentioned_by_at (explicit @) has the highest priority; mentioned_by_name (name mention) is next; messages without any mention have the lowest priority.</rule>',
-  '  <rule id="3">For messages with mentioned_by_at=true, you should almost always set should_reply=true, unless the content is clearly not asking the assistant to act (pure jokes about the bot, spam, or obviously irrelevant). Treat explicit @ as the strongest intent signal.</rule>',
-  '  <rule id="4">For messages with mentioned_by_name=true (but no explicit @), you should usually prefer should_reply=true when there is a reasonable chance the user is addressing the assistant, especially when there is a question or instruction.</rule>',
-  '  <rule id="5">For messages without any mention, you should be conservative: rely on message_features (has_question_mark, text_length, has_url) and recent history to reply only when there is a clear question, request, or instruction.</rule>',
-  '  <rule id="6">If the current message or recent sender messages contain a clear question, request, or instruction for the assistant, then should_reply=true, especially when is_followup_after_bot_reply is true.</rule>',
-  '  <rule id="7">If the content is only emojis, very short acknowledgements ("ok", "thanks", "got it", "done"), laughter ("哈哈", "lol"), or obvious low-information chatter, then should_reply=false, unless there is a strong mention signal that clearly requires a response.</rule>',
-  '  <rule id="8a">When is_followup_after_bot_reply is true, use sender_recent_messages to detect if the user is continuing the same topic (follow-up question, extra constraints, parameter changes, corrections).</rule>',
-  '  <rule id="8b">If it is a continuation of the same topic, prefer should_reply=true even when there is no explicit @ mention.</rule>',
-  '  <rule id="8c">Only choose should_reply=false in follow-up mode when the message clearly closes the conversation (pure thanks, confirmation, or obvious closure).</rule>',
-  '  <rule id="9">Higher senderFatigue / groupFatigue means you should filter out low-value messages more aggressively, but still reply to clear questions or important requests. Treat fatigue scores and policy_config as soft guidance, not hard cutoffs.</rule>',
-  '</decision_rules>',
-  '<output_requirements>',
-  '  You must output exactly one <sentra-reply-decision> XML block and nothing else (no markdown, no chat text).',
-  '  Strict XML structure:',
-  '  <sentra-reply-decision>',
-  '    <should_reply>true|false</should_reply>',
-  '    <confidence>0.0-1.0</confidence>',
-  '    <priority>high|normal|low</priority>',
-  '    <should_quote>true|false</should_quote>',
-  '    <reason>Short explanation in Chinese or English describing the main factors in your decision.</reason>',
-  '  </sentra-reply-decision>',
-  '  - Do not output <sentra-response> or any other Sentra protocol tags here.',
-  '  - Do not wrap the XML in markdown code fences.',
-  '</output_requirements>'
-].join('\n');
-const DEDUP_SYSTEM_PROMPT = [
-  '<role>send_dedup_judge</role>',
-  '<task>',
-  '  Given two candidate reply texts A (base) and B (candidate) for the same conversation,',
-  '  decide whether B makes A redundant from the user\'s perspective.',
-  '</task>',
-  '<guidelines>',
-  '  - Treat A as an earlier reply that would be sent first.',
-  '  - Treat B as a later reply that could replace A.',
-  '  - If B clearly covers the key information, tone and intent of A (even with slightly different wording),',
-  '    they are considered duplicates and A can be dropped.',
-  '  - If A and B contain different facts, different suggestions, or complementary content,',
-  '    they are NOT duplicates and both may be sent.',
-  '  - Small wording differences, extra emojis, or short compliments do NOT prevent them from being duplicates.',
-  '</guidelines>',
-  '<input_format>',
-  '  You will receive exactly one <send_dedup_input> block:',
-  '  <send_dedup_input>',
-  '    <base_text>string</base_text>',
-  '    <candidate_text>string</candidate_text>',
-  '  </send_dedup_input>',
-  '</input_format>',
-  '<decision_rules>',
-  '  - Consider semantic meaning, key facts, constraints, tone, and overall intent.',
-  '  - If B clearly covers and improves A with the same intent, they are duplicates (are_similar=true).',
-  '  - If B contradicts A, changes the main intent, or introduces new important content, they are NOT duplicates (are_similar=false).',
-  '  - Ignore minor wording differences, small emoji changes, or short compliments appended to the same content.',
-  '</decision_rules>',
-  '<output_requirements>',
-  '  You must output exactly one <sentra-dedup-decision> XML block and nothing else (no markdown, no chat text).',
-  '  Strict XML structure:',
-  '  <sentra-dedup-decision>',
-  '    <are_similar>true|false</are_similar>',
-  '    <similarity>0.0-1.0 (optional, omit if unsure)</similarity>',
-  '    <reason>Short explanation in Chinese or English describing whether they are duplicates.</reason>',
-  '  </sentra-dedup-decision>',
-  '  - Do NOT wrap the XML in markdown code fences.',
-  '  - Do NOT output any natural language outside the XML block.',
-  '</output_requirements>'
-].join('\n');
+async function getReplyDecisionSystemPrompt() {
+  try {
+    if (cachedReplyDecisionSystemPrompt) {
+      return cachedReplyDecisionSystemPrompt;
+    }
+    const data = await loadPrompt(REPLY_DECISION_PROMPT_NAME);
+    const system = data && typeof data.system === 'string' ? data.system : '';
+    if (system) {
+      cachedReplyDecisionSystemPrompt = system;
+      return system;
+    }
+  } catch (e) {
+    logger.warn('ReplyIntervention: 加载 reply_decision prompt 失败，将使用简化回退文案', {
+      err: String(e)
+    });
+  }
+  return '<role>reply_decision_classifier</role>';
+}
+
+async function getReplyDedupSystemPrompt() {
+  try {
+    if (cachedReplyDedupSystemPrompt) {
+      return cachedReplyDedupSystemPrompt;
+    }
+    const data = await loadPrompt(REPLY_DEDUP_PROMPT_NAME);
+    const system = data && typeof data.system === 'string' ? data.system : '';
+    if (system) {
+      cachedReplyDedupSystemPrompt = system;
+      return system;
+    }
+  } catch (e) {
+    logger.warn('ReplyIntervention: 加载 reply_dedup prompt 失败，将使用简化回退文案', {
+      err: String(e)
+    });
+  }
+  return '<role>send_dedup_judge</role>';
+}
+
+async function getReplyOverrideSystemPrompt() {
+  try {
+    if (cachedReplyOverrideSystemPrompt) {
+      return cachedReplyOverrideSystemPrompt;
+    }
+    const data = await loadPrompt(REPLY_OVERRIDE_PROMPT_NAME);
+    const system = data && typeof data.system === 'string' ? data.system : '';
+    if (system) {
+      cachedReplyOverrideSystemPrompt = system;
+      return system;
+    }
+  } catch (e) {
+    logger.warn('ReplyIntervention: 加载 reply_override prompt 失败，将使用简化回退文案', {
+      err: String(e)
+    });
+  }
+  return '<role>override_intent_classifier</role>';
+}
 
 function escapeXmlText(text) {
   if (!text) return '';
@@ -664,8 +571,8 @@ export async function planGroupReplyDecision(msg, options = {}) {
   try {
     const { model, maxTokens } = getDecisionConfig();
     const presetContext = await getDecisionAgentPresetContext();
-
-    const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
+    const systemPrompt = await getReplyDecisionSystemPrompt();
+    const messages = [{ role: 'system', content: systemPrompt }];
     if (presetContext) {
       messages.push({ role: 'system', content: presetContext });
     }
@@ -751,9 +658,10 @@ export async function decideSendDedupPair(baseText, candidateText) {
 
   try {
     const { model } = getDecisionConfig();
+    const systemPrompt = await getReplyDedupSystemPrompt();
     const raw = await agent.chat(
       [
-        { role: 'system', content: DEDUP_SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userContent }
       ],
       {
@@ -884,9 +792,10 @@ export async function decideOverrideIntent(payload) {
     const userContent = lines.join('\n');
 
     const { model } = getDecisionConfig();
+    const systemPrompt = await getReplyOverrideSystemPrompt();
     const raw = await agent.chat(
       [
-        { role: 'system', content: OVERRIDE_SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userContent }
       ],
       {

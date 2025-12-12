@@ -3,8 +3,31 @@ import path from 'path';
 import { createHash } from 'crypto';
 import { createLogger } from './logger.js';
 import { getEnv } from './envHotReloader.js';
+import { loadPrompt } from '../prompts/loader.js';
 
 const logger = createLogger('PresetTextToJson');
+
+const PRESET_CONVERTER_PROMPT_NAME = 'preset_converter';
+let cachedPresetConverterSystemPrompt = null;
+
+async function getPresetConverterSystemPrompt() {
+  try {
+    if (cachedPresetConverterSystemPrompt) {
+      return cachedPresetConverterSystemPrompt;
+    }
+    const data = await loadPrompt(PRESET_CONVERTER_PROMPT_NAME);
+    const system = data && typeof data.system === 'string' ? data.system : '';
+    if (system) {
+      cachedPresetConverterSystemPrompt = system;
+      return system;
+    }
+  } catch (e) {
+    logger.warn('PresetTextToJson: 加载 preset_converter prompt 失败，将使用简化回退文案', {
+      err: String(e)
+    });
+  }
+  return 'You are an internal Sentra XML sub-agent that converts Chinese agent persona presets into a structured <sentra-agent-preset> XML block.';
+}
 
 function hashText(text) {
   try {
@@ -261,19 +284,7 @@ export async function convertPresetTextToJson({ agent, rawText, fileName, model 
     };
   }
 
-  const systemPrompt = [
-    'You are an internal Sentra XML sub-agent that converts Chinese agent persona presets into a structured <sentra-agent-preset> XML block.',
-    'The preset describes the BOT itself (appearance, identity, interests, personality, behavior rules, etc.).',
-    '',
-    'STRICT OUTPUT REQUIREMENTS:',
-    '- Output EXACTLY ONE <sentra-agent-preset> XML block and NOTHING ELSE (no markdown, no JSON, no explanations).',
-    '- Inside <sentra-agent-preset>, include <meta>, <parameters>, and optionally <rules>.',
-    '- In <meta>, provide node_name, category, description, and optionally version/author.',
-    '- In <parameters>, create FLAT child elements (no nested tags) such as <Appearance>, <Identity>, <Interests>, <Personality>, <Other> with rich Chinese text.',
-    '- In <rules>, each <rule> should contain <id>, <enabled>, optional <event>, optional <conditions> with multiple <condition> items, and optional <behavior> with flat child elements (e.g., <instruction>, <style>, <max_length>).',
-    '- All natural language content must be fluent Chinese.',
-    '- Do NOT mention tools, functions, JSON, or Sentra XML protocol explicitly.'
-  ].join('\n');
+  const systemPrompt = await getPresetConverterSystemPrompt();
 
   const userContent = [
     '下面是 Agent 的完整中文预设文本（可能是 Markdown 或自然语言，描述外貌、人设、身份、兴趣、性格、说话风格、行为规则等）：',

@@ -175,8 +175,6 @@ export function valueToXMLString(value, depth = 0, maxDepth = 100, seen = new Se
 export function jsonToXMLLines(data, indent = 1, depth = 0, maxDepth = 100, filterKeys = [], seen = new Set()) {
   const lines = [];
   const indentStr = '  '.repeat(indent);
-  
-  // 只在极端情况下才限制深度（100层应该足够深了）
   if (depth > maxDepth) {
     lines.push(`${indentStr}<value>[MAX_DEPTH_EXCEEDED]</value>`);
     return lines;
@@ -275,6 +273,66 @@ export function jsonToXMLLines(data, indent = 1, depth = 0, maxDepth = 100, filt
   // 基本类型
   lines.push(`${indentStr}<value>${valueToXMLString(data, depth, maxDepth, seen)}</value>`);
   return lines;
+}
+
+/**
+ * 在现有 lines 数组上追加一个简单的多行文本块：
+ * <tagName>
+ *   line...
+ * </tagName>
+ * - content 可以是字符串（按 \n 拆分）或字符串数组
+ * - 不进行 XML 转义，由调用方自行处理（必要时通过 options.transformLine 注入）
+ */
+export function appendXmlBlockLines(lines, tagName, content, options = {}) {
+  if (!Array.isArray(lines) || !tagName) return;
+
+  const { indent = 0, transformLine } = options;
+  const pad = '  '.repeat(indent);
+  const padInner = '  '.repeat(indent + 1);
+
+  lines.push(`${pad}<${tagName}>`);
+
+  if (Array.isArray(content)) {
+    for (const raw of content) {
+      if (raw == null) continue;
+      const value = typeof transformLine === 'function' ? transformLine(raw) : String(raw);
+      if (!value) continue;
+      lines.push(`${padInner}${value}`);
+    }
+  } else if (typeof content === 'string') {
+    const text = content;
+    for (const rawLine of text.split('\n')) {
+      const t = rawLine.trim();
+      if (!t) continue;
+      const value = typeof transformLine === 'function' ? transformLine(t) : t;
+      if (!value) continue;
+      lines.push(`${padInner}${value}`);
+    }
+  }
+
+  lines.push(`${pad}</${tagName}>`);
+}
+
+/**
+ * 在现有 lines 数组上追加一个简单的 <constraints> 块：
+ *   <constraints>
+ *     <item>...</item>
+ *   </constraints>
+ * - items 为字符串数组
+ * - 不进行 XML 转义，由调用方自行处理
+ */
+export function appendConstraintsBlock(lines, items, indent = 0) {
+  if (!Array.isArray(lines) || !Array.isArray(items) || items.length === 0) return;
+
+  const pad = '  '.repeat(indent);
+  const padItem = '  '.repeat(indent + 1);
+
+  lines.push(`${pad}<constraints>`);
+  for (const raw of items) {
+    if (!raw) continue;
+    lines.push(`${padItem}<item>${String(raw)}</item>`);
+  }
+  lines.push(`${pad}</constraints>`);
 }
 
 /**
@@ -425,7 +483,7 @@ export function extractFilesFromContent(data, basePath = []) {
     });
   }
 
-  // 自动按 path 去重（优先保留第一次出现的 key）
+  // 自动按 path 去重
   const seen = new Set();
   const unique = [];
   for (const f of files) {

@@ -3,8 +3,31 @@ import { appendTeachingLog } from '../utils/presetTeachingLogViewer.js';
 import { getEnv, getEnvBool } from '../utils/envHotReloader.js';
 import { escapeXml, escapeXmlAttr, unescapeXml } from '../utils/xmlUtils.js';
 import { getRecentPresetTeachingExamples, pushPresetTeachingExample } from '../utils/presetTeachingCache.js';
+import { loadPrompt, renderTemplate } from '../prompts/loader.js';
 
 const logger = createLogger('PresetTeaching');
+
+const PRESET_TEACHING_PROMPT_NAME = 'preset_teaching';
+let cachedPresetTeachingSystemPrompt = null;
+
+async function getPresetTeachingSystemPrompt(vars = {}) {
+  try {
+    if (cachedPresetTeachingSystemPrompt) {
+      return renderTemplate(cachedPresetTeachingSystemPrompt, vars);
+    }
+    const data = await loadPrompt(PRESET_TEACHING_PROMPT_NAME);
+    const system = data && typeof data.system === 'string' ? data.system : '';
+    if (system) {
+      cachedPresetTeachingSystemPrompt = system;
+      return renderTemplate(system, vars);
+    }
+  } catch (e) {
+    logger.warn('PresetTeaching: 加载 preset_teaching prompt 失败，将使用简化回退文案', {
+      err: String(e)
+    });
+  }
+  return 'You are an internal Sentra XML sub-agent responsible for MAINTAINING the BOT\'s agent preset JSON.';
+}
 
 function parseWhitelist(raw) {
   const text = (raw || '').trim();
@@ -689,122 +712,9 @@ export async function maybeTeachPreset(options = {}) {
   const inputXml = buildTeachingInputXml({ nodes, conversationText: historyText });
   const editablePathsSummary = buildEditablePathsSummaryFromNodes(nodes);
 
-  const systemPrompt = [
-    'You are an internal Sentra XML sub-agent responsible for MAINTAINING the BOT\'s agent preset JSON (its own persona card, i.e. <sentra-agent-preset>).',
-    'Your ONLY output is a machine-parsable XML edit plan that updates this preset when the whitelisted TEACHER is clearly teaching new persona details.',
-    '',
-    '## Input you receive',
-    'You will receive ONE and ONLY ONE <sentra-agent-preset-edit-input> XML block as the user message. It contains:',
-    '- <nodes>: a list of editable preset nodes, each with attributes id / kind / path and child <title> / <preview>.',
-    '- <conversation>: the current and recent conversation context in Chinese（包含用户与助手的往来对话，可能含 Sentra XML 片段，仅供理解意图）。',
-    '',
-    'Below is a summary of the editable JSON paths (for reference only, DO NOT echo them back):',
-    editablePathsSummary || '(no editable paths summary)',
-    '',
-    '## Your high-level task',
-    '1. 仔细阅读 <conversation>，判断本轮是否存在**清晰的“教导/改设定”意图**：',
-    '   - 例如：用户在教外貌、衣服、人设背景、说话风格、行为规则等。',
-    '2. 如果**没有**明确教导意图：',
-    '   - 输出一个 <sentra-agent-preset-edit-plan>，其中 <decision>no_change</decision>，<edit_operations> 为空。',
-    '3. 如果**有**明确教导意图：',
-    '   - 输出一个 <sentra-agent-preset-edit-plan>，其中 <decision>update</decision>，并给出**极少量、精确**的 <edit_operation> 列表。',
-    '   - 每个 <edit_operation> 必须引用 <nodes> 里已经存在的一个节点，并且通过 <target_index> 指定该节点（数值来自输入 <node index="N"> 属性）。',
-    '',
-    '## STRICT output format (single XML block, no markdown)',
-    '你必须严格按照下述结构输出，且只能输出这一段 XML（不要使用任何旧的 <operations>/<operation>/<op> 标签）：',
-    '<sentra-agent-preset-edit-plan>',
-    '  <decision>update|no_change</decision>',
-    '  <edit_operations>',
-    '    <edit_operation index="1">',
-    '      <edit_type>update|add|delete|toggle</edit_type>',
-    '      <target_index>ONE_OF_NODE_INDICES_FROM_INPUT</target_index>',
-    '      <!-- 可选：你也可以附带 <target_id>，其内容必须逐字复制自对应 <node id="..."> 属性 -->',
-    '      <new_value>NEW_VALUE_IN_CHINESE</new_value>',
-    '      <change_reason>中文解释为什么需要这次修改（引用用户的话语）</change_reason>',
-    '    </edit_operation>',
-    '    <!-- more <edit_operation> elements if needed -->',
-    '  </edit_operations>',
-    '</sentra-agent-preset-edit-plan>',
-    '',
-    '禁止事项：',
-    '- 不要输出 markdown 代码块或 ``` 包裹。',
-    '- 不要输出 <sentra-response> 或其它 Sentra 协议标签。',
-    '- 不要在 XML 前后添加任何解释性文本、对话或说明。',
-    '- 不要凭空创造不存在于 <nodes> 列表中的 <target_index> 或 <target_id>。',
-    '',
-    '## Operation selection guidelines',
-    '- **外貌/衣服/身份/说话风格** 等设定：',
-    '  - 优先选择已有 parameter 节点（如 param:appearance.description、param:style_and_tone.length_limit）。',
-    '  - 在 <edit_operation> 中使用 <edit_type>update</edit_type>，并在 <new_value> 中给出**完整的新文本**（而不是只给差分）。',
-    '- **行为规则（rules）**：',
-    '  - 若只是调整表述或语气，在 <edit_operation> 中使用 <edit_type>update</edit_type> 修改对应 rule 的 behavior.instruction。',
-    '  - 若只是开关某条规则，在 <edit_operation> 中使用 <edit_type>toggle</edit_type> 或 <edit_type>update</edit_type> 针对 enabled 节点。',
-    '  - 只有当用户明确说“新增/再加一条规则”等时，才使用 <edit_type>add</edit_type>。',
-    '- 若本轮对话只是闲聊或无关内容，必须输出 <decision>no_change</decision> 且让 <edit_operations> 为空。',
-    '- <new_value> 和 <change_reason> 内的自然语言都必须是地道中文，不要包含 XML 标签或转义实体。',
-    '',
-    '## Historical teaching examples as few-shot context',
-    '在正式处理当前教导请求之前，你可能会在对话历史中看到若干轮已经成功执行过的教导示例：',
-    '- user 角色发送完整的 <sentra-agent-preset-edit-input>（包含当时的 <nodes> 与 <conversation>）。',
-    '- assistant 角色回复对应的 <sentra-agent-preset-edit-plan>（表示当时实际采用的编辑计划）。',
-    '',
-    '请将这些历史示例视为“已经落地的教导样本”，用途包括：',
-    '- 学习在不同场景下如何选择合适的 <target_index>、<edit_type> 与 <new_value>。',
-    '- 当当前 <conversation> 的教导意图与某个历史样本高度相似、且目标路径/改动方向基本一致时，优先倾向：',
-    '  - 直接输出 <decision>no_change</decision>，认为无需再次修改预设；或',
-    '  - 只在原有基础上做极少量、必要的补充，而不是反复对同一段设定做等价改写。',
-    '这些示例只是模式参考，不需要逐字复述，也不要帮它们再生成新的编辑计划。',
-    '',
-    '## Example 1: 修改外貌衣服（update parameter）',
-    'Teaching intent (from <conversation>):',
-    '  用户: 以后别说黑色连帽衫了，我现在想让你设定成穿**白色连衣裙**，其余外貌不变。',
-    '',
-    'Good edit plan example（假设在输入 XML 中，该节点的 index="12"）：',
-    '<sentra-agent-preset-edit-plan>',
-    '  <decision>update</decision>',
-    '  <edit_operations>',
-    '    <edit_operation index="1">',
-    '      <edit_type>update</edit_type>',
-    '      <target_index>12</target_index>',
-    '      <!-- 可选：<target_id>param:appearance.description</target_id> -->',
-    '      <new_value>最佳质量、超细节、高分辨率、青春活力、动漫风格。女性角色，温柔可爱。黑色长发，双马尾。黑色眼睛。穿着白色连衣裙，带少量黑色配饰。</new_value>',
-    '      <change_reason>用户明确要求把衣服从黑色连帽衫改成白色连衣裙，其余外貌保持一致。</change_reason>',
-    '    </edit_operation>',
-    '  </edit_operations>',
-    '</sentra-agent-preset-edit-plan>',
-    '',
-    '## Example 2: 调整行为规则文案（update rule instruction）',
-    'Teaching intent (from <conversation>):',
-    '  用户: 群聊里不用叫大家“XX大人”了，改成直接叫昵称就行。',
-    '',
-    'Good edit plan example（假设对应 rule 节点的 index="25"）：',
-    '<sentra-agent-preset-edit-plan>',
-    '  <decision>update</decision>',
-    '  <edit_operations>',
-    '    <edit_operation index="1">',
-    '      <edit_type>update</edit_type>',
-    '      <target_index>25</target_index>',
-    '      <!-- 可选：<target_id>rule:Group_Chat_Protocol.instruction</target_id> -->',
-    '      <new_value>在群聊中自然融入，直接使用群友昵称称呼对方，不再使用“XX大人”。</new_value>',
-    '      <change_reason>用户要求群聊称呼从“XX大人”改为直接叫昵称。</change_reason>',
-    '    </edit_operation>',
-    '  </edit_operations>',
-    '</sentra-agent-preset-edit-plan>',
-    '',
-    '## Example 3: 没有教导意图（no_change）',
-    'Teaching intent (from <conversation>):',
-    '  用户只是和 BOT 闲聊日常，没有提到修改设定或角色。',
-    '',
-    'Expected edit plan:',
-    '<sentra-agent-preset-edit-plan>',
-    '  <decision>no_change</decision>',
-    '  <edit_operations></edit_operations>',
-    '</sentra-agent-preset-edit-plan>',
-    '',
-    '你在真正输出时：',
-    '- 只能输出**一段** <sentra-agent-preset-edit-plan>，不要包含本说明或示例内容。',
-    '- 必须根据当前 <nodes> 列表中的实际顺序选择正确的 <target_index>（数值来自 <node index="N">）。'
-  ].join('\n');
+  const systemPrompt = await getPresetTeachingSystemPrompt({
+    editablePathsSummary: editablePathsSummary || '(no editable paths summary)'
+  });
 
   const fewShotExamples = await getRecentPresetTeachingExamples(
     undefined,

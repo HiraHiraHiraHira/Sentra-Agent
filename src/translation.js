@@ -1,6 +1,80 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { getConfigFromEnv } from './config.js';
+import { loadPrompt, renderTemplate } from '../prompts/loader.js';
+
+const TRANSLATION_SMART_PROMPT_NAME = 'translation_smart';
+const TRANSLATION_TO_EN_PROMPT_NAME = 'translation_to_en';
+const TRANSLATION_DETECT_PROMPT_NAME = 'translation_detect_lang';
+
+let cachedTranslationSmartTemplate = null;
+let cachedTranslationToEnTemplate = null;
+let cachedTranslationDetectSystemPrompt = null;
+
+async function getSmartTranslationSystemPrompt({ context, preserveFormat }) {
+  const contextLine = context ? `翻译上下文：${context}\n` : '';
+  const formatLine = preserveFormat ? '请保持原文的格式和结构。\n' : '';
+  const vars = { contextLine, formatLine };
+
+  try {
+    if (cachedTranslationSmartTemplate) {
+      return renderTemplate(cachedTranslationSmartTemplate, vars);
+    }
+    const data = await loadPrompt(TRANSLATION_SMART_PROMPT_NAME);
+    const system = data && typeof data.system === 'string' ? data.system : '';
+    if (system) {
+      cachedTranslationSmartTemplate = system;
+      return renderTemplate(system, vars);
+    }
+  } catch (e) {
+    console.warn('Translator: 加载 translation_smart prompt 失败，将使用内联回退文案', e);
+  }
+
+  // 回退为原有内联提示词逻辑
+  return `你是一个专业的翻译助手。请将用户提供的文本翻译成英文。\n${contextLine}${formatLine}请只返回翻译后的英文文本，不要添加任何解释或注释。`;
+}
+
+async function getTranslateToEnSystemPrompt({ languageHint, context, preserveFormat }) {
+  const contextLine = context ? `翻译上下文：${context}\n` : '';
+  const formatLine = preserveFormat ? '请保持原文的格式和结构。\n' : '';
+  const vars = { languageHint, contextLine, formatLine };
+
+  try {
+    if (cachedTranslationToEnTemplate) {
+      return renderTemplate(cachedTranslationToEnTemplate, vars);
+    }
+    const data = await loadPrompt(TRANSLATION_TO_EN_PROMPT_NAME);
+    const system = data && typeof data.system === 'string' ? data.system : '';
+    if (system) {
+      cachedTranslationToEnTemplate = system;
+      return renderTemplate(system, vars);
+    }
+  } catch (e) {
+    console.warn('Translator: 加载 translation_to_en prompt 失败，将使用内联回退文案', e);
+  }
+
+  // 回退为原有内联提示词逻辑
+  return `你是一个专业的翻译助手。请将用户提供的文本从${languageHint}翻译成英文。\n${contextLine}${formatLine}请只返回翻译后的英文文本，不要添加任何解释或注释。`;
+}
+
+async function getDetectLanguageSystemPrompt() {
+  try {
+    if (cachedTranslationDetectSystemPrompt) {
+      return cachedTranslationDetectSystemPrompt;
+    }
+    const data = await loadPrompt(TRANSLATION_DETECT_PROMPT_NAME);
+    const system = data && typeof data.system === 'string' ? data.system : '';
+    if (system) {
+      cachedTranslationDetectSystemPrompt = system;
+      return system;
+    }
+  } catch (e) {
+    console.warn('Translator: 加载 translation_detect_lang prompt 失败，将使用内联回退文案', e);
+  }
+
+  // 回退为原有内联提示词
+  return '你是一个语言检测专家。请分析用户提供的文本，确定其主要语言。只返回语言代码（如：zh, en, ja, ko, fr, de, es, pt, ru, ar）。';
+}
 
 /**
  * LLM翻译工具类
@@ -38,10 +112,7 @@ export class Translator {
     const { context = '', preserveFormat = false } = options;
 
     try {
-      const systemPrompt = `你是一个专业的翻译助手。请将用户提供的文本翻译成英文。
-${context ? `翻译上下文：${context}` : ''}
-${preserveFormat ? '请保持原文的格式和结构。' : ''}
-请只返回翻译后的英文文本，不要添加任何解释或注释。`;
+      const systemPrompt = await getSmartTranslationSystemPrompt({ context, preserveFormat });
 
       const messages = [
         new SystemMessage(systemPrompt),
@@ -75,10 +146,11 @@ ${preserveFormat ? '请保持原文的格式和结构。' : ''}
         languageHint = `源语言是${this.getLanguageName(sourceLanguage)}。`;
       }
 
-      const systemPrompt = `你是一个专业的翻译助手。请将用户提供的文本从${languageHint}翻译成英文。
-${context ? `翻译上下文：${context}` : ''}
-${preserveFormat ? '请保持原文的格式和结构。' : ''}
-请只返回翻译后的英文文本，不要添加任何解释或注释。`;
+      const systemPrompt = await getTranslateToEnSystemPrompt({
+        languageHint,
+        context,
+        preserveFormat
+      });
 
       const messages = [
         new SystemMessage(systemPrompt),
@@ -197,7 +269,7 @@ ${preserveFormat ? '请保持原文的格式和结构。' : ''}
    */
   async detectLanguage(text) {
     try {
-      const systemPrompt = '你是一个语言检测专家。请分析用户提供的文本，确定其主要语言。只返回语言代码（如：zh, en, ja, ko, fr, de, es, pt, ru, ar）。';
+      const systemPrompt = await getDetectLanguageSystemPrompt();
 
       const messages = [
         new SystemMessage(systemPrompt),

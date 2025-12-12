@@ -2,7 +2,7 @@ import { Agent } from '../agent.js';
 import { createLogger } from '../utils/logger.js';
 import { getEnv, getEnvInt } from '../utils/envHotReloader.js';
 import { parseSentraResponse } from '../utils/protocolUtils.js';
-import { escapeXml } from '../utils/xmlUtils.js';
+import { escapeXml, appendXmlBlockLines, appendConstraintsBlock } from '../utils/xmlUtils.js';
 import { chatWithRetry as chatWithRetryCore } from './ChatWithRetry.js';
 import { initAgentPresetCore } from './AgentPresetInitializer.js';
 import sentraPrompts from 'sentra-prompts';
@@ -417,35 +417,25 @@ function buildPlannerRootDirectiveXml(options) {
     rdLines.push(`    <user_id>${escapeXml(safeUserId)}</user_id>`);
   }
   rdLines.push('  </target>');
-  rdLines.push('  <objective>');
-  for (const line of objectiveLines) {
-    if (!line) continue;
-    rdLines.push(`    ${escapeXml(line)}`);
-  }
-  rdLines.push('  </objective>');
-  rdLines.push('  <constraints>');
-  rdLines.push(
-    '    <item>优先考虑用户体验与不打扰原则：如果找不到有新意且对用户有价值的延展话题，应规划为“本轮保持沉默或轻度陪伴”。</item>'
+
+  appendXmlBlockLines(rdLines, 'objective', objectiveLines, {
+    indent: 1,
+    transformLine: (line) => escapeXml(line)
+  });
+
+  appendConstraintsBlock(
+    rdLines,
+    [
+      '优先考虑用户体验与不打扰原则：如果找不到有新意且对用户有价值的延展话题，应规划为“本轮保持沉默或轻度陪伴”。',
+      '不要机械复述用户刚说过的话，也不要简单改写你最近几轮已经给出的回答；避免继续围绕同一个问题给出多轮近似答案。',
+      '在私聊中可以更主动、更细腻一些，可以围绕用户的长期兴趣、情绪和日常生活拓展话题；在群聊中则更克制，避免刷屏或抢话。',
+      '可以从 Bot 自身的人设/兴趣出发提出你 genuinely 好奇或想分享的点，例如分享见闻、推荐内容、提出开放性问题，但必须与当前对话语境保持相关，避免生硬跑题。',
+      '在做是否以及如何主动发言的规划时，优先遵循 <sentra-agent-preset> 中定义的长期人设与行为规则，用户画像、情绪和记忆等信息仅作为辅助参考。',
+      '当你意识到自己只是想“再补充说明一下刚才的问题”或“换一种说法继续解释同一个知识点”时，应将本轮 objective 设定为保持沉默或轻度陪伴，而不是继续输出类似内容。',
+      '当 <user_engagement> 中显示用户长时间未回复、或存在多次 ignored_proactive_strikes / penalty_active=true 时，应明显降低主动规划的频率，更倾向将本轮 objective 规划为保持沉默或仅作轻度陪伴。'
+    ],
+    1
   );
-  rdLines.push(
-    '    <item>不要机械复述用户刚说过的话，也不要简单改写你最近几轮已经给出的回答；避免继续围绕同一个问题给出多轮近似答案。</item>'
-  );
-  rdLines.push(
-    '    <item>在私聊中可以更主动、更细腻一些，可以围绕用户的长期兴趣、情绪和日常生活拓展话题；在群聊中则更克制，避免刷屏或抢话。</item>'
-  );
-  rdLines.push(
-    '    <item>可以从 Bot 自身的人设/兴趣出发提出你 genuinely 好奇或想分享的点，例如分享见闻、推荐内容、提出开放性问题，但必须与当前对话语境保持相关，避免生硬跑题。</item>'
-  );
-  rdLines.push(
-    '    <item>在做是否以及如何主动发言的规划时，优先遵循 <sentra-agent-preset> 中定义的长期人设与行为规则，用户画像、情绪和记忆等信息仅作为辅助参考。</item>'
-  );
-  rdLines.push(
-    '    <item>当你意识到自己只是想“再补充说明一下刚才的问题”或“换一种说法继续解释同一个知识点”时，应将本轮 objective 设定为保持沉默或轻度陪伴，而不是继续输出类似内容。</item>'
-  );
-  rdLines.push(
-    '    <item>当 <user_engagement> 中显示用户长时间未回复、或存在多次 ignored_proactive_strikes / penalty_active=true 时，应明显降低主动规划的频率，更倾向将本轮 objective 规划为保持沉默或仅作轻度陪伴。</item>'
-  );
-  rdLines.push('  </constraints>');
   rdLines.push('  <meta>');
   rdLines.push(`    <desire_score>${scoreText}</desire_score>`);
   if (time) {
@@ -813,23 +803,23 @@ export async function buildProactiveRootDirectiveXml(payload = {}) {
     ? objectiveText.trim()
     : defaultObjectiveLines.join('\n');
 
-  lines.push('  <objective>');
-  for (const rawLine of effectiveObjective.split('\n')) {
-    const t = rawLine.trim();
-    if (!t) continue;
-    lines.push(`    ${t}`);
-  }
-  lines.push('  </objective>');
+  appendXmlBlockLines(lines, 'objective', effectiveObjective, { indent: 1 });
+
   lines.push('  <allow_tools>true</allow_tools>');
-  lines.push('  <constraints>');
-  lines.push('    <item>不要打断正在高频、多人的激烈对话。</item>');
-  lines.push('    <item>同一会话中，主动发言应保持适度，不要频繁刷屏。</item>');
-  lines.push('    <item>主动发言内容必须与最近的话题相关，可以是抛出新问题、补充背景信息、提出新角度或轻度转场，但不要机械重复你最近几条发言。</item>');
-  lines.push('    <item>如果主动发言的内容与上一轮或最近几轮你的发言高度相似（仅是改写或同义复述），应选择保持沉默。</item>');
-  lines.push('    <item>如无明显价值或可能打扰用户，应选择保持沉默。</item>');
-  lines.push('    <item>在适当时机，优先通过工具（例如搜索、知识库、历史上下文分析等）获取有趣或有用的信息，再结合你的人设进行分享或提问，以带出更有深度的新话题。</item>');
-  lines.push('    <item>当 <user_engagement> 中显示用户长时间未回复、或存在多次 ignored_proactive_strikes / penalty_active=true 时，应明显降低主动发言频率，优先将本轮规划为保持沉默或仅作轻度陪伴。</item>');
-  lines.push('  </constraints>');
+
+  appendConstraintsBlock(
+    lines,
+    [
+      '不要打断正在高频、多人的激烈对话。',
+      '同一会话中，主动发言应保持适度，不要频繁刷屏。',
+      '主动发言内容必须与最近的话题相关，可以是抛出新问题、补充背景信息、提出新角度或轻度转场，但不要机械重复你最近几条发言。',
+      '如果主动发言的内容与上一轮或最近几轮你的发言高度相似（仅是改写或同义复述），应选择保持沉默。',
+      '如无明显价值或可能打扰用户，应选择保持沉默。',
+      '在适当时机，优先通过工具（例如搜索、知识库、历史上下文分析等）获取有趣或有用的信息，再结合你的人设进行分享或提问，以带出更有深度的新话题。',
+      '当 <user_engagement> 中显示用户长时间未回复、或存在多次 ignored_proactive_strikes / penalty_active=true 时，应明显降低主动发言频率，优先将本轮规划为保持沉默或仅作轻度陪伴。'
+    ],
+    1
+  );
   lines.push('  <meta>');
   lines.push(`    <desire_score>${score}</desire_score>`);
   if (lastBotMessagePreview) {

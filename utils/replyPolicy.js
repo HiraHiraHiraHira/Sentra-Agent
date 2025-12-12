@@ -439,6 +439,7 @@ function getConfig() {
     queueTimeout: getEnvInt('QUEUE_TIMEOUT', 30000),
     // 显式 @ 是否必须回复（true=显式 @ 一律回复；false=交给模型和人设决定）
     mentionMustReply: getEnvBool('MENTION_MUST_REPLY', false),
+    pureLocalGating: getEnvBool('PURE_LOCAL_REPLY_GATING', true),
     replyFollowupWindowSec,
     attentionEnabled: getEnvBool('ATTENTION_WINDOW_ENABLED', true),
     attentionWindowMs,
@@ -508,6 +509,7 @@ export async function shouldReply(msg, options = {}) {
   const config = getConfig();
   const senderId = normalizeSenderId(msg.sender_id);
   const decisionContext = options.decisionContext || null;
+  const source = options.source || null; // e.g. 'pending_merged'
   // 私聊：保持必回策略
   if (msg.type === 'private') {
     const taskId = randomUUID();
@@ -618,6 +620,10 @@ export async function shouldReply(msg, options = {}) {
   }
   let senderFatigueInfo = { count: 0, fatigue: 0, lastAgeSec: null };
   let groupFatigueInfo = { count: 0, fatigue: 0, lastAgeSec: null };
+  let senderFatiguePass = true;
+  let senderFatigueReason = '';
+  let groupFatiguePass = true;
+  let groupFatigueReason = '';
 
   if (isGroup) {
     const gf = evaluateGroupFatigue(msg, config, {
@@ -625,12 +631,16 @@ export async function shouldReply(msg, options = {}) {
       mentionedByName
     });
     groupFatigueInfo = { count: gf.count, fatigue: gf.fatigue, lastAgeSec: gf.lastAgeSec };
+    groupFatiguePass = !!gf.pass;
+    groupFatigueReason = gf.reason || '';
 
     const uf = evaluateSenderFatigue(msg, senderId, config, {
       isExplicitMention,
       mentionedByName
     });
     senderFatigueInfo = { count: uf.count, fatigue: uf.fatigue, lastAgeSec: uf.lastAgeSec };
+    senderFatiguePass = !!uf.pass;
+    senderFatigueReason = uf.reason || '';
     logger.debug(
       `[${groupInfo}] 疲劳统计: groupCount=${groupFatigueInfo.count}, groupFatigue=${groupFatigueInfo.fatigue.toFixed(2)}, senderCount=${senderFatigueInfo.count}, senderFatigue=${senderFatigueInfo.fatigue.toFixed(2)}, senderLastReplyAgeSec=${senderFatigueInfo.lastAgeSec ?? 'null'}`
     );
@@ -644,6 +654,33 @@ export async function shouldReply(msg, options = {}) {
     config.replyFollowupWindowSec > 0
   ) {
     isFollowupAfterBotReply = senderFatigueInfo.lastAgeSec <= config.replyFollowupWindowSec;
+  }
+
+  if (isGroup && config.pureLocalGating) {
+    if (!groupFatiguePass) {
+      const fatigueReason = groupFatigueReason || '群疲劳：短期内机器人在该群回复过多，进入退避窗口';
+      logger.info(`[${groupInfo}] 用户${senderId} 决策为不回复: ${fatigueReason}`);
+      return {
+        needReply: false,
+        reason: fatigueReason,
+        mandatory: false,
+        probability: 0.0,
+        conversationId,
+        taskId: null
+      };
+    }
+    if (!senderFatiguePass) {
+      const fatigueReason = senderFatigueReason || '用户疲劳：短期内机器人对该用户回复过多，进入退避窗口';
+      logger.info(`[${groupInfo}] 用户${senderId} 决策为不回复: ${fatigueReason}`);
+      return {
+        needReply: false,
+        reason: fatigueReason,
+        mandatory: false,
+        probability: 0.0,
+        conversationId,
+        taskId: null
+      };
+    }
   }
 
   const policyConfig = {
@@ -748,6 +785,9 @@ export async function shouldReply(msg, options = {}) {
       if (gateResult && typeof gateResult.normalizedScore === 'number' && Number.isFinite(gateResult.normalizedScore)) {
         const p = gateResult.normalizedScore;
         gateProb = p < 0 ? 0 : p > 1 ? 1 : p;
+        if (config.pureLocalGating) {
+          probability = gateProb;
+        }
       }
     } catch (e) {
       logger.debug(`ReplyGate 预判失败，回退为正常 LLM 决策: ${groupInfo} sender ${senderId}`, {
@@ -757,8 +797,50 @@ export async function shouldReply(msg, options = {}) {
   }
 
   if (isGroup && msg.group_id && !isExplicitMention && gateProb != null) {
-    const allowByAccum = updateGateSessionAndCheck(msg, senderId, config, gateProb, activeCount);
-    if (!allowByAccum) {
+    // 对于来自延迟聚合（改意愿后合并）的新意图，放宽 ReplyGateAccum：
+    // - 仍然更新 attentionStats 统计
+    // - 但不以 "below_threshold_or_busy" 作为硬门禁，避免用户明确改意愿后再次被吞掉
+    const skipAccumThrottling = source === 'pending_merged';
+
+    if (!skipAccumThrottling) {
+      const allowByAccum = updateGateSessionAndCheck(msg, senderId, config, gateProb, activeCount);
+      if (!allowByAccum) {
+        try {
+          let analyzerProb = null;
+          if (
+            gateResult &&
+            gateResult.debug &&
+            gateResult.debug.analyzer &&
+            typeof gateResult.debug.analyzer.probability === 'number'
+          ) {
+            analyzerProb = gateResult.debug.analyzer.probability;
+          }
+          await updateAttentionStatsAfterDecision({
+            groupId: msg.group_id,
+            senderId,
+            analyzerProb,
+            gateProb,
+            fusedProb: 0,
+            didReply: false
+          });
+        } catch (e) {
+          logger.debug(`updateAttentionStatsAfterDecision 失败: group ${msg.group_id} sender ${senderId}`, {
+            err: String(e)
+          });
+        }
+        const reasonAccum = 'ReplyGateAccum: below_threshold_or_busy';
+        logger.info(`[${groupInfo}] 用户${senderId} 决策为不回复: ${reasonAccum}`);
+        return {
+          needReply: false,
+          reason: reasonAccum,
+          mandatory: false,
+          probability: gateProb,
+          conversationId,
+          taskId: null
+        };
+      }
+    } else {
+      // 仅记录一次统计，表明在高负载/节流场景下仍然尊重用户新的明确意图
       try {
         let analyzerProb = null;
         if (
@@ -774,28 +856,19 @@ export async function shouldReply(msg, options = {}) {
           senderId,
           analyzerProb,
           gateProb,
-          fusedProb: 0,
-          didReply: false
+          fusedProb: probability,
+          didReply: true
         });
       } catch (e) {
         logger.debug(`updateAttentionStatsAfterDecision 失败: group ${msg.group_id} sender ${senderId}`, {
           err: String(e)
         });
       }
-      const reasonAccum = 'ReplyGateAccum: below_threshold_or_busy';
-      logger.info(`[${groupInfo}] 用户${senderId} 决策为不回复: ${reasonAccum}`);
-      return {
-        needReply: false,
-        reason: reasonAccum,
-        mandatory: false,
-        probability: gateProb,
-        conversationId,
-        taskId: null
-      };
+      logger.info(`[${groupInfo}] 延迟聚合场景放宽 ReplyGateAccum: sender=${senderId}, gateProb=${gateProb}`);
     }
   }
 
-  if (isGroup) {
+  if (isGroup && !config.pureLocalGating) {
     const intervention = await planGroupReplyDecision(msg, {
       signals: {
         mentionedByAt: isExplicitMention,
@@ -861,17 +934,16 @@ export async function shouldReply(msg, options = {}) {
         }
       }
     }
+  }
 
-    // 配置强制：显式 @ 且 mentionMustReply=true 时，覆盖为必须回复
-    if (isExplicitMention && config.mentionMustReply) {
-      if (!shouldReplyFlag) {
-        logger.info('ReplyIntervention 判定无需回复，但配置要求对显式@必须回复，强制覆盖为需要回复');
-      }
-      shouldReplyFlag = true;
-      mandatory = true;
-      reason = '显式@（配置必须回复）';
-      probability = 1.0;
+  if (isGroup && isExplicitMention && config.mentionMustReply) {
+    if (!shouldReplyFlag) {
+      logger.info('当前决策判定无需回复，但配置要求对显式@必须回复，强制覆盖为需要回复');
     }
+    shouldReplyFlag = true;
+    mandatory = true;
+    reason = '显式@（配置必须回复）';
+    probability = 1.0;
   }
 
   if (isGroup && msg.group_id) {

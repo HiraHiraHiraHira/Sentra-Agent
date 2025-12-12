@@ -134,7 +134,8 @@ export function setupSocketHandlers(ctx) {
 
                   if (overrideDecision && overrideDecision.shouldCancel) {
                     markTasksCancelledForSender(userid);
-                    cancelRunsForSender(userid);
+                    // 仅取消当前会话（群/私聊）下、在当前消息之前启动的运行
+                    cancelRunsForSender(userid, groupId, { cutoffTs: Date.now() });
                     logger.info(
                       `改意愿检测: sender=${userid} 取消当前任务, relation=${overrideDecision.relation}, confidence=${(overrideDecision.confidence * 100).toFixed(1)}%, reason=${overrideDecision.reason}`
                     );

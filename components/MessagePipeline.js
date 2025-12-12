@@ -395,8 +395,8 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
 
       // 在 start 事件时缓存消息 - 缓存最后一条待回复消息
       if (ev.type === 'start' && ev.runId) {
-        // 记录 runId，用于后续在“改主意”场景下通知 MCP 取消对应运行
-        trackRunForSender(userid, ev.runId);
+        // 记录 runId 和会话，用于后续在“改主意”场景下仅取消本会话下的运行
+        trackRunForSender(userid, groupId, ev.runId);
 
         // 实时获取最新的消息列表
         senderMessages = getAllSenderMessages();
@@ -728,7 +728,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
         logger.info('对话总结', ev.summary);
 
         if (ev.runId) {
-          untrackRunForSender(userid, ev.runId);
+          untrackRunForSender(userid, groupId, ev.runId);
         }
 
         if (isCancelled) {
@@ -797,7 +797,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
       // 检查是否有待处理的消息（延迟聚合）
       const mergedMsg = drainPendingMessagesForSender(userid);
       if (mergedMsg) {
-        const replyDecision = await shouldReply(mergedMsg);
+        const replyDecision = await shouldReply(mergedMsg, { source: 'pending_merged' });
         if (replyDecision.needReply) {
           logger.info(
             `延迟聚合回复决策: ${replyDecision.reason} (taskId=${replyDecision.taskId})`

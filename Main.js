@@ -95,38 +95,76 @@ function enqueueProactiveCandidate(candidate) {
 	});
 }
 
-// senderId -> Set<runId>：用于在“改主意”场景下通知 MCP 取消对应运行
+// senderId -> Map<conversationKey, Map<runId, { startedAt: number }>>
+// 用于在“改主意”场景下通知 MCP 取消对应会话下的运行，避免误伤其他群/私聊
 const runningRunsBySender = new Map();
 
-function trackRunForSender(senderId, runId) {
+function trackRunForSender(senderId, conversationKey, runId) {
   if (!senderId || !runId) return;
-  const key = String(senderId);
-  let set = runningRunsBySender.get(key);
-  if (!set) {
-    set = new Set();
-    runningRunsBySender.set(key, set);
+  const sKey = String(senderId);
+  const convKey = String(conversationKey ?? '');
+  let byConv = runningRunsBySender.get(sKey);
+  if (!byConv) {
+    byConv = new Map();
+    runningRunsBySender.set(sKey, byConv);
   }
-  set.add(String(runId));
-}
-
-function untrackRunForSender(senderId, runId) {
-  if (!senderId || !runId) return;
-  const key = String(senderId);
-  const set = runningRunsBySender.get(key);
-  if (!set) return;
-  set.delete(String(runId));
-  if (set.size === 0) {
-    runningRunsBySender.delete(key);
+  let runs = byConv.get(convKey);
+  if (!runs) {
+    runs = new Map();
+    byConv.set(convKey, runs);
+  }
+  const rid = String(runId);
+  if (!runs.has(rid)) {
+    runs.set(rid, { startedAt: Date.now() });
   }
 }
 
-function cancelRunsForSender(senderId) {
+function untrackRunForSender(senderId, conversationKey, runId) {
+  if (!senderId || !runId) return;
+  const sKey = String(senderId);
+  const convKey = String(conversationKey ?? '');
+  const byConv = runningRunsBySender.get(sKey);
+  if (!byConv) return;
+  const runs = byConv.get(convKey);
+  if (!runs) return;
+  const rid = String(runId);
+  runs.delete(rid);
+  if (runs.size === 0) {
+    byConv.delete(convKey);
+  }
+  if (byConv.size === 0) {
+    runningRunsBySender.delete(sKey);
+  }
+}
+
+// 精准取消：仅取消指定 sender + 会话下、在 cutoffTs 之前启动的运行
+function cancelRunsForSender(senderId, conversationKey, options = {}) {
   if (!senderId) return;
-  const key = String(senderId);
-  const set = runningRunsBySender.get(key);
-  if (!set || set.size === 0) return;
-  for (const rid of set) {
-    try { sdk.cancelRun?.(rid); } catch {}
+  const sKey = String(senderId);
+  const convKey = String(conversationKey ?? '');
+  const byConv = runningRunsBySender.get(sKey);
+  if (!byConv) return;
+  const runs = byConv.get(convKey);
+  if (!runs || runs.size === 0) return;
+
+  const now = Date.now();
+  const cutoffTs = Number.isFinite(options.cutoffTs) ? options.cutoffTs : now;
+
+  for (const [rid, info] of runs.entries()) {
+    const startedAt = info && Number.isFinite(info.startedAt) ? info.startedAt : 0;
+    if (!startedAt || startedAt <= cutoffTs) {
+      try {
+        sdk.cancelRun?.(rid);
+      } catch {}
+      runs.delete(rid);
+    }
+  }
+
+  if (runs.size === 0) {
+    byConv.delete(convKey);
+  }
+  if (byConv.size === 0) {
+    runningRunsBySender.delete(sKey);
   }
 }
 

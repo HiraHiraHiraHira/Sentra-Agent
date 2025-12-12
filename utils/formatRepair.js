@@ -1,8 +1,74 @@
 import { createLogger } from './logger.js';
 import { Agent } from '../agent.js';
 import { getEnv, getEnvInt } from './envHotReloader.js';
+import { loadPrompt } from '../prompts/loader.js';
 
 const logger = createLogger('FormatRepair');
+
+const REPAIR_RESPONSE_PROMPT_NAME = 'repair_response';
+const REPAIR_DECISION_PROMPT_NAME = 'repair_decision';
+const REPAIR_PERSONA_PROMPT_NAME = 'repair_persona';
+
+let cachedRepairResponseSystemPrompt = null;
+let cachedRepairDecisionSystemPrompt = null;
+let cachedRepairPersonaSystemPrompt = null;
+
+async function getRepairResponseSystemPrompt() {
+  try {
+    if (cachedRepairResponseSystemPrompt) {
+      return cachedRepairResponseSystemPrompt;
+    }
+    const data = await loadPrompt(REPAIR_RESPONSE_PROMPT_NAME);
+    const system = data && typeof data.system === 'string' ? data.system : '';
+    if (system) {
+      cachedRepairResponseSystemPrompt = system;
+      return system;
+    }
+  } catch (e) {
+    logger.warn('FormatRepair: 加载 repair_response prompt 失败，将使用简化回退文案', {
+      err: String(e)
+    });
+  }
+  return '# Sentra XML Format Repair Assistant';
+}
+
+async function getRepairDecisionSystemPrompt() {
+  try {
+    if (cachedRepairDecisionSystemPrompt) {
+      return cachedRepairDecisionSystemPrompt;
+    }
+    const data = await loadPrompt(REPAIR_DECISION_PROMPT_NAME);
+    const system = data && typeof data.system === 'string' ? data.system : '';
+    if (system) {
+      cachedRepairDecisionSystemPrompt = system;
+      return system;
+    }
+  } catch (e) {
+    logger.warn('FormatRepair: 加载 repair_decision prompt 失败，将使用简化回退文案', {
+      err: String(e)
+    });
+  }
+  return '# Sentra Decision Repair';
+}
+
+async function getRepairPersonaSystemPrompt() {
+  try {
+    if (cachedRepairPersonaSystemPrompt) {
+      return cachedRepairPersonaSystemPrompt;
+    }
+    const data = await loadPrompt(REPAIR_PERSONA_PROMPT_NAME);
+    const system = data && typeof data.system === 'string' ? data.system : '';
+    if (system) {
+      cachedRepairPersonaSystemPrompt = system;
+      return system;
+    }
+  } catch (e) {
+    logger.warn('FormatRepair: 加载 repair_persona prompt 失败，将使用简化回退文案', {
+      err: String(e)
+    });
+  }
+  return '# Sentra Persona Repair';
+}
 
 /**
  * 使用工具调用将模型输出修复为合规的 <sentra-response> XML
@@ -33,22 +99,7 @@ export async function repairSentraResponse(rawText, opts = {}) {
   const model = opts.model || getEnv('REPAIR_AI_MODEL', getEnv('MAIN_AI_MODEL'));
   const temperature = opts.temperature ?? 0.2;
 
-  const systemPrompt = [
-    '# Sentra XML Format Repair Assistant',
-    '',
-    'You fix an unformatted or wrongly formatted assistant output into Sentra XML format using a tool call.',
-    '',
-    'STRICT rules:',
-    '- Output MUST be convertible to <sentra-response> with segmented <text1>, <text2>, ...',
-    '- Segment texts: 1-5 segments, each 1-3 sentences, natural conversational tone.',
-    '- Do NOT change meaning, tone, or language of the raw text.',
-    '- Do NOT invent facts or resources. Only extract resources that are explicitly present as URLs or file paths.',
-    '- Resources schema: type=image|video|audio|file|link, source=absolute path or URL, caption=one sentence.',
-    '- NEVER output or mention read-only system tags (sentra-user-question, sentra-result, sentra-pending-messages, sentra-emo).',
-    '- NO XML escaping inside text tags.',
-    '',
-    'You MUST call the function tool to return structured fields. Do NOT output plain text.'
-  ].join('\n');
+  const systemPrompt = await getRepairResponseSystemPrompt();
 
   const userPrompt = [
     'Repair the following assistant output into structured fields. Keep meaning intact. If no resources are detectable, return an empty resources array.',
@@ -183,14 +234,7 @@ export async function repairSentraDecision(rawText, opts = {}) {
   const model = opts.model || getEnv('REPAIR_AI_MODEL', getEnv('MAIN_AI_MODEL'));
   const temperature = opts.temperature ?? 0.2;
 
-  const systemPrompt = [
-    '# Sentra Decision Repair',
-    'Return fields by calling the function tool. Do not output plain text.',
-    'Fields:',
-    '- need: boolean (true/false)',
-    '- reason: string (<= 20 Chinese chars, concise)',
-    '- confidence: number (0.0 - 1.0)'
-  ].join('\n');
+  const systemPrompt = await getRepairDecisionSystemPrompt();
 
   const userPrompt = ['Fix assistant output into sentra-decision fields:', '<raw>', rawText, '</raw>'].join('\n');
 
@@ -254,20 +298,7 @@ export async function repairSentraPersona(rawText, opts = {}) {
   const model = opts.model || getEnv('REPAIR_AI_MODEL', getEnv('MAIN_AI_MODEL'));
   const temperature = opts.temperature ?? 0.3;
 
-  const systemPrompt = [
-    '# Sentra Persona Repair',
-    'Return persona fields by calling the function tool. Do not output plain text.',
-    'Required:',
-    '- summary (string, 15-50 Chinese chars)',
-    'Optional but recommended:',
-    '- personality: string[]',
-    '- communication_style: string',
-    '- interests: string[]',
-    '- behavioral_patterns: string[]',
-    '- emotional_profile: { dominant_emotions, sensitivity_areas, expression_tendency }',
-    '- insights: { content, evidence? }[]',
-    '- metadata: { confidence?, data_quality?, update_priority? }'
-  ].join('\n');
+  const systemPrompt = await getRepairPersonaSystemPrompt();
 
   const userPrompt = ['Fix assistant output into persona fields:', '<raw>', rawText, '</raw>'].join('\n');
 
