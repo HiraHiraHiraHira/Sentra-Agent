@@ -8,6 +8,56 @@ import { judgeReplySimilarity } from '../utils/replySimilarityJudge.js';
 
 const swallowOnceStateByConversation = new Map();
 
+function ensureSentraResponseHasTarget(raw, msg) {
+  const s = typeof raw === 'string' ? raw.trim() : String(raw ?? '').trim();
+  if (!s) return s;
+  if (!s.startsWith('<sentra-response>')) return s;
+  if (!s.endsWith('</sentra-response>')) return s;
+
+  const hasGroup = s.includes('<group_id>') && s.includes('</group_id>');
+  const hasUser = s.includes('<user_id>') && s.includes('</user_id>');
+
+  const msgType = msg?.type === 'group' ? 'group' : (msg?.type === 'private' ? 'private' : '');
+  const currentTag = msgType === 'group' ? 'group_id' : (msgType === 'private' ? 'user_id' : '');
+  const currentId = msgType === 'group'
+    ? String(msg?.group_id ?? '').trim()
+    : String(msg?.sender_id ?? '').trim();
+
+  const stripTag = (tagName, input) => {
+    try {
+      const re = new RegExp(`\\n?\\s*<${tagName}>[\\s\\S]*?<\\/${tagName}>\\s*`, 'g');
+      return String(input || '').replace(re, '\n');
+    } catch {
+      return input;
+    }
+  };
+
+  let out = s;
+
+  if (hasGroup && hasUser) {
+    // 协议要求：只能有一个 target。优先保留“当前会话类型”的 target。
+    if (currentTag === 'group_id') {
+      out = stripTag('user_id', out);
+    } else if (currentTag === 'user_id') {
+      out = stripTag('group_id', out);
+    } else {
+      out = stripTag('user_id', out);
+    }
+  }
+
+  const hasAny = out.includes('<group_id>') && out.includes('</group_id>') || (out.includes('<user_id>') && out.includes('</user_id>'));
+  if (!hasAny && currentTag && currentId && /^\d+$/.test(currentId)) {
+    const insert = `  <${currentTag}>${currentId}</${currentTag}>`;
+    if (out.startsWith('<sentra-response>\n')) {
+      out = out.replace('<sentra-response>\n', `<sentra-response>\n${insert}\n`);
+    } else {
+      out = out.replace('<sentra-response>', `<sentra-response>\n${insert}`);
+    }
+  }
+
+  return out;
+}
+
 function getSwallowOnSupplementRuntimeConfig() {
   return {
     enabled: getEnvBool('SWALLOW_ON_SUPPLEMENT_ENABLED', true),
@@ -43,6 +93,24 @@ function shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTa
 function markReplySentForConversation(conversationId) {
   if (!conversationId) return;
   swallowOnceStateByConversation.delete(conversationId);
+}
+
+function normalizeAssistantContentForHistory(raw) {
+  const s = typeof raw === 'string' ? raw.trim() : String(raw ?? '').trim();
+  if (!s) return '<sentra-response></sentra-response>';
+  try {
+    const toolsOnly = typeof s === 'string' && s.startsWith('<sentra-tools>') && s.endsWith('</sentra-tools>') && !s.includes('<sentra-response>');
+    if (toolsOnly) return s;
+  } catch {}
+  try {
+    const parsed = parseSentraResponse(s);
+    if (parsed && parsed.shouldSkip) {
+      return '<sentra-response></sentra-response>';
+    }
+    return s;
+  } catch {
+    return '<sentra-response></sentra-response>';
+  }
 }
 
 function normalizeResourceKeys(resources) {
@@ -822,7 +890,18 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
               );
               if (pairId) {
                 try {
-                  await historyManager.cancelConversationPairById(groupId, pairId);
+                  const toolsXmlForHistory = normalizeAssistantContentForHistory(result.rawToolsXml);
+                  await historyManager.appendToAssistantMessage(groupId, toolsXmlForHistory, pairId);
+                  const saved = await historyManager.finishConversationPair(groupId, pairId, null);
+                  if (saved) {
+                    const chatType = msg?.group_id ? 'group' : 'private';
+                    const userIdForMemory = userid || '';
+                    triggerContextSummarizationIfNeeded({ groupId, chatType, userId: userIdForMemory }).catch(
+                      (e) => {
+                        logger.debug(`ContextMemory: 异步摘要触发失败 ${groupId}`, { err: String(e) });
+                      }
+                    );
+                  }
                 } catch {}
                 pairId = null;
               }
@@ -863,47 +942,15 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
           const noReply = !!result.noReply;
           logger.success(`AI响应成功Judge: ${groupId} 重试${result.retries}次`);
 
-          const rawResponseForPromise = result.rawResponse || response;
-
           const rewrittenJudge = await maybeRewriteSentraResponse(response);
           if (rewrittenJudge && typeof rewrittenJudge === 'string') {
             response = rewrittenJudge;
           }
 
-          let parsedJudgeForPromise = null;
-          try {
-            parsedJudgeForPromise = parseSentraResponse(rawResponseForPromise);
-          } catch (e) {
-            logger.debug('PromiseMeta: parseSentraResponse 失败，跳过承诺检测', {
-              err: String(e)
-            });
-          }
+          response = ensureSentraResponseHasTarget(response, msg);
 
-          // 若本轮为“无需工具”但模型产生了承诺（后续要补单执行），则将承诺以 sentra-tools 的形式落盘
-          // 这是一条“内部工具标记”，不会进入 MCP 上下文（convertHistoryToMCPFormat 会跳过），但会用于延迟任务入队。
-          if (
-            parsedJudgeForPromise &&
-            parsedJudgeForPromise.promise &&
-            parsedJudgeForPromise.promise.hasPromise === true &&
-            parsedJudgeForPromise.promise.objective
-          ) {
-            try {
-              const promiseObjectiveText = String(parsedJudgeForPromise.promise.objective || '').trim();
-              if (promiseObjectiveText) {
-                const promiseToolsXml = buildSentraToolsBlockFromArgsObject('promise', {
-                  reason: promiseObjectiveText
-                });
-                await historyManager.appendToConversationPairMessages(
-                  groupId,
-                  pairId,
-                  'assistant',
-                  promiseToolsXml
-                );
-              }
-            } catch {}
-          }
-
-          await historyManager.appendToAssistantMessage(groupId, response, pairId);
+          const responseForHistory = normalizeAssistantContentForHistory(response);
+          await historyManager.appendToAssistantMessage(groupId, responseForHistory, pairId);
 
           const latestSenderMessages = getAllSenderMessages();
           if (latestSenderMessages.length > initialMessageCount) {
@@ -941,41 +988,6 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
                   await ctx.desireManager.onBotMessage(finalMsg, { proactive: !!msg?._proactive });
                 } catch (e) {
                   logger.debug('DesireManager onBotMessage(Judge) failed', { err: String(e) });
-                }
-              }
-
-              if (
-                parsedJudgeForPromise &&
-                parsedJudgeForPromise.promise &&
-                parsedJudgeForPromise.promise.hasPromise === true &&
-                parsedJudgeForPromise.promise.objective &&
-                typeof enqueueDelayedJob === 'function'
-              ) {
-                try {
-                  const delayRaw = getEnvInt('PROMISE_FULFILL_INITIAL_DELAY_MS', 15000);
-                  const delayMs =
-                    Number.isFinite(delayRaw) && delayRaw >= 0 ? delayRaw : 15000;
-                  const promiseObjective = String(
-                    parsedJudgeForPromise.promise.objective || ''
-                  ).trim();
-                  if (promiseObjective) {
-                    const job = {
-                      jobId: randomUUID(),
-                      aiName: '__promise_fulfill__',
-                      userId: userid,
-                      groupId: msg?.group_id || null,
-                      type: msg?.type || (msg?.group_id ? 'group' : 'private'),
-                      reason: promiseObjective,
-                      promiseObjective,
-                      createdAt: Date.now(),
-                      fireAt: Date.now() + delayMs,
-                      attempt: 0,
-                      lastMsg: finalMsg
-                    };
-                    await enqueueDelayedJob(job);
-                  }
-                } catch (e) {
-                  logger.debug('PromiseMeta: 入队承诺补单任务失败', { err: String(e) });
                 }
               }
 
@@ -1229,7 +1241,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
 
           const scheduleResult = await chatWithRetry(
             convForSchedule,
-            MAIN_AI_MODEL,
+            { model: MAIN_AI_MODEL, __sentraExpectedOutput: 'sentra_response_no_tools' },
             groupId
           );
 
@@ -1251,10 +1263,25 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
           if (scheduleResult.toolsOnly && scheduleResult.rawToolsXml) {
             if (msg && msg._toolsOnlyFallbackUsed) {
               logger.warn(
-                `toolsOnly回退已使用过(ScheduleProgress)，本轮仍收到纯 <sentra-tools>，将忽略: ${groupId}`
+                `toolsOnly回退已使用过(ScheduleProgress)，本轮仍收到纯 <sentra-tools>，将仅记录不发送: ${groupId}`
               );
               try {
-                await historyManager.cancelConversationPairById(groupId, progressPairId);
+                const toolsXmlForHistory = normalizeAssistantContentForHistory(scheduleResult.rawToolsXml);
+                await historyManager.appendToAssistantMessage(groupId, toolsXmlForHistory, progressPairId);
+                const savedProgress = await historyManager.finishConversationPair(groupId, progressPairId, null);
+                if (!savedProgress) {
+                  logger.warn(
+                    `保存进度对话对失败(toolsOnly记录): ${groupId} pairId ${String(progressPairId).substring(0, 8)}`
+                  );
+                } else {
+                  const chatType = msg?.group_id ? 'group' : 'private';
+                  const userIdForMemory = userid || '';
+                  triggerContextSummarizationIfNeeded({ groupId, chatType, userId: userIdForMemory }).catch(
+                    (e) => {
+                      logger.debug(`ContextMemory: 异步摘要触发失败 ${groupId}`, { err: String(e) });
+                    }
+                  );
+                }
               } catch {}
               continue;
             }
@@ -1266,6 +1293,16 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
             restartObjective = convertToolsXmlToObjective(scheduleResult.rawToolsXml);
             restartMcp = !!restartObjective;
 
+            if (currentRunId && sdk && typeof sdk.cancelRun === 'function') {
+              try {
+                sdk.cancelRun(currentRunId);
+                try {
+                  untrackRunForSender(userid, groupId, currentRunId);
+                } catch {}
+              } catch {}
+            }
+            currentRunId = null;
+
             try {
               await historyManager.cancelConversationPairById(groupId, progressPairId);
             } catch {}
@@ -1276,16 +1313,16 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
               );
               break;
             }
+            continue;
           }
 
           const scheduleResponse = scheduleResult.response;
           const scheduleNoReply = !!scheduleResult.noReply;
 
-          await historyManager.appendToAssistantMessage(
-            groupId,
-            scheduleResponse,
-            progressPairId
-          );
+          const scheduleResponseWithTarget = ensureSentraResponseHasTarget(scheduleResponse, msg);
+
+          const scheduleResponseForHistory = normalizeAssistantContentForHistory(scheduleResponseWithTarget);
+          await historyManager.appendToAssistantMessage(groupId, scheduleResponseForHistory, progressPairId);
 
           const savedProgress = await historyManager.finishConversationPair(
             groupId,
@@ -1306,7 +1343,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
 
             await smartSend(
               finalMsgProgress,
-              scheduleResponse,
+              scheduleResponseWithTarget,
               sendAndWaitWithConv,
               allowReplyProgress,
               { hasTool: true }
@@ -1480,12 +1517,32 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
                 { role: 'user', content: fullUserContent }
               ];
 
-              const result = await chatWithRetry(convForFinal, MAIN_AI_MODEL, groupId);
+              const result = await chatWithRetry(
+                convForFinal,
+                { model: MAIN_AI_MODEL, __sentraExpectedOutput: 'sentra_response_no_tools' },
+                groupId
+              );
               if (result && result.success && result.toolsOnly && result.rawToolsXml) {
                 if (msg && msg._toolsOnlyFallbackUsed) {
                   logger.warn(
                     `toolsOnly回退已使用过(ToolFinal)，本轮仍收到纯 <sentra-tools>，将放弃回退: ${groupId}`
                   );
+                  try {
+                    const toolsXmlForHistory = normalizeAssistantContentForHistory(result.rawToolsXml);
+                    await historyManager.appendToAssistantMessage(groupId, toolsXmlForHistory, pairId);
+                    const saved = await historyManager.finishConversationPair(groupId, pairId, null);
+                    if (saved) {
+                      const chatType = msg?.group_id ? 'group' : 'private';
+                      const userIdForMemory = userid || '';
+                      triggerContextSummarizationIfNeeded({ groupId, chatType, userId: userIdForMemory }).catch(
+                        (e) => {
+                          logger.debug(`ContextMemory: 异步摘要触发失败 ${groupId}`, { err: String(e) });
+                        }
+                      );
+                    }
+                  } catch {}
+                  pairId = null;
+                  break;
                 } else {
                   if (msg) {
                     msg._toolsOnlyFallbackUsed = true;
@@ -1525,7 +1582,10 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
               toolResponse = rewritten;
             }
 
-            await historyManager.appendToAssistantMessage(groupId, toolResponse, pairId);
+            toolResponse = ensureSentraResponseHasTarget(toolResponse, msg);
+
+            const toolResponseForHistory = normalizeAssistantContentForHistory(toolResponse);
+            await historyManager.appendToAssistantMessage(groupId, toolResponseForHistory, pairId);
 
             if (!toolNoReply) {
               await maybeWaitForSupplementBeforeSend();

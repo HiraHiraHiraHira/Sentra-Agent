@@ -20,7 +20,16 @@ export default async function handler(args = {}) {
       target: { type: 'private', id: userId },
       content,
       media_hints: mediaHints,
-      note: 'This tool is for confirming the target and intent. Produce the final message text yourself. If you need cross-chat sending, set <user_id> in <sentra-response>.'
+      note: `This tool confirms the target and intent only. You must produce the final message text yourself.
+
+Routing rule (MANDATORY): every final <sentra-response> must include EXACTLY ONE target tag.
+- Private: include <user_id>${userId}</user_id> (digits only)
+
+How to choose the id:
+- If replying in the current private chat: use <sender_id> from <sentra-user-question> as <user_id>.
+- If sending to another private chat (cross-chat): use a user id that exists in <sentra-social-context>.
+
+Do NOT use legacy mention/routing text like [[to=user:...]] inside <textN>.`
     }
   };
 }

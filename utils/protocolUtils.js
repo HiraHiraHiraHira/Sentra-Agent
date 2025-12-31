@@ -29,46 +29,6 @@ function argsObjectToParamEntries(args = {}) {
   return out;
 }
 
-function extractParameterValueFromInvoke(invokeXml, paramName) {
-  if (!invokeXml || typeof invokeXml !== 'string') return '';
-  const target = String(paramName || '').trim();
-  if (!target) return '';
-  try {
-    const params = extractAllFullXMLTags(invokeXml, 'parameter');
-    for (const p of params) {
-      const name = String(extractXmlAttrValue(p, 'name') || '').trim();
-      if (name !== target) continue;
-      const inner = extractInnerXmlFromFullTag(p, 'parameter');
-      return stripTypedValueWrapper(unescapeXml(inner || ''));
-    }
-  } catch {}
-  return '';
-}
-
-function extractAllParameterNamesFromInvoke(invokeXml) {
-  if (!invokeXml || typeof invokeXml !== 'string') return [];
-  const names = [];
-  try {
-    const params = extractAllFullXMLTags(invokeXml, 'parameter');
-    for (const p of params) {
-      const n = String(extractXmlAttrValue(p, 'name') || '').trim();
-      if (n) names.push(n);
-    }
-  } catch {}
-  return names;
-}
-
-function isPromiseToolsInvoke(invokeXml) {
-  // Promise marker definition: an invoke that contains a parameter named "reason".
-  // We additionally require that all parameter names are exactly ["reason"] to avoid
-  // accidentally treating real tool invocations as promise markers.
-  const names = extractAllParameterNamesFromInvoke(invokeXml);
-  if (names.length === 0) return false;
-  if (!names.includes('reason')) return false;
-  const unique = Array.from(new Set(names));
-  return unique.length === 1 && unique[0] === 'reason';
-}
-
 function parseBooleanLike(s) {
   const t = String(s ?? '').trim().toLowerCase();
   if (!t) return null;
@@ -177,32 +137,6 @@ export function parseSendFusionFromSentraTools(text) {
   } catch {}
 
   return last;
-}
-
-function parsePromiseFromSentraTools(text) {
-  const s = typeof text === 'string' ? text : '';
-  if (!s || !s.includes('<sentra-tools>')) return null;
-  try {
-    const toolsBlocks = s.match(/<sentra-tools>[\s\S]*?<\/sentra-tools>/gi) || [];
-    for (const tb of toolsBlocks) {
-      const invRe = /<invoke\s+name="([^"]+)"\s*>[\s\S]*?<\/invoke>/gi;
-      let m;
-      while ((m = invRe.exec(tb)) !== null) {
-        const name = String(m[1] || '').trim();
-        const invokeXml = m[0];
-        if (!isPromiseToolsInvoke(invokeXml)) continue;
-        const reason = extractParameterValueFromInvoke(invokeXml, 'reason');
-        const objective = (reason || '').trim();
-        if (!objective) continue;
-        return {
-          hasPromise: true,
-          objective,
-          invokeName: name || ''
-        };
-      }
-    }
-  } catch {}
-  return null;
 }
 
 // Zod schema for resource validation
@@ -437,8 +371,8 @@ export function parseSentraResponse(response) {
       return { textSegments: [], resources: [], replyMode: 'none', mentions: [], shouldSkip: true };
     }
 
-    logger.warn('未找到 <sentra-response> 块，返回原文');
-    return { textSegments: [response], resources: [] };
+    logger.warn('未找到 <sentra-response> 块，将跳过发送');
+    return { textSegments: [], resources: [], replyMode: 'none', mentions: [], shouldSkip: true };
   }
   
   let targetGroupId = null;
@@ -556,15 +490,6 @@ export function parseSentraResponse(response) {
     }
   }
 
-  // 承诺/补单：仅允许通过 <sentra-tools><invoke name="__promise_fulfill__"> 标记（不再兼容旧 <meta>）
-  let hasPromise = null;
-  let promiseObjective = null;
-  const promiseFromTools = parsePromiseFromSentraTools(response);
-  if (promiseFromTools && promiseFromTools.hasPromise === true) {
-    hasPromise = true;
-    promiseObjective = promiseFromTools.objective || '';
-  }
-  
   // 最终验证整体结构
   try {
     const validated = SentraResponseSchema.parse({
@@ -583,16 +508,6 @@ export function parseSentraResponse(response) {
       validated.emoji = emoji;  // 添加 emoji 到返回结果
     }
 
-    if (hasPromise !== null || (promiseObjective && promiseObjective.trim())) {
-      validated.promise = {
-        hasPromise: hasPromise === true,
-        objective: promiseObjective || '',
-        invokeName: promiseFromTools && typeof promiseFromTools.invokeName === 'string'
-          ? promiseFromTools.invokeName
-          : ''
-      };
-    }
-
     // 如果既没有有效文本、也没有资源、也没有 emoji，则标记为 shouldSkip，供上层逻辑跳过发送
     const hasText = Array.isArray(validated.textSegments)
       && validated.textSegments.some((t) => (t || '').trim());
@@ -609,18 +524,17 @@ export function parseSentraResponse(response) {
     const hasTag = typeof response === 'string' && response.includes('<sentra-response>');
     let fallback;
 
-    if (textSegments.length === 0 && hasTag) {
-      // 已经有 sentra-response 标签，但解析/验证失败且没有任何有效文本：视为“本轮保持沉默”
-      logger.warn('协议验证失败且 <sentra-response> 中没有有效内容，将跳过发送');
+    if (textSegments.length === 0) {
+      // 解析/验证失败且没有任何有效文本：视为“本轮保持沉默”，由上层跳过发送
+      if (hasTag) {
+        logger.warn('协议验证失败且 <sentra-response> 中没有有效内容，将跳过发送');
+      } else {
+        logger.warn('协议验证失败且缺少 <sentra-response>，将跳过发送');
+      }
       fallback = { textSegments: [], resources: [], replyMode, mentions, shouldSkip: true };
     } else {
-      // 旧行为回退：无 sentra-response 或仍有可用文本时，回退到原文
-      fallback = {
-        textSegments: textSegments.length > 0 ? textSegments : [response],
-        resources: [],
-        replyMode,
-        mentions
-      };
+      // 保留已提取的文本段落，但不回退为“原文整段发送”
+      fallback = { textSegments, resources: [], replyMode, mentions };
     }
 
     if (emoji) fallback.emoji = emoji;  // 即使验证失败也保留 emoji
@@ -641,26 +555,6 @@ export function convertHistoryToMCPFormat(historyConversations) {
   let skippedCount = 0;
 
   let bufferedTools = '';
-
-  const isPromiseToolsMarker = (toolsXml) => {
-    if (!toolsXml || typeof toolsXml !== 'string') return false;
-    if (!toolsXml.includes('<sentra-tools>')) return false;
-    // Treat as promise marker when every <invoke> has only one parameter named "reason".
-    // (Defensive: allow extra whitespace/newlines.)
-    try {
-      const invRe = /<invoke\s+name="([^"]+)"\s*>[\s\S]*?<\/invoke>/gi;
-      let m;
-      let found = false;
-      while ((m = invRe.exec(toolsXml)) !== null) {
-        found = true;
-        const invokeXml = m[0];
-        if (!isPromiseToolsInvoke(invokeXml)) return false;
-      }
-      return found;
-    } catch {
-      return false;
-    }
-  };
 
   const pushStandardNoToolPair = (userMsg) => {
     const pendingMessages = extractXMLTag(userMsg.content, 'sentra-pending-messages');
@@ -723,11 +617,6 @@ export function convertHistoryToMCPFormat(historyConversations) {
 
     // New format: assistant tools are already present in history
     if (msg.role === 'assistant' && content.includes('<sentra-tools>')) {
-      // Skip internal promise markers; they are not real tool executions and should not pollute MCP context
-      if (isPromiseToolsMarker(content)) {
-        skippedCount++;
-        continue;
-      }
       bufferedTools = content;
       continue;
     }
@@ -805,7 +694,6 @@ export function convertHistoryToMCPFormat(historyConversations) {
 
       // New format user base context: contains <sentra-user-question> but no <sentra-result>
       if (content.includes('<sentra-user-question>')) {
-        // If there was any buffered tools (especially promise marker), do not carry it across turns.
         bufferedTools = '';
         mcpConversation.push({ role: 'user', content });
         continue;

@@ -622,8 +622,7 @@ async function runProactiveReply(candidate) {
 	  memoryXml,
 	  conversationContext,
 	  lastBotMessage,
-	  userEngagement,
-	  promiseObjective: candidate.promiseObjective || ''
+	  userEngagement
 	});
 
     // 构造一条“虚拟”的用户消息，标记为主动触发，并通过主流程/MCP 处理
@@ -700,7 +699,7 @@ async function handleOneMessage(msg, taskId) {
   );
 }
 
-const baseSystemText = "{{sandbox_system_prompt}}\n{{sentra_tools_rules}}\n\n{{qq_system_prompt}}";
+const baseSystemText = "{{sandbox_system_prompt}}\n\n{{qq_system_prompt}}";
 const baseSystem = await SentraPromptsSDK(baseSystemText);
 
 async function sendAndWaitResult(message) {

@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { createLogger } from './utils/logger.js';
+import { preprocessPlainModelOutput } from './components/OutputPreprocessor.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -106,6 +107,8 @@ class Agent {
     // 添加 tools 和 tool_choice 支持（OpenAI function calling）
     if (options.tools !== undefined) requestConfig.tools = options.tools;
     if (options.tool_choice !== undefined) requestConfig.tool_choice = options.tool_choice;
+
+    const isPlainRequest = requestConfig.tools === undefined && requestConfig.tool_choice === undefined;
     
     let lastError = null;
 
@@ -180,6 +183,9 @@ class Agent {
         }
         
         // 否则返回普通的文本内容
+        if (typeof message.content === 'string' && isPlainRequest) {
+          return preprocessPlainModelOutput(message.content);
+        }
         return message.content;
       } catch (error) {
         lastError = error;

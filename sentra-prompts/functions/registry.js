@@ -155,7 +155,7 @@ import {
 
 // 导入平台/外部工具相关函数
 import { getMcpTools } from './mcptools.js';
-import { getWeChatSystemPrompt, getQQSystemPrompt, getSandboxSystemPrompt, getSentraToolFeedbackPrompt } from './platform.js';
+import { getWeChatSystemPrompt, getQQSystemPrompt, getSandboxSystemPrompt } from './platform.js';
 
 /**
  * 函数注册表
@@ -302,7 +302,6 @@ const functionRegistry = {
   getWeChatSystemPrompt,
   getQQSystemPrompt,
   getSandboxSystemPrompt,
-  getSentraToolFeedbackPrompt,
   
   // MCP 工具导出
   getMcpTools

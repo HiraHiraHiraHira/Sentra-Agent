@@ -20,7 +20,16 @@ export default async function handler(args = {}) {
       target: { type: 'group', id: groupId },
       content,
       media_hints: mediaHints,
-      note: 'This tool is for confirming the target and intent. Produce the final message text yourself. If you need cross-chat sending, set <group_id> in <sentra-response>.'
+      note: `This tool confirms the target and intent only. You must produce the final message text yourself.
+
+Routing rule (MANDATORY): every final <sentra-response> must include EXACTLY ONE target tag.
+- Group: include <group_id>${groupId}</group_id> (digits only)
+
+How to choose the id:
+- If replying in the current group chat: use <group_id> from <sentra-user-question>.
+- If sending to another group (cross-chat): use a group id that exists in <sentra-social-context>.
+
+Do NOT use legacy mention/routing text like [[to=user:...]] inside <textN>.`
     }
   };
 }

@@ -95,6 +95,61 @@ function hasMarkdownImage(s) {
   return /!\[[^\]]*\]\([^)]+\)/i.test(String(s || ''));
 }
 
+function isDataImageBase64(s) {
+  return /^data:image\/[a-z0-9.+-]+;base64,/i.test(String(s || '').trim());
+}
+
+function isLikelyImageExt(ext) {
+  const e = String(ext || '').toLowerCase().replace(/^\./, '');
+  if (!e) return false;
+  return [
+    'jpg',
+    'jpeg',
+    'png',
+    'gif',
+    'webp',
+    'bmp',
+    'svg',
+    'tif',
+    'tiff',
+    'ico',
+    'heic',
+    'heif',
+    'avif'
+  ].includes(e);
+}
+
+function guessImageExtFromUrl(u) {
+  try {
+    const urlObj = new URL(String(u));
+    const ext = path.extname(urlObj.pathname || '');
+    if (isLikelyImageExt(ext)) return ext;
+    const sp = urlObj.searchParams;
+    const candidates = [sp.get('format'), sp.get('ext'), sp.get('type'), sp.get('image')]
+      .filter(Boolean)
+      .map((x) => String(x));
+    for (const c of candidates) {
+      // e.g. format=png / ext=jpg
+      if (isLikelyImageExt(c)) return `.${c.replace(/^\./, '')}`;
+    }
+  } catch {}
+  return '';
+}
+
+function isLikelyImageTarget(target) {
+  const raw = String(target || '').trim();
+  if (!raw) return false;
+  if (isDataImageBase64(raw)) return true;
+  if (isHttpUrl(raw)) {
+    const ext = guessImageExtFromUrl(raw);
+    return !!ext;
+  }
+  // local path / file url
+  const abs = toAbsoluteLocalPath(raw);
+  if (!abs) return false;
+  return isLikelyImageExt(path.extname(abs));
+}
+
 function isHttpUrl(s) {
   try { const u = new URL(String(s)); return u.protocol === 'http:' || u.protocol === 'https:'; } catch { return false; }
 }
@@ -125,21 +180,6 @@ function formatLocalMarkdownImage(target, alt = 'image') {
   return `![${alt}](${normalized})`;
 }
 
-function collectLocalMarkdownImages(md) {
-  const re = /!\[([^\]]*)\]\(([^)]+)\)/g;
-  const lines = [];
-  let m;
-  while ((m = re.exec(md)) !== null) {
-    const alt = m[1] || '';
-    const url = String(m[2] || '').trim();
-    if (!url) continue;
-    const abs = toAbsoluteLocalPath(url);
-    if (!abs) continue;
-    lines.push(formatLocalMarkdownImage(String(abs).replace(/\\/g, '/'), alt));
-  }
-  return lines.join('\n');
-}
-
 async function collectVerifiedLocalMarkdownImages(md) {
   const re = /!\[([^\]]*)\]\(([^)]+)\)/g;
   const lines = [];
@@ -148,8 +188,15 @@ async function collectVerifiedLocalMarkdownImages(md) {
     const alt = m[1] || '';
     const url = String(m[2] || '').trim();
     if (!url) continue;
+    // Allow data:image/*;base64,... to pass through directly
+    if (isDataImageBase64(url)) {
+      lines.push(`![${alt}](${url})`);
+      continue;
+    }
     const abs = toAbsoluteLocalPath(url);
     if (!abs) continue;
+    // Fast path: skip non-image files by extension
+    if (!isLikelyImageExt(path.extname(abs))) continue;
     try {
       await fs.access(abs);
       lines.push(formatLocalMarkdownImage(String(abs).replace(/\\/g, '/'), alt));
@@ -168,8 +215,15 @@ async function downloadImagesAndRewrite(md, prefix = 'draw') {
   while ((m = re.exec(md)) !== null) {
     const target = String(m[2] || '').trim();
     if (!target) continue;
-    if (isHttpUrl(target)) urls.add(target);
-    else if (/^data:image\//i.test(target)) dataUrls.add(target);
+    if (isDataImageBase64(target)) {
+      dataUrls.add(target);
+      continue;
+    }
+    if (isHttpUrl(target)) {
+      // Fast filter: only keep URLs that look like images by path/query
+      if (!isLikelyImageTarget(target)) continue;
+      urls.add(target);
+    }
   }
   if (urls.size === 0 && dataUrls.size === 0) return md;
 
@@ -191,18 +245,23 @@ async function downloadImagesAndRewrite(md, prefix = 'draw') {
         validateStatus: () => true,
       });
       if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
-      const buf = Buffer.from(res.data);
-      let ct = (res.headers?.['content-type'] || '').split(';')[0].trim();
-      if (!ct) {
-        try { const u = new URL(url); ct = String(mime.lookup(u.pathname) || ''); } catch {}
+
+      // Hard filter: must be an image content-type
+      const rawCT = String(res.headers?.['content-type'] || '').split(';')[0].trim();
+      if (!rawCT || !rawCT.toLowerCase().startsWith('image/')) {
+        throw new Error(`NON_IMAGE_CONTENT_TYPE:${rawCT || 'unknown'}`);
       }
+
+      const buf = Buffer.from(res.data);
+      let ct = rawCT;
       let ext = '';
       if (ct && ct.startsWith('image/')) {
         const e = mime.extension(ct);
         if (e) ext = `.${e}`;
       }
       if (!ext) {
-        try { const u = new URL(url); ext = path.extname(u.pathname) || '.png'; } catch { ext = '.png'; }
+        // last resort: try to derive from URL path/query; else fall back to png
+        ext = guessImageExtFromUrl(url) || '.png';
       }
       const name = `${prefix}_${Date.now()}_${idx++}${ext}`;
       const abs = path.resolve(baseDir, name);
@@ -296,9 +355,7 @@ export default async function handler(args = {}, options = {}) {
   }
 
   // 模式二：chat.completions，流式接收 Markdown 图片链接（可能为 URL 或 base64）
-  const system = '你是一个会画画的助手。请用自然的中文写 1-2 句简短描述，然后至少给出 1 个 Markdown 图片链接（例如：![image](...)）。不要使用代码块/代码围栏（不要输出 ``` ）。';
   const messages = [
-    { role: 'system', content: system },
     { role: 'user', content: prompt }
   ];
 

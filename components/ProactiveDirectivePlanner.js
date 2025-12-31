@@ -254,24 +254,22 @@ function extractObjectiveFromRawReply(text) {
 		}
 	}
 
-	// 无协议标签或解析失败时，直接使用原文作为内部 objective
-	const plain = trimmed.replace(/\s+/g, '');
-	if (plain.length < 6) return null;
-	return trimmed;
+	// 无协议标签或解析失败：不使用原文作为 objective，避免把旁白/英文垃圾引入主动规划
+	return null;
 }
 
 async function getPlannerSystemPrompt() {
   if (cachedSystemPrompt) return cachedSystemPrompt;
 
   try {
-    const template = '{{sandbox_system_prompt}}\n{{sentra_tools_rules}}\n\n{{qq_system_prompt}}';
+    const template = '{{sandbox_system_prompt}}\n\n{{qq_system_prompt}}';
     const base = await sentraPrompts(template);
     if (base && typeof base === 'string') {
       cachedSystemPrompt = base;
     }
   } catch (e) {
     logger.warn(
-      'ProactiveDirectivePlanner: 通过 sentra-prompts 构建基础系统提示失败，将使用精简版回退文案',
+      'ProactiveDirectivePlanner: 通过 sentra-prompts 构建基础系统提示失败，将回退为空系统提示',
       {
         err: String(e)
       }
@@ -279,8 +277,7 @@ async function getPlannerSystemPrompt() {
   }
 
   if (!cachedSystemPrompt) {
-    cachedSystemPrompt =
-      '遵循 Sentra XML 协议的 自己。请根据 <sentra-root-directive>、<sentra-agent-preset>、<sentra-pending-messages> 等输入，输出符合协议的 <sentra-response>。';
+    cachedSystemPrompt = '';
   }
 
   return cachedSystemPrompt;
@@ -546,7 +543,7 @@ function buildPlannerRootDirectiveXml(options) {
     '在规划“如何主动开口”时，优先考虑那些可以通过 MCP 工具获得真实信息或素材支撑的目标（例如：用搜索/网页解析了解最新进展、用天气/节假日/时间相关工具衔接轻话题、用音乐/图片/思维导图等工具生成可分享内容），再结合你的人设进行自然分享或抛出问题，而不是只在脑中空想一段泛泛而谈的客套话。'
   );
   objectiveLines.push(
-    '你输出的 <sentra-response> 文本将仅作为内部“主动发言目标描述”，不会原样发送给用户；请在 1-3 句自然中文中说明本轮想围绕什么大致方向展开（必须是新视角/新子话题或轻度转场），采用怎样的语气和深度，以及在什么情况下应保持安静或仅作陪伴；如果你发现自己只是在思考“如何把当前问题讲得更详细”，请把 objective 规划为保持沉默。'
+    '请把你的输出当作“你下一条准备对用户说的话的草稿方向”。用 1-2 句自然中文（口语一点、贴人设）说明你想从哪个新角度/新子话题轻轻接上去；如果想不到有价值的新内容，就规划为保持沉默（输出空的 sentra-response）。'
   );
 
   rdLines.push('<sentra-root-directive>');
@@ -734,8 +731,7 @@ export async function planProactiveObjective(payload = {}) {
     memoryXml = '',
     conversationContext = null,
     lastBotMessage = '',
-    userEngagement = null,
-    promiseObjective = ''
+    userEngagement = null
   } = payload || {};
 
   let effectivePresetXml = typeof presetXml === 'string' ? presetXml : '';
@@ -928,36 +924,28 @@ export async function buildProactiveRootDirectiveXml(payload = {}) {
   const defaultObjectiveLines = [];
   if (shortTopic) {
     defaultObjectiveLines.push(
-      `在不脱离最近对话大致语境「${shortTopic}」的前提下，更加从你自己的长期人设和当日整体上下文出发，将这些内容视为背景，判断这轮是否适合由你主动说一句话来从新的视角或子话题切入，或者做温和的总结/收尾，而不是继续紧贴用户刚才那句话做补充说明。`
+      `围绕最近的语境「${shortTopic}」，从你的人设出发想一句“像真人顺口接话”的话：带一个新角度/新子话题，别再重复刚才的解释。`
     );
   } else {
     defaultObjectiveLines.push(
-      '根据当前会话的整体氛围、节奏和情绪，从 自己 的视角判断这轮是否适合由你主动说一句话来推动气氛、从新的视角开一个相关话题，或者做温和的总结/收尾，而不是试图再挖掘尚未回答完的问题。'
+      '从你的人设出发想一句“像真人顺口接话”的话：可以轻轻转个新角度/新子话题，别写成说明书。'
     );
   }
   defaultObjectiveLines.push(
-    '如果合适，请结合当前时间、整体背景（包括 <sentra-memory> 中的当日摘要）、用户习惯与情绪，以及你的人设（RP 模式），自然延展出一个有新意的角度或话题，不要简单重复你刚才已经给出的回答，也不要再次逐字解答同一个问题。'
+    '语气要像在聊天：短一点、自然一点，能带一点你人设的情绪/口头禅也行。'
   );
   defaultObjectiveLines.push(
-    '在判断“如何主动说这一句”时，可以优先选择那些能够通过工具获得有趣或有用信息来支撑的话题：例如适度使用搜索/网页解析/图片或视频/音乐卡片/天气或知识类等工具，先获取一小段对用户可能有帮助或好玩的内容，再以符合你人设的口吻分享出来或抛出问题，引导出新的子话题。'
+    '如果你想用工具找个“有料的小点”再聊，也可以，但最终说出来必须像你在分享，而不是在播报工具或流程。'
   );
   defaultObjectiveLines.push(
-    '如果找不到有新意、对用户有价值的补充或话题延展，则保持沉默（可以输出空的 sentra-response 以表示本轮不发言）；如果你只能想到非常空泛的应酬句子（例如简单的“哈哈哈”“好像不错呢”等），也应当视为没有实质新意，选择保持沉默。'
+    '如果想不到有价值的新内容，就保持沉默：输出空的 sentra-response。'
   );
 
   const effectiveObjective = (typeof objectiveText === 'string' && objectiveText.trim())
     ? objectiveText.trim()
     : defaultObjectiveLines.join('\n');
 
-  let finalObjectiveText = effectiveObjective;
-  const promiseText = typeof promiseObjective === 'string' ? promiseObjective.trim() : '';
-  if (promiseText) {
-    const prefix =
-      `【承诺补单提示】你之前在对话中曾向用户做出过一个后续承诺，大致内容是：「${promiseText}」。本轮主动发言时，请优先考虑如何在合适的上下文中尽量兑现这一承诺（包括必要时调用 MCP 工具、查资料、整理结果并向用户汇报），如果确实无法完成，也要用自然中文诚实说明原因，并给出合理的替代建议或后续安排。`;
-    finalObjectiveText = `${prefix}\n\n${effectiveObjective}`;
-  }
-
-  appendXmlBlockLines(lines, 'objective', finalObjectiveText, { indent: 1 });
+  appendXmlBlockLines(lines, 'objective', effectiveObjective, { indent: 1 });
 
   lines.push('  <allow_tools>true</allow_tools>');
 

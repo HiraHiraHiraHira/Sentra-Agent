@@ -66,7 +66,12 @@ function validateReplyGateDecisionToolsFormat(response) {
     return { valid: false, reason: '缺少 reply_gate_decision 或 enter 参数' };
   }
 
-  return { valid: true, normalized };
+  return {
+    valid: true,
+    normalized,
+    missingTarget,
+    targetConflict
+  };
 }
 
 function validateSendFusionToolsFormat(response) {
@@ -91,40 +96,14 @@ function validateSendFusionToolsFormat(response) {
   return { valid: true, normalized };
 }
 
-function isAllowedPromiseToolsMarkerOutside(text) {
-  const s = String(text || '').trim();
-  if (!s) return true;
-  // Only allow ONE sentra-tools block that contains invoke name="__promise_fulfill__"
-  // and nothing else outside <sentra-response>.
-  const blocks = s.match(/<sentra-tools>[\s\S]*?<\/sentra-tools>/gi) || [];
-  if (blocks.length !== 1) return false;
-  const merged = blocks[0].trim();
-  if (merged !== s) return false;
-  // Promise marker: exactly one <invoke ...> and it contains ONLY one parameter named "reason".
-  try {
-    const invMatch = merged.match(/<invoke\s+name="[^"]+"\s*>[\s\S]*?<\/invoke>/i);
-    if (!invMatch) return false;
-    const invokeXml = invMatch[0];
-    const names = Array.from(
-      invokeXml.matchAll(/<parameter\s+name="([^"]+)">/gi),
-      (m) => String(m[1] || '').trim()
-    ).filter(Boolean);
-    const unique = Array.from(new Set(names));
-    if (unique.length !== 1 || unique[0] !== 'reason') return false;
-    const allInvokes = merged.match(/<invoke\s+name="[^"]+"\s*>/gi) || [];
-    if (allInvokes.length !== 1) return false;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function validateResponseFormat(response, expectedOutput = 'sentra_response') {
-  if (expectedOutput === 'reply_gate_decision_tools') {
+  const expected = expectedOutput;
+
+  if (expected === 'reply_gate_decision_tools') {
     return validateReplyGateDecisionToolsFormat(response);
   }
 
-  if (expectedOutput === 'send_fusion_tools') {
+  if (expected === 'send_fusion_tools') {
     return validateSendFusionToolsFormat(response);
   }
 
@@ -133,10 +112,13 @@ function validateResponseFormat(response, expectedOutput = 'sentra_response') {
   }
 
   // Special-case: When we EXPECT <sentra-response> but the model outputs ONLY <sentra-tools>,
-  // treat it as a valid "toolsOnly" result and let the upper layer decide how to handle it.
-  // This prevents infinite retry loops caused by strict format checks.
+  // allow the upper layer to decide how to handle it (fallback/restart) in normal mode.
+  // In strict no-tools mode, pure <sentra-tools> is always invalid.
   const toolsOnlyXml = extractOnlySentraToolsBlock(response);
   if (toolsOnlyXml) {
+    if (expected === 'sentra_response_no_tools') {
+      return { valid: false, reason: '本轮禁止输出 <sentra-tools>：请直接输出 <sentra-response>' };
+    }
     return { valid: true, toolsOnly: true, rawToolsXml: toolsOnlyXml };
   }
 
@@ -145,14 +127,24 @@ function validateResponseFormat(response, expectedOutput = 'sentra_response') {
     return { valid: false, reason: '缺少 <sentra-response> 标签' };
   }
 
-  // Enforce: only allow a promise marker outside <sentra-response>
+  // Target routing tags are REQUIRED by protocol, but we do NOT fail strict format checks on missing/duplicate tags.
+  // Rationale: The upper layer (MessagePipeline) will auto-inject / normalize the target tag based on current chat.
+  // This avoids unnecessary retries for otherwise well-formed <sentra-response>.
+  let missingTarget = false;
+  let targetConflict = false;
   try {
-    const outside = response.replace(normalized, '').trim();
-    if (!isAllowedPromiseToolsMarkerOutside(outside)) {
-      return {
-        valid: false,
-        reason: '检测到 <sentra-response> 外存在非允许内容（仅允许 __promise_fulfill__ 的 <sentra-tools> 标记）'
-      };
+    const hasGroup = normalized.includes('<group_id>') && normalized.includes('</group_id>');
+    const hasUser = normalized.includes('<user_id>') && normalized.includes('</user_id>');
+    missingTarget = !hasGroup && !hasUser;
+    targetConflict = hasGroup && hasUser;
+  } catch {}
+
+  // Enforce: output MUST be exactly one <sentra-response> block (no extra text/tags outside)
+  try {
+    const trimmed = String(response || '').trim();
+    const normTrimmed = String(normalized || '').trim();
+    if (trimmed !== normTrimmed) {
+      return { valid: false, reason: '检测到 <sentra-response> 外存在额外内容（不允许）' };
     }
   } catch {}
 
@@ -201,17 +193,46 @@ function hasNonTextPayload(response) {
   }
 }
 
-function buildProtocolReminder() {
+function buildProtocolReminder(expectedOutput = 'sentra_response', lastFormatReason = '') {
+  const escapeXml = (v) => {
+    try {
+      return String(v ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+    } catch {
+      return '';
+    }
+  };
+
+  const reason = lastFormatReason ? escapeXml(lastFormatReason).slice(0, 300) : '';
+  const expected = escapeXml(expectedOutput || 'sentra_response');
+
   return [
-    'CRITICAL OUTPUT RULES:',
-    '1) 必须使用 <sentra-response>...</sentra-response> 包裹对用户可见的回复内容',
-    '   - 允许额外输出一个 <sentra-tools> 承诺标记（仅限 invoke name="__promise_fulfill__"），但它必须出现在 <sentra-response> 外部',
-    '2) 使用分段 <text1>, <text2>, <text3>, <textx>...（每段1句，语气自然）',
-    '3) 严禁输出只读输入标签：<sentra-user-question>/<sentra-result>/<sentra-result-group>/<sentra-pending-messages>/<sentra-emo>',
-    '4) 不要输出工具或技术术语（如 tool/success/return/data field 等）',
-    '5) 文本标签内部不要做 XML 转义（直接输出原始内容），不要把 < 或 > 等字符写成 &lt; / &gt;',
-    '6) 禁止使用 ``` 等 markdown 代码块包裹 XML 或任何内容',
-    '7) <resources> 可为空；若无资源，输出 <resources></resources>'
+    '<sentra-root-directive>',
+    '  <id>format_retry_v1</id>',
+    '  <type>format_repair</type>',
+    '  <scope>single_turn</scope>',
+    '  <objective>修复上一条输出的格式，并重新输出最终给用户看的内容。</objective>',
+    `  <expected_output>${expected}</expected_output>`,
+    ...(reason ? [`  <last_error>${reason}</last_error>`] : []),
+    '  <constraints>',
+    '    <item>你必须且只能输出一个顶层块，除此之外不能输出任何额外文本。</item>',
+    '    <item>本轮只能输出 &lt;sentra-response&gt;...&lt;/sentra-response&gt;，禁止输出任何其它 sentra-xxx 标签（包括 sentra-tools/sentra-result/sentra-user-question/sentra-pending-messages 等）。</item>',
+    '    <item>&lt;sentra-response&gt; 内只能包含允许字段：&lt;group_id&gt; 或 &lt;user_id&gt;（二选一且仅一个）、&lt;textN&gt;、&lt;resources&gt;、可选 &lt;emoji&gt;、可选 &lt;send&gt;。</item>',
+    '    <item>目标路由标签必须显式写出：群聊用 &lt;group_id&gt;...&lt;/group_id&gt;；私聊用 &lt;user_id&gt;...&lt;/user_id&gt;；两者不可同时出现。</item>',
+    '    <item>不要输出任何“工具/字段/返回值/执行步骤”的叙述；只说用户能理解的人话。</item>',
+    '  </constraints>',
+    '  <output_template>',
+    '    <sentra-response>',
+    '      <group_id_or_user_id>...</group_id_or_user_id>',
+    '      <text1>...</text1>',
+    '      <resources></resources>',
+    '    </sentra-response>',
+    '  </output_template>',
+    '</sentra-root-directive>'
   ].join('\n');
 }
 
@@ -275,22 +296,16 @@ export async function chatWithRetry(agent, conversations, modelOrOptions, groupI
 
       let convThisTry = conversations;
       if (strictFormatCheck && lastFormatReason) {
-        const allowInject =
-          lastFormatReason.includes('缺少 <sentra-response> 标签') ||
-          lastFormatReason.includes('<sentra-tools>') ||
-          lastFormatReason.includes('包含非法的只读标签');
-        if (allowInject) {
-          const reminder =
-            expectedOutput === 'reply_gate_decision_tools'
-              ? buildReplyGateDecisionToolsReminder()
-              : (expectedOutput === 'send_fusion_tools'
-                ? buildSendFusionToolsReminder()
-                : buildProtocolReminder());
-          convThisTry = Array.isArray(conversations)
-            ? [...conversations, { role: 'system', content: reminder }]
-            : conversations;
-          logger.info(`[${groupId}] 协议复述注入: ${lastFormatReason}`);
-        }
+        const reminder =
+          expectedOutput === 'reply_gate_decision_tools'
+            ? buildReplyGateDecisionToolsReminder()
+            : (expectedOutput === 'send_fusion_tools'
+              ? buildSendFusionToolsReminder()
+              : buildProtocolReminder(expectedOutput, lastFormatReason));
+        convThisTry = Array.isArray(conversations)
+          ? [...conversations, { role: 'system', content: reminder }]
+          : conversations;
+        logger.info(`[${groupId}] 协议复述注入: ${lastFormatReason}`);
       }
 
       let response = await agent.chat(convThisTry, chatOptions);
