@@ -23,6 +23,10 @@ function getDecisionSenderRecentMessagesDefault() {
   return getEnvInt('REPLY_DECISION_SENDER_RECENT_MESSAGES', 5);
 }
 
+function getDecisionBotRecentMessagesDefault() {
+  return getEnvInt('REPLY_DECISION_BOT_RECENT_MESSAGES', 4);
+}
+
 function getDecisionContextMaxCharsDefault() {
   return getEnvInt('REPLY_DECISION_CONTEXT_MAX_CHARS', 120);
 }
@@ -763,7 +767,8 @@ class GroupHistoryManager {
     if (!history) {
       return {
         group_recent_messages: [],
-        sender_recent_messages: []
+        sender_recent_messages: [],
+        bot_recent_messages: []
       };
     }
 
@@ -773,6 +778,9 @@ class GroupHistoryManager {
     let senderLimit = typeof options.senderLimit === 'number' && options.senderLimit > 0
       ? options.senderLimit
       : getDecisionSenderRecentMessagesDefault();
+    let botLimit = typeof options.botLimit === 'number' && options.botLimit > 0
+      ? options.botLimit
+      : getDecisionBotRecentMessagesDefault();
     let maxChars = typeof options.maxChars === 'number' && options.maxChars > 0
       ? options.maxChars
       : getDecisionContextMaxCharsDefault();
@@ -782,6 +790,9 @@ class GroupHistoryManager {
     }
     if (!Number.isFinite(senderLimit) || senderLimit <= 0) {
       senderLimit = 0;
+    }
+    if (!Number.isFinite(botLimit) || botLimit <= 0) {
+      botLimit = 0;
     }
     if (!Number.isFinite(maxChars) || maxChars <= 0) {
       maxChars = 0;
@@ -795,7 +806,8 @@ class GroupHistoryManager {
     if (allMessages.length === 0) {
       return {
         group_recent_messages: [],
-        sender_recent_messages: []
+        sender_recent_messages: [],
+        bot_recent_messages: []
       };
     }
 
@@ -807,7 +819,8 @@ class GroupHistoryManager {
 
     const result = {
       group_recent_messages: [],
-      sender_recent_messages: []
+      sender_recent_messages: [],
+      bot_recent_messages: []
     };
 
     if (groupLimit > 0) {
@@ -839,6 +852,57 @@ class GroupHistoryManager {
             time: msg.time_str || ''
           };
         });
+      }
+    }
+
+    if (botLimit > 0) {
+      const botCandidates = [];
+
+      const conv = Array.isArray(history.conversations) ? history.conversations : [];
+      if (conv.length > 0) {
+        for (const m of conv) {
+          if (!m || m.role !== 'assistant') continue;
+          const content = typeof m.content === 'string' ? m.content : '';
+          if (!content.trim()) continue;
+          const ts = typeof m.timestamp === 'number' && Number.isFinite(m.timestamp) ? m.timestamp : 0;
+          const pairId = m.pairId != null ? String(m.pairId) : '';
+          botCandidates.push({
+            text: this._truncateForDecisionContext(content, maxChars),
+            time: ts > 0 ? new Date(ts).toISOString() : '',
+            timestamp: ts,
+            source: 'history',
+            pair_id: pairId
+          });
+        }
+      }
+
+      const activePairs = history.activePairs && history.activePairs instanceof Map ? history.activePairs : null;
+      if (activePairs) {
+        for (const [pairId, ctx] of activePairs.entries()) {
+          if (!ctx || ctx.status !== 'building') continue;
+          const content = typeof ctx.assistant === 'string' ? ctx.assistant : '';
+          if (!content.trim()) continue;
+          const ts =
+            typeof ctx.lastUpdatedAt === 'number' && Number.isFinite(ctx.lastUpdatedAt)
+              ? ctx.lastUpdatedAt
+              : (typeof ctx.createdAt === 'number' && Number.isFinite(ctx.createdAt) ? ctx.createdAt : 0);
+          botCandidates.push({
+            text: this._truncateForDecisionContext(content, maxChars),
+            time: ts > 0 ? new Date(ts).toISOString() : '',
+            timestamp: ts,
+            source: 'active_pair',
+            pair_id: pairId != null ? String(pairId) : ''
+          });
+        }
+      }
+
+      if (botCandidates.length > 0) {
+        botCandidates.sort((a, b) => {
+          const ta = typeof a.timestamp === 'number' ? a.timestamp : 0;
+          const tb = typeof b.timestamp === 'number' ? b.timestamp : 0;
+          return ta - tb;
+        });
+        result.bot_recent_messages = botCandidates.slice(-botLimit);
       }
     }
 

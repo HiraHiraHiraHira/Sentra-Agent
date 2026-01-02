@@ -62,6 +62,8 @@ function listSentraSubdirs(root) {
     return out;
 }
 
+const LOCK_FILE_BASENAMES = new Set(['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock']);
+
 
 
 /**
@@ -330,6 +332,86 @@ async function execCommandOutput(command, args, cwd) {
     });
 }
 
+async function getCurrentBranch(cwd) {
+    try {
+        const b = (await execCommandOutput('git', ['rev-parse', '--abbrev-ref', 'HEAD'], cwd)).trim();
+        if (!b || b === 'HEAD') return 'main';
+        return b;
+    } catch {
+        return 'main';
+    }
+}
+
+async function getOriginDefaultBranch(cwd) {
+    try {
+        // e.g. "origin/main"
+        const ref = (await execCommandOutput('git', ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], cwd)).trim();
+        const m = ref.match(/^origin\/(.+)$/);
+        if (m && m[1]) return m[1];
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+function parseGitStatusPorcelain(text) {
+    const lines = String(text || '').split(/\r?\n/).map((x) => x.trimEnd()).filter(Boolean);
+    const out = [];
+    for (const line of lines) {
+        if (line.length < 4) continue;
+        const xy = line.slice(0, 2);
+        let rest = line.slice(3).trim();
+        if (!rest) continue;
+        if (rest.includes('->')) {
+            const parts = rest.split('->');
+            rest = String(parts[parts.length - 1] || '').trim();
+        }
+        if ((rest.startsWith('"') && rest.endsWith('"')) || (rest.startsWith("'") && rest.endsWith("'"))) {
+            rest = rest.slice(1, -1);
+        }
+        out.push({ xy, path: rest });
+    }
+    return out;
+}
+
+function isLockFilePath(p) {
+    const posixPath = String(p || '').replace(/\\/g, '/');
+    const base = path.posix.basename(posixPath);
+    return LOCK_FILE_BASENAMES.has(base);
+}
+
+async function discardLocalLockFileChanges(cwd, spinner) {
+    let statusText = '';
+    try {
+        statusText = await execCommandOutput('git', ['status', '--porcelain'], cwd);
+    } catch {
+        return { discarded: [], hadAny: false };
+    }
+
+    const entries = parseGitStatusPorcelain(statusText);
+    const lockEntries = entries.filter((e) => isLockFilePath(e.path));
+    if (!lockEntries.length) return { discarded: [], hadAny: false };
+
+    const discarded = [];
+    if (spinner) spinner.text = `Discarding local lock file changes (${lockEntries.length})...`;
+
+    for (const e of lockEntries) {
+        const file = e.path;
+        try {
+            if (e.xy === '??') {
+                await execCommand('git', ['clean', '-f', '--', file], cwd);
+            } else {
+                await execCommand('git', ['checkout', '--', file], cwd);
+            }
+            discarded.push(file);
+        } catch {
+            // ignore
+        }
+    }
+
+    return { discarded, hadAny: true };
+}
+
 async function update() {
     const spinner = ora();
 
@@ -370,13 +452,15 @@ async function update() {
         // Step 2: Git operations
         if (isForce) {
             console.log(chalk.yellow.bold('⚠️  Force Update Mode - This will discard local changes!\n'));
+            const originDefault = await getOriginDefaultBranch(ROOT_DIR);
+            const branch = originDefault || await getCurrentBranch(ROOT_DIR);
             spinner.start('Fetching latest changes...');
-            await execCommand('git', ['fetch', '--all'], ROOT_DIR);
+            await execCommand('git', ['fetch', '--all', '--prune'], ROOT_DIR);
             spinner.succeed('Fetched latest changes');
 
-            spinner.start('Resetting to origin/main...');
-            await execCommand('git', ['reset', '--hard', 'origin/main'], ROOT_DIR);
-            spinner.succeed('Reset to origin/main');
+            spinner.start(`Resetting to origin/${branch}...`);
+            await execCommand('git', ['reset', '--hard', `origin/${branch}`], ROOT_DIR);
+            spinner.succeed(`Reset to origin/${branch}`);
 
             spinner.start('Cleaning untracked files...');
             await execCommand('git', ['clean', '-fd'], ROOT_DIR);
@@ -386,14 +470,29 @@ async function update() {
             await execCommand('git', ['fetch'], ROOT_DIR);
             spinner.succeed('Checked for updates');
 
+            await discardLocalLockFileChanges(ROOT_DIR, spinner);
+
             spinner.start('Pulling latest changes...');
             try {
                 await execCommand('git', ['pull'], ROOT_DIR);
                 spinner.succeed('Pulled latest changes');
             } catch (e) {
-                spinner.fail('Pull failed (conflict?)');
-                console.log(chalk.yellow('\n💡 Tip: Try "Force Update" if you have local conflicts.'));
-                throw e;
+                const r = await discardLocalLockFileChanges(ROOT_DIR, spinner);
+                if (r.hadAny) {
+                    spinner.start('Retrying pull after discarding lock files...');
+                    try {
+                        await execCommand('git', ['pull'], ROOT_DIR);
+                        spinner.succeed('Pulled latest changes');
+                    } catch (e2) {
+                        spinner.fail('Pull failed (conflict?)');
+                        console.log(chalk.yellow('\n💡 Tip: Try "Force Update" if you have local conflicts.'));
+                        throw e2;
+                    }
+                } else {
+                    spinner.fail('Pull failed (conflict?)');
+                    console.log(chalk.yellow('\n💡 Tip: Try "Force Update" if you have local conflicts.'));
+                    throw e;
+                }
             }
         }
 

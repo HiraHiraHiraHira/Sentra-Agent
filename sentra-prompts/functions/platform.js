@@ -116,6 +116,7 @@ export function getQQSystemPrompt() {
     '  <type>group</type>\n' +
     '  <self_id>2857896171</self_id>\n' +
     '  <summary>Formatted message summary with scenario details</summary>\n' +
+    '  <objective>Natural-language event description (who did what, with @/reply highlights)</objective>\n' +
     '  <sender_id>2166683295</sender_id>\n' +
     '  <sender_name>Username</sender_name>\n' +
     '  <text>Message content text</text>\n' +
@@ -147,11 +148,25 @@ export function getQQSystemPrompt() {
     '- `<sender_name>`: User nickname for addressing\n' +
     '- `<sender_role>`: "member", "admin", or "owner" - Authority level\n' +
     '- `<text>`: Pure text content (empty for image/file messages)\n' +
-    '- `<summary>`: Formatted display with scenario and content details\n' +
+    '- `<summary>`: Formatted display for humans (rich details: roles, @ lists, quoted msg preview, media markdown)\n' +
+    '- `<objective>`: Natural-language description of the event (more semantic, less technical than summary)\n' +
     '- `<at_users>`: List of @mentioned user IDs\n' +
     '- `<group_id>`: Group identifier (group chats only)\n' +
     '- `<group_name>`: Group name (group chats only)\n' +
     '- `<reply>`: Quoted/referenced message (if present)\n\n' +
+
+    '## How to Use `<text>` / `<summary>` / `<objective>` (IMPORTANT)\n\n' +
+    '- Prefer **`<text>`** for the user\'s literal content (questions/requests/constraints).\n' +
+    '- Use **`<summary>`** when `<text>` is empty or when you need rich context (media, @ details, sender role/card, quoted message preview).\n' +
+    '- Use **`<objective>`** to quickly understand the social action (who addressed whom, whether it\'s a follow-up, what the user is doing).\n' +
+    '- Do NOT copy `<summary>` verbatim into replies; treat it as background.\n\n' +
+
+    '## Explicit @mention (明确艾特) Detection\n\n' +
+    'In group chats, determine whether the user is directly addressing YOU using the structured fields (do not guess from punctuation):\n' +
+    '- **@all**: `<at_all>true</at_all>` means the message targets the whole group (weak directness; reply only if the content clearly asks you).\n' +
+    '- **@me (explicit)**: your id is `<self_id>`. If any `<at_users><item>...</item></at_users>` equals `<self_id>`, it is a strong direct signal.\n' +
+    '- **Not @me**: if `<self_id>` is not in `<at_users>`, avoid strong second-person unless the message clearly asks you.\n' +
+    'Tip: `<summary>`/`<objective>` may already describe @ targets in human terms; use them to understand *who* is being addressed, but treat `<at_users>` + `<self_id>` as the authoritative rule.\n\n' +
     
     '## Scenario-Based Response Strategy\n\n' +
     

@@ -759,17 +759,30 @@ export async function shouldReply(msg, options = {}) {
   // 基于 BOT_NAMES 的名称提及检测（仅作为信号，不做硬编码规则）
   let mentionedByName = false;
   const mentionedNames = [];
+  let mentionedNameHitsInText = false;
+  let mentionedNameHitsInSummary = false;
   if (isGroup && Array.isArray(config.botNames) && config.botNames.length > 0) {
-    const textForMatch = ((msg.text || msg.summary || '') + '').toLowerCase();
-    if (textForMatch) {
+    const textLower = ((msg.text || '') + '').toLowerCase();
+    const summaryLower = ((msg.summary || '') + '').toLowerCase();
+    const hits = [];
+    if (textLower || summaryLower) {
       for (const name of config.botNames) {
-        const n = (name || '').toLowerCase();
-        if (!n) continue;
-        if (textForMatch.includes(n)) {
-          mentionedByName = true;
-          mentionedNames.push(name);
+        const raw = (name || '').trim();
+        if (!raw) continue;
+        const n = raw.toLowerCase();
+        const hitText = !!textLower && textLower.includes(n);
+        const hitSummary = !!summaryLower && summaryLower.includes(n);
+        if (hitText || hitSummary) {
+          hits.push(raw);
+          if (hitText) mentionedNameHitsInText = true;
+          if (hitSummary) mentionedNameHitsInSummary = true;
         }
       }
+    }
+    if (hits.length > 0) {
+      const uniq = Array.from(new Set(hits));
+      mentionedByName = true;
+      mentionedNames.push(...uniq);
     }
   }
 
@@ -1130,6 +1143,9 @@ export async function shouldReply(msg, options = {}) {
         mentionedByAt: isExplicitMention,
         mentionedByName,
         mentionedNames,
+        mentionedNameHitCount: Array.isArray(mentionedNames) ? mentionedNames.length : 0,
+        mentionedNameHitsInText: !!mentionedNameHitsInText,
+        mentionedNameHitsInSummary: !!mentionedNameHitsInSummary,
         senderReplyCountWindow: senderFatigueInfo.count,
         groupReplyCountWindow: groupFatigueInfo.count,
         senderFatigue: senderFatigueInfo.fatigue,
@@ -1140,7 +1156,11 @@ export async function shouldReply(msg, options = {}) {
         activeTaskCount: activeCount
       },
       context: decisionContext || undefined,
-      policy: policyConfig
+      policy: policyConfig,
+      bot: {
+        self_id: msg?.self_id != null ? String(msg.self_id) : '',
+        bot_names: Array.isArray(config.botNames) ? config.botNames : []
+      }
     });
 
     if (intervention && typeof intervention.shouldReply === 'boolean') {

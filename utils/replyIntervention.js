@@ -297,16 +297,27 @@ function escapeXmlText(text) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
-function buildUserPayload(msg, extraSignals = {}, context = null, policyConfig = null) {
+function buildUserPayload(msg, extraSignals = {}, context = null, policyConfig = null, botInfo = null) {
   const scene = msg?.type || 'unknown';
   const text = typeof msg?.text === 'string' ? msg.text : '';
   const summary = typeof msg?.summary === 'string' ? msg.summary : '';
+
+  const resolvedBotInfo = botInfo && typeof botInfo === 'object' ? botInfo : {};
+  const botSelfIdRaw = resolvedBotInfo.self_id ?? msg?.self_id ?? '';
+  const botSelfId = botSelfIdRaw != null ? String(botSelfIdRaw) : '';
+  const botNames = Array.isArray(resolvedBotInfo.bot_names)
+    ? resolvedBotInfo.bot_names.map((x) => String(x || '').trim()).filter(Boolean)
+    : [];
 
   const payload = {
     scene,
     sender_id: String(msg?.sender_id ?? ''),
     sender_name: msg?.sender_name || '',
     group_id: msg?.group_id ?? null,
+    bot: {
+      self_id: botSelfId,
+      bot_names: botNames
+    },
     text,
     summary,
     signals: {
@@ -319,17 +330,6 @@ function buildUserPayload(msg, extraSignals = {}, context = null, policyConfig =
   if (context && typeof context === 'object') {
     payload.context = context;
   }
-
-  const fullText = text || '';
-  const fullSummary = summary || '';
-  const messageFeatures = {
-    text_length: fullText.length,
-    summary_length: fullSummary.length,
-    has_question_mark: /[?？]/.test(fullText),
-    has_url: /(https?:\/\/|www\.)/i.test(fullText),
-    has_at_symbol: /@/.test(fullText)
-  };
-  payload.message_features = messageFeatures;
 
   if (policyConfig && typeof policyConfig === 'object') {
     payload.policy_config = policyConfig;
@@ -345,24 +345,18 @@ function buildUserPayload(msg, extraSignals = {}, context = null, policyConfig =
   lines.push(`<name>${escapeXmlText(payload.sender_name)}</name>`);
   lines.push('</sender>');
   lines.push(`<group_id>${escapeXmlText(payload.group_id ?? '')}</group_id>`);
+
+  lines.push('<bot>');
+  lines.push(`<self_id>${escapeXmlText(payload.bot?.self_id ?? '')}</self_id>`);
+  const botNamesText = Array.isArray(payload.bot?.bot_names) ? payload.bot.bot_names.join(',') : '';
+  lines.push(`<bot_names>${escapeXmlText(botNamesText)}</bot_names>`);
+  lines.push('</bot>');
+
   lines.push('<message>');
   lines.push(`<text>${escapeXmlText(text)}</text>`);
   lines.push(`<summary>${escapeXmlText(summary)}</summary>`);
   lines.push('</message>');
   const boolStr = (v) => (v ? 'true' : 'false');
-
-  const mf = payload.message_features || messageFeatures;
-  lines.push('<message_features>');
-  lines.push(`<text_length>${
-    typeof mf.text_length === 'number' ? String(mf.text_length) : ''
-  }</text_length>`);
-  lines.push(`<summary_length>${
-    typeof mf.summary_length === 'number' ? String(mf.summary_length) : ''
-  }</summary_length>`);
-  lines.push(`<has_question_mark>${boolStr(!!mf.has_question_mark)}</has_question_mark>`);
-  lines.push(`<has_url>${boolStr(!!mf.has_url)}</has_url>`);
-  lines.push(`<has_at_symbol>${boolStr(!!mf.has_at_symbol)}</has_at_symbol>`);
-  lines.push('</message_features>');
 
   const sig = payload.signals || {};
 
@@ -373,6 +367,11 @@ function buildUserPayload(msg, extraSignals = {}, context = null, policyConfig =
   lines.push(`<mentioned_by_name>${boolStr(!!sig.mentioned_by_name)}</mentioned_by_name>`);
   const names = Array.isArray(sig.mentioned_names) ? sig.mentioned_names.join(',') : '';
   lines.push(`<mentioned_names>${escapeXmlText(names)}</mentioned_names>`);
+  lines.push(`<mentioned_name_hit_count>${
+    typeof sig.mentioned_name_hit_count === 'number' ? String(sig.mentioned_name_hit_count) : ''
+  }</mentioned_name_hit_count>`);
+  lines.push(`<mentioned_name_hits_in_text>${boolStr(!!sig.mentioned_name_hits_in_text)}</mentioned_name_hits_in_text>`);
+  lines.push(`<mentioned_name_hits_in_summary>${boolStr(!!sig.mentioned_name_hits_in_summary)}</mentioned_name_hits_in_summary>`);
   lines.push(`<senderReplyCountWindow>${
     typeof sig.senderReplyCountWindow === 'number' ? String(sig.senderReplyCountWindow) : ''
   }</senderReplyCountWindow>`);
@@ -457,6 +456,7 @@ function buildUserPayload(msg, extraSignals = {}, context = null, policyConfig =
   const ctx = payload.context || {};
   const groupMsgs = Array.isArray(ctx.group_recent_messages) ? ctx.group_recent_messages : [];
   const senderMsgs = Array.isArray(ctx.sender_recent_messages) ? ctx.sender_recent_messages : [];
+  const botMsgs = Array.isArray(ctx.bot_recent_messages) ? ctx.bot_recent_messages : [];
 
   lines.push('<group_recent_messages>');
   for (const m of groupMsgs) {
@@ -487,6 +487,29 @@ function buildUserPayload(msg, extraSignals = {}, context = null, policyConfig =
     lines.push('</message>');
   }
   lines.push('</sender_recent_messages>');
+
+  lines.push('<bot_recent_messages>');
+  for (const m of botMsgs) {
+    const mtext = m?.text || '';
+    const mtime = m?.time || '';
+    const msource = m?.source || '';
+    const mpair = m?.pair_id != null ? String(m.pair_id) : '';
+    const mts = m?.timestamp != null ? String(m.timestamp) : '';
+    lines.push('<message>');
+    if (msource) {
+      lines.push(`<source>${escapeXmlText(msource)}</source>`);
+    }
+    if (mpair) {
+      lines.push(`<pair_id>${escapeXmlText(mpair)}</pair_id>`);
+    }
+    if (mts) {
+      lines.push(`<timestamp>${escapeXmlText(mts)}</timestamp>`);
+    }
+    lines.push(`<text>${escapeXmlText(mtext)}</text>`);
+    lines.push(`<time>${escapeXmlText(mtime)}</time>`);
+    lines.push('</message>');
+  }
+  lines.push('</bot_recent_messages>');
   lines.push('</context>');
 
   lines.push('<payload_json>');
@@ -520,6 +543,9 @@ export async function planGroupReplyDecision(msg, options = {}) {
     mentioned_by_at: !!signals.mentionedByAt,
     mentioned_by_name: !!signals.mentionedByName,
     mentioned_names: Array.isArray(signals.mentionedNames) ? signals.mentionedNames : [],
+    mentioned_name_hit_count: typeof signals.mentionedNameHitCount === 'number' ? signals.mentionedNameHitCount : 0,
+    mentioned_name_hits_in_text: !!signals.mentionedNameHitsInText,
+    mentioned_name_hits_in_summary: !!signals.mentionedNameHitsInSummary,
     senderReplyCountWindow: typeof signals.senderReplyCountWindow === 'number' ? signals.senderReplyCountWindow : 0,
     groupReplyCountWindow: typeof signals.groupReplyCountWindow === 'number' ? signals.groupReplyCountWindow : 0,
     senderFatigue: typeof signals.senderFatigue === 'number' ? signals.senderFatigue : 0,
@@ -538,7 +564,8 @@ export async function planGroupReplyDecision(msg, options = {}) {
     msg,
     extraSignals,
     options.context || null,
-    options.policy || null
+    options.policy || null,
+    options.bot || null
   );
 
   const rdLines = [];

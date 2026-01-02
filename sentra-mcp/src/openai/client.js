@@ -4,6 +4,8 @@ import logger from '../logger/index.js';
 
 let client;
 let clientKey;
+let embeddingClient;
+let embeddingClientKey;
 
 export function getOpenAI() {
   const key = `${config.llm.apiKey || ''}@@${config.llm.baseURL || ''}`;
@@ -15,6 +17,17 @@ export function getOpenAI() {
     clientKey = key;
   }
   return client;
+}
+
+export function getEmbeddingOpenAI() {
+  const apiKey = config.embedding.apiKey || config.llm.apiKey;
+  const baseURL = config.embedding.baseURL || config.llm.baseURL;
+  const key = `${apiKey || ''}@@${baseURL || ''}`;
+  if (!embeddingClient || embeddingClientKey !== key) {
+    embeddingClient = new OpenAI({ apiKey, baseURL });
+    embeddingClientKey = key;
+  }
+  return embeddingClient;
 }
 
 export async function chatCompletion({ messages, tools, tool_choice, temperature, top_p, max_tokens, apiKey, baseURL, model, omitMaxTokens }) {
@@ -55,8 +68,11 @@ export async function chatCompletion({ messages, tools, tool_choice, temperature
 export async function embedTexts({ texts = [], apiKey, baseURL, model }) {
   if (!Array.isArray(texts) || texts.length === 0) return [];
   const openai = (apiKey || baseURL)
-    ? new OpenAI({ apiKey: apiKey || config.embedding.apiKey || config.llm.apiKey, baseURL: baseURL || config.embedding.baseURL || config.llm.baseURL })
-    : getOpenAI();
+    ? new OpenAI({
+        apiKey: apiKey || config.embedding.apiKey || config.llm.apiKey,
+        baseURL: baseURL || config.embedding.baseURL || config.llm.baseURL,
+      })
+    : getEmbeddingOpenAI();
   const mdl = model || config.embedding.model || 'text-embedding-3-small';
   const res = await openai.embeddings.create({ model: mdl, input: texts });
   return (res?.data || []).map((d) => Array.isArray(d.embedding) ? d.embedding : []);

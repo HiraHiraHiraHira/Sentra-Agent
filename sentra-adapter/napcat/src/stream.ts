@@ -374,16 +374,16 @@ export class MessageStream {
       const targetSummary = targetIsBot ? `你（${targetBaseLabel}）` : targetDisplayFull;
       summary = `在群聊「${gName}」中，${senderSummary} 轻轻戳了 ${targetSummary}`;
 
-      const senderObj = senderIsBot ? `你（${senderDisplayFull}）` : senderDisplayFull;
-      const targetObj = targetIsBot ? `你（${targetDisplayFull}）` : targetDisplayFull;
-      objective = `在群聊「${gName}」中，${senderObj} 戳了 ${targetObj}`;
+      const senderObj = senderIsBot ? `我（${senderDisplayFull}）` : senderDisplayFull;
+      const targetObj = targetIsBot ? `我（${targetDisplayFull}）` : targetDisplayFull;
+      objective = `在群聊「${gName}」里，${senderObj} 戳了 ${targetObj}`;
     } else {
       if (targetIsBot) {
         summary = `好友 ${senderBaseLabel} 戳了你（${targetBaseLabel}）`;
-        objective = `好友 ${senderBaseLabel} 戳了你（${targetBaseLabel}）`;
+        objective = `好友 ${senderBaseLabel} 戳了我（${targetBaseLabel}）`;
       } else if (senderIsBot) {
         summary = `你（${senderBaseLabel}） 在私聊中戳了 ${targetBaseLabel}`;
-        objective = `你（${senderBaseLabel}） 戳了好友 ${targetBaseLabel}`;
+        objective = `我（${senderBaseLabel}） 戳了好友 ${targetBaseLabel}`;
       } else {
         summary = `${senderBaseLabel} 在私聊中戳了 ${targetBaseLabel}`;
         objective = `${senderBaseLabel} 在私聊中戳了 ${targetBaseLabel}`;
@@ -1046,7 +1046,7 @@ export class MessageStream {
     // 生成消息摘要（Markdown格式）
     formatted.summary = await this.generateSummary(formatted);
     // 生成事件的自然语言描述（Markdown，自然语言 + 多媒体md）
-    formatted.objective = this.generateObjective(formatted);
+    formatted.objective = await this.generateObjective(formatted);
 
     return formatted;
   }
@@ -1062,31 +1062,130 @@ export class MessageStream {
    * 生成事件的自然语言描述（Markdown，自然语言 + 多媒体md）
    * 不包含时间/消息ID等技术信息，只关注「谁在什么场景做了什么」
    */
-  private generateObjective(msg: FormattedMessage): string {
+  private async generateObjective(msg: FormattedMessage): Promise<string> {
     const isGroup = msg.type === 'group';
-    const senderName = msg.sender_name || `QQ:${msg.sender_id}`;
     const groupName = msg.group_name || (msg.group_id ? `群${msg.group_id}` : '未知群');
-    let desc = isGroup ? `在群聊「${groupName}」中，${senderName}` : `在私聊中，${senderName}`;
+    const selfId = msg.self_id;
+    const botNick = typeof selfId === 'number' ? await this.getBotName(selfId) : undefined;
 
-    // @ 提及
+    const botIdentity = (() => {
+      if (typeof selfId !== 'number') return '';
+      const n = botNick && typeof botNick === 'string' ? botNick : String(selfId);
+      return `${n}(QQ:${selfId})`;
+    })();
+
+    const roleLabel = (r: any): string => {
+      if (r === 'owner') return '[群主]';
+      if (r === 'admin') return '[管理员]';
+      return '';
+    };
+
+    const formatUserDisplay = (opts: {
+      userId: number;
+      nickname?: string;
+      card?: string;
+      role?: any;
+      isBot?: boolean;
+    }): string => {
+      const baseName = opts.nickname || String(opts.userId);
+      const card = opts.card && opts.card !== baseName ? String(opts.card) : '';
+      const namePart = card ? `${baseName}(${card})` : baseName;
+      const rolePart = roleLabel(opts.role);
+      const qqPart = `(QQ:${opts.userId})`;
+      if (opts.isBot) {
+        const botName = botNick && typeof botNick === 'string' ? botNick : baseName;
+        const name = card && card !== botName ? `${botName}(${card})` : botName;
+        return `我（${name}${rolePart}${qqPart}）`;
+      }
+      return `${namePart}${rolePart}${qqPart}`;
+    };
+
+    const resolveTargets = async (ids: number[]): Promise<string[]> => {
+      const uniqIds = Array.from(new Set(ids.filter((x) => Number.isFinite(x))));
+      if (uniqIds.length === 0) return [];
+
+      if (!this.invoker) {
+        return uniqIds.map((uid) => {
+          const isBot = typeof selfId === 'number' && uid === selfId;
+          return formatUserDisplay({ userId: uid, nickname: String(uid), isBot });
+        });
+      }
+
+      if (isGroup && msg.group_id) {
+        const gid = msg.group_id;
+        const tasks = uniqIds.map(async (uid) => {
+          const isBot = typeof selfId === 'number' && uid === selfId;
+          try {
+            const call = async () => await this.invoker!.data('get_group_member_info', { group_id: gid, user_id: uid });
+            const info: any = this.rpcRetryEnabled
+              ? await this.withRpcRetry(call, 'get_group_member_info', uid)
+              : await call();
+            return formatUserDisplay({
+              userId: uid,
+              nickname: info?.nickname || String(uid),
+              card: info?.card,
+              role: info?.role,
+              isBot,
+            });
+          } catch {
+            return formatUserDisplay({ userId: uid, nickname: String(uid), isBot });
+          }
+        });
+        return await Promise.all(tasks);
+      }
+
+      const tasks = uniqIds.map(async (uid) => {
+        const isBot = typeof selfId === 'number' && uid === selfId;
+        try {
+          const call = async () => await this.invoker!.data('get_stranger_info', { user_id: uid });
+          const info: any = this.rpcRetryEnabled
+            ? await this.withRpcRetry(call, 'get_stranger_info', uid)
+            : await call();
+          return formatUserDisplay({
+            userId: uid,
+            nickname: info?.nickname || String(uid),
+            isBot,
+          });
+        } catch {
+          return formatUserDisplay({ userId: uid, nickname: String(uid), isBot });
+        }
+      });
+      return await Promise.all(tasks);
+    };
+
+    const senderIsBot = typeof selfId === 'number' && msg.sender_id === selfId;
+    const senderDisplay = formatUserDisplay({
+      userId: msg.sender_id,
+      nickname: msg.sender_name || `QQ:${msg.sender_id}`,
+      card: msg.sender_card,
+      role: msg.sender_role,
+      isBot: senderIsBot,
+    });
+
+    const scenePrefix = isGroup ? `在群聊「${groupName}」里，` : '在私聊里，';
+    let desc = `${scenePrefix}${senderDisplay}`;
+
     if (msg.at_all) {
-      desc += ' 艾特了全体成员';
+      desc += ' @了全体成员';
     } else if (msg.at_users && msg.at_users.length > 0) {
-      const idsPreview = msg.at_users.slice(0, 3).map((u) => String(u)).join('、');
-      const more = msg.at_users.length > 3 ? ` 等${msg.at_users.length}人` : '';
-      desc += ` 艾特了${msg.at_users.length}人(${idsPreview}${more})`;
+      const selfAt = typeof selfId === 'number' && msg.at_users.includes(selfId);
+      const otherIds = typeof selfId === 'number'
+        ? msg.at_users.filter((u) => u !== selfId)
+        : msg.at_users;
+      const otherTargets = otherIds.length > 0 ? await resolveTargets(otherIds) : [];
+      if (selfAt && botIdentity) {
+        desc += ` @了我（${botIdentity}）`;
+        if (otherTargets.length > 0) {
+          desc += `，同时也@了 ${otherTargets.join('、')}`;
+        }
+      } else if (otherTargets.length > 0) {
+        desc += ` @了 ${otherTargets.join('、')}`;
+      }
     }
 
     const text = (msg.text || '').trim();
-    let hasSaid = false;
     if (text) {
-      // 如果前面已经有艾特动作，加上“然后说”
-      if (msg.at_all || (msg.at_users && msg.at_users.length > 0)) {
-        desc += `，然后说: ${text}`;
-      } else {
-        desc += ` 说: ${text}`;
-      }
-      hasSaid = true;
+      desc += `，说：“${text}”`;
     }
 
     const actions: string[] = [];
@@ -1410,8 +1509,7 @@ export class MessageStream {
     }
 
     if (actions.length > 0) {
-      desc += hasSaid ? '，并且' : '，';
-      desc += actions.join('；');
+      desc += `，另外${actions.join('；')}`;
     }
 
     return desc;
