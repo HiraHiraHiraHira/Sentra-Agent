@@ -1,5 +1,150 @@
 import logger from '../../src/logger/index.js';
-import { httpClient } from '../../src/utils/http.js';
+import { config } from '../../src/config/index.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { abs as toAbs, toPosix } from '../../src/utils/path.js';
+import OpenAI from 'openai';
+
+let _JSDOM;
+let _Readability;
+
+function isTimeoutError(e) {
+  const msg = String(e?.message || e || '').toLowerCase();
+  const code = String(e?.code || '').toUpperCase();
+  return (
+    code === 'ETIMEDOUT' ||
+    code === 'ESOCKETTIMEDOUT' ||
+    code === 'ECONNABORTED' ||
+    msg.includes('timeout') ||
+    msg.includes('timed out')
+  );
+}
+
+function buildAdvice(kind, ctx = {}) {
+  const tool = 'web_parser';
+  const base = {
+    suggested_reply: '',
+    next_steps: [],
+    persona_hint: '你需要先解释抓取失败/内容不完整的原因，并给用户可执行的替代方案（提供 RSS、换链接、降低频率等）。',
+    context: { tool, ...ctx },
+  };
+  if (kind === 'INVALID_URL') {
+    return {
+      ...base,
+      suggested_reply: '这个 URL 看起来不合法。请提供完整链接（包含 http/https），或把浏览器地址栏里的链接完整复制给我。',
+      next_steps: ['提供完整 URL（建议包含 https://）', '确认链接可在浏览器正常打开'],
+    };
+  }
+  if (kind === 'TIMEOUT') {
+    return {
+      ...base,
+      suggested_reply: '抓取网页超时了。你可以稍后重试，或提供该站点的 RSS/站点地图链接以便更快获取内容。',
+      next_steps: ['稍后重试', '提供 RSS/Atom 或 sitemap.xml', '降低抓取频率或缩短页面范围'],
+    };
+  }
+  if (kind === 'BLOCKED') {
+    return {
+      ...base,
+      suggested_reply: '目标站点返回的页面可能包含访问限制（例如需要启用 JavaScript、登录、或出现验证提示），导致无法直接提取正文。',
+      next_steps: ['尝试换一个可公开访问的页面链接', '如该站提供 RSS/公开 API，优先使用', '如果页面需要登录，请提供可公开的镜像/摘要来源'],
+    };
+  }
+  if (kind === 'VISION_TIMEOUT') {
+    return {
+      ...base,
+      suggested_reply: '页面截图已成功获取，但读图识别超时了。你仍然可以先使用 DOM 抽取的正文；或稍后重试读图识别。',
+      next_steps: ['先使用 DOM 抽取结果继续处理', '稍后重试读图识别（vision）', '缩短页面/降低截图分辨率再试'],
+    };
+  }
+  if (kind === 'VISION_ERR') {
+    return {
+      ...base,
+      suggested_reply: '页面截图已成功获取，但读图识别发生异常。你仍然可以先使用 DOM 抽取的正文；或调整 vision 模型/参数再试。',
+      next_steps: ['检查 VISION_API_KEY / VISION_BASE_URL / VISION_MODEL 配置', '先使用 DOM 抽取结果继续处理', '如页面文字很小，尝试提高视口或截图质量'],
+    };
+  }
+  return {
+    ...base,
+    suggested_reply: '抓取网页时发生异常。我可以根据报错调整页面等待策略、资源拦截、或开启截图/读图来提高稳定性，然后再重试。',
+    next_steps: ['把目标链接和报错信息发给我', '尝试调整 waitStrategy', '必要时开启 screenshot 或 vision 再试'],
+  };
+}
+
+function bufferToDataUri(buf, mime = 'image/png') {
+  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || []);
+  return `data:${mime};base64,${b.toString('base64')}`;
+}
+
+function safeSlug(s) {
+  return String(s || '')
+    .trim()
+    .replace(/https?:\/\//gi, '')
+    .replace(/[^a-z0-9._-]+/gi, '_')
+    .replace(/_+/g, '_')
+    .slice(0, 80);
+}
+
+async function saveWebParserArtifacts({ baseDir, prefix, html, screenshotBuf, screenshotExt, debug }) {
+  const outDir = toAbs(baseDir || 'artifacts');
+  await fs.mkdir(outDir, { recursive: true });
+  const stamp = Date.now();
+  const base = `${prefix || 'web'}_${stamp}`;
+
+  const out = { dir: toPosix(outDir), html: null, screenshot: null, debug: null };
+  if (typeof html === 'string' && html) {
+    const p = path.join(outDir, `${base}.html`);
+    await fs.writeFile(p, html, 'utf-8');
+    out.html = toPosix(p);
+  }
+  if (Buffer.isBuffer(screenshotBuf) && screenshotBuf.length) {
+    const ext = String(screenshotExt || '.png');
+    const p = path.join(outDir, `${base}${ext.startsWith('.') ? ext : `.${ext}`}`);
+    await fs.writeFile(p, screenshotBuf);
+    out.screenshot = toPosix(p);
+  }
+  if (debug && typeof debug === 'object') {
+    const p = path.join(outDir, `${base}.json`);
+    await fs.writeFile(p, JSON.stringify(debug, null, 2), 'utf-8');
+    out.debug = toPosix(p);
+  }
+  return out;
+}
+
+function extractTextFromMessageContent(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    // OpenAI-compatible multimodal may return an array of content parts
+    return content
+      .map((p) => {
+        if (!p) return '';
+        if (typeof p === 'string') return p;
+        if (typeof p?.text === 'string') return p.text;
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (content && typeof content === 'object') {
+    if (typeof content.text === 'string') return content.text;
+  }
+  return '';
+}
+
+async function runVisionOnScreenshot({ dataUri, prompt, model, apiKey, baseURL, maxTokens }) {
+  const items = [{ type: 'text', text: String(prompt || '').trim() || '请提取截图中的主要可读内容。' }];
+  items.push({ type: 'image_url', image_url: { url: dataUri } });
+  const messages = [{ role: 'user', content: items }];
+
+  const clientOpts = { apiKey };
+  if (baseURL) clientOpts.baseURL = baseURL;
+  const oai = new OpenAI(clientOpts);
+  const payload = { model, messages };
+  const mt = Number(maxTokens);
+  if (Number.isFinite(mt) && mt > 0) payload.max_tokens = mt;
+  const res = await oai.chat.completions.create(payload);
+  const raw = res?.choices?.[0]?.message?.content;
+  return String(extractTextFromMessageContent(raw) || '').trim();
+}
 
 function processUrl(input) {
   try {
@@ -21,58 +166,109 @@ function resolveBool(v, def = false) {
 
 function toInt(v, def) { const n = Number(v); return Number.isFinite(n) ? n : def; }
 
+function normalizeOpenAIBaseURL(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  const u = s.replace(/\/+$/g, '');
+  if (/\/v\d+$/i.test(u)) return u;
+  return `${u}/v1`;
+}
+
+function sanitizeDebugUrl(raw) {
+  const u = String(raw || '');
+  if (!u) return '';
+  if (/^data:/i.test(u)) return 'data:(omitted)';
+  const maxLen = 260;
+  const qPos = u.indexOf('?');
+  if (qPos !== -1 && qPos < maxLen) {
+    const base = u.slice(0, qPos);
+    if (base.length > maxLen) return base.slice(0, maxLen - 1) + '…';
+    return base + '?…';
+  }
+  if (u.length > maxLen) return u.slice(0, maxLen - 1) + '…';
+  return u;
+}
+
 function resolveConfig(args, pluginEnv = {}, defaultTimeoutMs = 30000) {
-  const timeoutFromArgs = Number(args?.timeout);
-  const maxBytesFromArgs = Number(args?.maxBytes);
-  const envTimeout = Number(pluginEnv.WEB_PARSER_TIMEOUT);
-  const envMaxLen = Number(pluginEnv.WEB_PARSER_MAX_CONTENT_LENGTH || pluginEnv.WEB_PARSER_MAX_BYTES);
-  const enableJS = args?.use_js !== undefined ? Boolean(args.use_js) : resolveBool(pluginEnv.WEB_PARSER_ENABLE_JAVASCRIPT, true);
-  const waitSelector = args?.waitSelector || pluginEnv.WEB_PARSER_WAIT_FOR_SELECTOR || '';
-  const ua = args?.ua || args?.userAgent || pluginEnv.WEB_PARSER_USER_AGENT || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 SentraWebParser/1.0.0';
-  const uaPlatform = args?.uaPlatform || pluginEnv.WEB_PARSER_UA_PLATFORM || undefined;
+  const envTimeout = Number(pluginEnv.WEB_PARSER_TIMEOUT ?? process.env.WEB_PARSER_TIMEOUT);
+  const envMaxLen = Number((pluginEnv.WEB_PARSER_MAX_CONTENT_LENGTH ?? process.env.WEB_PARSER_MAX_CONTENT_LENGTH) || (pluginEnv.WEB_PARSER_MAX_BYTES ?? process.env.WEB_PARSER_MAX_BYTES));
+  const ua = args?.ua || args?.userAgent || pluginEnv.WEB_PARSER_USER_AGENT || process.env.WEB_PARSER_USER_AGENT || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 SentraWebParser/1.0.0';
+  const uaPlatform = args?.uaPlatform || pluginEnv.WEB_PARSER_UA_PLATFORM || process.env.WEB_PARSER_UA_PLATFORM || undefined;
   let uaMetadata;
   try {
-    const rawUaMeta = args?.uaMetadata || pluginEnv.WEB_PARSER_UA_METADATA;
+    const rawUaMeta = args?.uaMetadata || pluginEnv.WEB_PARSER_UA_METADATA || process.env.WEB_PARSER_UA_METADATA;
     if (rawUaMeta) uaMetadata = JSON.parse(String(rawUaMeta));
   } catch {}
-  const useProxy = resolveBool(pluginEnv.WEB_PARSER_USE_PROXY, false);
-  const proxyServer = pluginEnv.WEB_PARSER_PROXY_SERVER || '';
-  const viewportWidth = toInt(pluginEnv.WEB_PARSER_VIEWPORT_WIDTH, 1366);
-  const viewportHeight = toInt(pluginEnv.WEB_PARSER_VIEWPORT_HEIGHT, 768);
-  const maxRetries = Math.max(1, toInt(pluginEnv.WEB_PARSER_MAX_RETRIES, 2));
-  const retryDelay = Math.max(500, toInt(pluginEnv.WEB_PARSER_RETRY_DELAY, 2000));
+  const useProxy = resolveBool(pluginEnv.WEB_PARSER_USE_PROXY ?? process.env.WEB_PARSER_USE_PROXY, false);
+  const proxyServer = pluginEnv.WEB_PARSER_PROXY_SERVER || process.env.WEB_PARSER_PROXY_SERVER || '';
+  const viewportWidth = toInt(pluginEnv.WEB_PARSER_VIEWPORT_WIDTH ?? process.env.WEB_PARSER_VIEWPORT_WIDTH, 1366);
+  const viewportHeight = toInt(pluginEnv.WEB_PARSER_VIEWPORT_HEIGHT ?? process.env.WEB_PARSER_VIEWPORT_HEIGHT, 768);
+  const maxRetries = Math.max(1, toInt(pluginEnv.WEB_PARSER_MAX_RETRIES ?? process.env.WEB_PARSER_MAX_RETRIES, 2));
+  const retryDelay = Math.max(500, toInt(pluginEnv.WEB_PARSER_RETRY_DELAY ?? process.env.WEB_PARSER_RETRY_DELAY, 2000));
 
-  // Advanced waiting & heuristics (all configurable, no site-specific hardcode)
-  const waitStrategy = (args?.waitStrategy || pluginEnv.WEB_PARSER_WAIT_STRATEGY || 'auto').toLowerCase();
-  const maxTotalWaitMs = Math.max(1000, toInt(args?.maxTotalWaitMs ?? pluginEnv.WEB_PARSER_MAX_TOTAL_WAIT, 15000));
-  const netIdleIdleMs = Math.max(200, toInt(args?.networkIdleMs ?? args?.netIdleMs ?? pluginEnv.WEB_PARSER_NETWORK_IDLE_IDLE_MS, 800));
-  const domStableSampleMs = Math.max(100, toInt(args?.domStableSampleMs ?? pluginEnv.WEB_PARSER_DOM_STABLE_SAMPLE_MS, 500));
-  const domStableSamples = Math.max(2, toInt(args?.domStableSamples ?? pluginEnv.WEB_PARSER_DOM_STABLE_SAMPLES, 4));
-  const scrollSteps = Math.max(0, toInt(args?.scrollSteps ?? pluginEnv.WEB_PARSER_SCROLL_STEPS, 6));
-  const scrollStepPx = Math.max(200, toInt(args?.scrollStepPx ?? pluginEnv.WEB_PARSER_SCROLL_STEP_PX, 1200));
-  const scrollDelayMs = Math.max(50, toInt(args?.scrollDelayMs ?? pluginEnv.WEB_PARSER_SCROLL_DELAY_MS, 250));
-  const loadingPatternsVal = args?.loadingPatterns ?? pluginEnv.WEB_PARSER_LOADING_PATTERNS ?? 'loading,加载中,请稍候,正在加载,请稍后,please wait,正在编译,processing,spinner';
+  const enableReadability = resolveBool(pluginEnv.WEB_PARSER_ENABLE_READABILITY ?? process.env.WEB_PARSER_ENABLE_READABILITY, true);
+  const readabilityMaxHtmlBytes = Math.max(50_000, toInt(pluginEnv.WEB_PARSER_READABILITY_MAX_HTML_BYTES ?? process.env.WEB_PARSER_READABILITY_MAX_HTML_BYTES, 800_000));
+
+  const screenshotFullPage = resolveBool(pluginEnv.WEB_PARSER_SCREENSHOT_FULLPAGE ?? process.env.WEB_PARSER_SCREENSHOT_FULLPAGE, true);
+  const screenshotType = String(pluginEnv.WEB_PARSER_SCREENSHOT_TYPE || process.env.WEB_PARSER_SCREENSHOT_TYPE || 'png').toLowerCase();
+  const screenshotQuality = toInt(pluginEnv.WEB_PARSER_SCREENSHOT_QUALITY ?? process.env.WEB_PARSER_SCREENSHOT_QUALITY, 80);
+  const screenshotMaxMbRaw = pluginEnv.WEB_PARSER_SCREENSHOT_MAX_MB ?? process.env.WEB_PARSER_SCREENSHOT_MAX_MB;
+  const screenshotMaxMb = Number(screenshotMaxMbRaw);
+  const screenshotMaxBytes = Math.max(
+    50_000,
+    Number.isFinite(screenshotMaxMb) && screenshotMaxMb > 0
+      ? Math.floor(screenshotMaxMb * 1024 * 1024)
+      : toInt(pluginEnv.WEB_PARSER_SCREENSHOT_MAX_BYTES ?? process.env.WEB_PARSER_SCREENSHOT_MAX_BYTES, 12 * 1024 * 1024)
+  );
+  const screenshotMaxHeightPx = Math.max(2000, toInt(pluginEnv.WEB_PARSER_SCREENSHOT_MAX_HEIGHT_PX ?? process.env.WEB_PARSER_SCREENSHOT_MAX_HEIGHT_PX, 16000));
+  const screenshotReturnDataUri = resolveBool(pluginEnv.WEB_PARSER_SCREENSHOT_RETURN_DATA_URI ?? process.env.WEB_PARSER_SCREENSHOT_RETURN_DATA_URI, false);
+
+  const visionEnabled = resolveBool(pluginEnv.WEB_PARSER_VISION ?? process.env.WEB_PARSER_VISION, false);
+  const screenshotEnabled = resolveBool(pluginEnv.WEB_PARSER_SCREENSHOT ?? process.env.WEB_PARSER_SCREENSHOT, false) || visionEnabled;
+  const visionApiKey = String(pluginEnv.WEB_PARSER_VISION_API_KEY || process.env.WEB_PARSER_VISION_API_KEY || pluginEnv.VISION_API_KEY || process.env.VISION_API_KEY || config.llm.apiKey || '');
+  const visionBaseURL = normalizeOpenAIBaseURL(pluginEnv.WEB_PARSER_VISION_BASE_URL || process.env.WEB_PARSER_VISION_BASE_URL || pluginEnv.VISION_BASE_URL || process.env.VISION_BASE_URL || config.llm.baseURL || '');
+  const visionModel = String(pluginEnv.WEB_PARSER_VISION_MODEL || process.env.WEB_PARSER_VISION_MODEL || pluginEnv.VISION_MODEL || process.env.VISION_MODEL || config.llm.model || '');
+
+  const rawVisionMaxTokens = pluginEnv.WEB_PARSER_VISION_MAX_TOKENS ?? process.env.WEB_PARSER_VISION_MAX_TOKENS;
+  const visionMaxTokens = (rawVisionMaxTokens === undefined || rawVisionMaxTokens === null || String(rawVisionMaxTokens).trim() === '' || String(rawVisionMaxTokens).trim() === '-1')
+    ? (String(rawVisionMaxTokens).trim() === '-1' ? -1 : 800)
+    : toInt(rawVisionMaxTokens, 800);
+  const visionPrompt = String(pluginEnv.WEB_PARSER_VISION_PROMPT || process.env.WEB_PARSER_VISION_PROMPT || '请根据截图提取网页的主要可读内容（尽量保留段落结构），忽略导航栏、页脚、按钮、广告和重复元素。').trim();
+
+  const waitStrategy = ((pluginEnv.WEB_PARSER_WAIT_STRATEGY ?? process.env.WEB_PARSER_WAIT_STRATEGY) || 'auto').toLowerCase();
+  const maxTotalWaitMs = Math.max(1000, toInt(pluginEnv.WEB_PARSER_MAX_TOTAL_WAIT ?? process.env.WEB_PARSER_MAX_TOTAL_WAIT, 15000));
+  const netIdleIdleMs = Math.max(200, toInt(pluginEnv.WEB_PARSER_NETWORK_IDLE_IDLE_MS ?? process.env.WEB_PARSER_NETWORK_IDLE_IDLE_MS, 800));
+  const domStableSampleMs = Math.max(100, toInt(pluginEnv.WEB_PARSER_DOM_STABLE_SAMPLE_MS ?? process.env.WEB_PARSER_DOM_STABLE_SAMPLE_MS, 500));
+  const domStableSamples = Math.max(2, toInt(pluginEnv.WEB_PARSER_DOM_STABLE_SAMPLES ?? process.env.WEB_PARSER_DOM_STABLE_SAMPLES, 4));
+  const scrollSteps = Math.max(0, toInt(pluginEnv.WEB_PARSER_SCROLL_STEPS ?? process.env.WEB_PARSER_SCROLL_STEPS, 6));
+  const scrollStepPx = Math.max(200, toInt(pluginEnv.WEB_PARSER_SCROLL_STEP_PX ?? process.env.WEB_PARSER_SCROLL_STEP_PX, 1200));
+  const scrollDelayMs = Math.max(50, toInt(pluginEnv.WEB_PARSER_SCROLL_DELAY_MS ?? process.env.WEB_PARSER_SCROLL_DELAY_MS, 250));
+  const loadingPatternsVal = (pluginEnv.WEB_PARSER_LOADING_PATTERNS ?? process.env.WEB_PARSER_LOADING_PATTERNS) || 'loading,加载中,请稍候,正在加载,请稍后,please wait,正在编译,processing,spinner';
   const loadingPatterns = Array.isArray(loadingPatternsVal) ? loadingPatternsVal : String(loadingPatternsVal).split(',');
   const loadingPatternsNorm = loadingPatterns.map((s) => String(s).trim()).filter(Boolean);
-  const minGoodLen = Math.max(50, toInt(args?.minGoodLen ?? pluginEnv.WEB_PARSER_MIN_GOOD_LEN, 200));
-  const blockTypesVal = args?.blockTypes ?? pluginEnv.WEB_PARSER_BLOCK_TYPES ?? 'image,font,media';
+  const minGoodLen = Math.max(50, toInt(pluginEnv.WEB_PARSER_MIN_GOOD_LEN ?? process.env.WEB_PARSER_MIN_GOOD_LEN, 200));
+  const blockTypesVal = (pluginEnv.WEB_PARSER_BLOCK_TYPES ?? process.env.WEB_PARSER_BLOCK_TYPES) || 'image,font,media';
   const blockTypesList = Array.isArray(blockTypesVal) ? blockTypesVal : String(blockTypesVal).split(',');
   const blockTypes = new Set(blockTypesList.map((s) => String(s).trim()).filter(Boolean));
-  const readyExpression = args?.readyExpression || pluginEnv.WEB_PARSER_READY_EXPRESSION || '';
-  const blockUrlVal = args?.blockUrlPatterns ?? pluginEnv.WEB_PARSER_BLOCK_URL_PATTERNS ?? '';
+  const waitSelector = String(pluginEnv.WEB_PARSER_WAIT_FOR_SELECTOR || process.env.WEB_PARSER_WAIT_FOR_SELECTOR || '').trim();
+  const readyExpression = pluginEnv.WEB_PARSER_READY_EXPRESSION || process.env.WEB_PARSER_READY_EXPRESSION || '';
+  const blockUrlVal = pluginEnv.WEB_PARSER_BLOCK_URL_PATTERNS || process.env.WEB_PARSER_BLOCK_URL_PATTERNS || '';
   const blockUrlPatterns = (Array.isArray(blockUrlVal) ? blockUrlVal : String(blockUrlVal).split(',')).map((s)=>String(s).trim()).filter(Boolean);
 
-  const timeout = Number.isFinite(timeoutFromArgs) && timeoutFromArgs > 0
-    ? timeoutFromArgs
-    : (Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : defaultTimeoutMs);
+  const artifactsDir = String(pluginEnv.WEB_PARSER_ARTIFACTS_DIR || process.env.WEB_PARSER_ARTIFACTS_DIR || 'artifacts');
+  const saveArtifacts = resolveBool(pluginEnv.WEB_PARSER_SAVE_ARTIFACTS ?? process.env.WEB_PARSER_SAVE_ARTIFACTS, false);
+  const saveArtifactsOnEmpty = resolveBool(pluginEnv.WEB_PARSER_SAVE_ARTIFACTS_ON_EMPTY ?? process.env.WEB_PARSER_SAVE_ARTIFACTS_ON_EMPTY, true);
 
-  const maxBytes = Number.isFinite(maxBytesFromArgs) && maxBytesFromArgs > 0
-    ? maxBytesFromArgs
-    : (Number.isFinite(envMaxLen) && envMaxLen > 0 ? envMaxLen : 200000);
+  const timeout = Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : defaultTimeoutMs;
+  const maxBytes = Number.isFinite(envMaxLen) && envMaxLen > 0 ? envMaxLen : 200000;
 
-  return { timeout, maxBytes, enableJS, waitSelector, ua, uaPlatform, uaMetadata, useProxy, proxyServer, viewportWidth, viewportHeight, maxRetries, retryDelay,
+  return { timeout, maxBytes, ua, uaPlatform, uaMetadata, useProxy, proxyServer, viewportWidth, viewportHeight, maxRetries, retryDelay,
     waitStrategy, maxTotalWaitMs, netIdleIdleMs, domStableSampleMs, domStableSamples, scrollSteps, scrollStepPx, scrollDelayMs,
-    loadingPatterns: loadingPatternsNorm, minGoodLen, blockTypes, readyExpression, blockUrlPatterns };
+    loadingPatterns: loadingPatternsNorm, minGoodLen, blockTypes, waitSelector, readyExpression, blockUrlPatterns,
+    enableReadability, readabilityMaxHtmlBytes,
+    screenshotEnabled, screenshotFullPage, screenshotType, screenshotQuality, screenshotMaxBytes, screenshotMaxHeightPx, screenshotReturnDataUri,
+    visionEnabled, visionApiKey, visionBaseURL, visionModel, visionMaxTokens, visionPrompt,
+    artifactsDir, saveArtifacts, saveArtifactsOnEmpty };
 }
 
 function extractFromHtml(html) {
@@ -109,10 +305,17 @@ function extractFromHtml(html) {
 
 async function extractWithReadability(html) {
   try {
-    const { JSDOM } = await import('jsdom');
-    const { Readability } = await import('@mozilla/readability');
-    const dom = new JSDOM(html);
-    const article = new Readability(dom.window.document).parse();
+    if (!_JSDOM) {
+      const mod = await import('jsdom');
+      _JSDOM = mod?.JSDOM;
+    }
+    if (!_Readability) {
+      const mod = await import('@mozilla/readability');
+      _Readability = mod?.Readability;
+    }
+    if (!_JSDOM || !_Readability) return null;
+    const dom = new _JSDOM(html);
+    const article = new _Readability(dom.window.document).parse();
     if (article) {
       const title = (article.title || '').trim();
       const text = (article.textContent || '').replace(/\s+/g, ' ').trim();
@@ -122,35 +325,49 @@ async function extractWithReadability(html) {
   return null;
 }
 
-async function extractSmart(html) {
-  const r = await extractWithReadability(html);
-  if (r && r.text) return r;
-  return extractFromHtml(html);
+function extractMetaQuick(html) {
+  const src = String(html || '');
+  const pick = (re) => {
+    const m = src.match(re);
+    return m ? String(m[1] || '').trim() : '';
+  };
+  const ogTitle = pick(/property=["']og:title["'][^>]*content=["']([^"']+)["']/i) || pick(/content=["']([^"']+)["'][^>]*property=["']og:title["']/i);
+  const desc = pick(/name=["']description["'][^>]*content=["']([^"']+)["']/i) || pick(/property=["']og:description["'][^>]*content=["']([^"']+)["']/i);
+  const canonical = pick(/rel=["']canonical["'][^>]*href=["']([^"']+)["']/i);
+  const published = pick(/property=["']article:published_time["'][^>]*content=["']([^"']+)["']/i);
+  return { ogTitle, desc, canonical, published };
 }
 
-async function tryAxios(url, { timeout, ua, useProxy, proxyServer }) {
-  const cfg = {
-    headers: {
-      'User-Agent': ua,
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Cache-Control': 'no-cache'
-    },
-    timeout,
-    maxRedirects: 5,
-  };
-  if (useProxy && proxyServer) {
-    try {
-      const u = new URL(proxyServer);
-      cfg.proxy = { protocol: u.protocol.replace(':',''), host: u.hostname, port: Number(u.port) || (u.protocol === 'https:' ? 443 : 80) };
-    } catch {}
+function postCleanText(text) {
+  const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const out = [];
+  const seen = new Set();
+  for (const l of lines) {
+    const norm = l.replace(/\s+/g, ' ');
+    if (norm.length < 2) continue;
+    // Drop obvious boilerplate lines
+    if (/^(cookie|cookies|隐私|隐私政策|privacy|terms|免责声明|subscribe|订阅|登录|注册|sign in|sign up)/i.test(norm)) continue;
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    out.push(norm);
   }
-  const res = await axios.get(url, cfg);
-  if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
-  const ctype = res.headers['content-type'] || '';
-  if (!ctype.includes('text/html')) throw new Error(`Unsupported content-type: ${ctype}`);
-  const { title, text, metadata } = await extractSmart(res.data);
-  return { method: 'axios', title, text, metadata, headers: res.headers };
+  return out.join('\n');
+}
+
+async function extractSmart(html, cfg = {}) {
+  const meta = extractMetaQuick(html);
+  const useReadability = cfg?.enableReadability !== false;
+  const maxHtmlBytes = Number.isFinite(cfg?.readabilityMaxHtmlBytes) ? cfg.readabilityMaxHtmlBytes : 800_000;
+  if (useReadability && String(html || '').length <= maxHtmlBytes) {
+    const r = await extractWithReadability(html);
+    if (r && r.text) {
+      const title = r.title || meta.ogTitle || '';
+      const text = postCleanText(r.text);
+      return { title, text, metadata: { ...meta, ...r.metadata } };
+    }
+  }
+  const basic = extractFromHtml(html);
+  return { title: basic.title || meta.ogTitle || '', text: postCleanText(basic.text), metadata: { ...meta, ...basic.metadata } };
 }
 
 function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
@@ -213,7 +430,9 @@ function hasLoadingPhrases(text, patterns = []) {
 async function tryPuppeteer(url, cfg) {
   const { timeout, ua, uaPlatform, uaMetadata, waitSelector, viewportWidth, viewportHeight, useProxy, proxyServer, maxRetries, retryDelay,
     waitStrategy, maxTotalWaitMs, netIdleIdleMs, domStableSampleMs, domStableSamples, scrollSteps, scrollStepPx, scrollDelayMs,
-    loadingPatterns, minGoodLen, blockTypes, readyExpression, blockUrlPatterns } = cfg;
+    loadingPatterns, minGoodLen, blockTypes, readyExpression, blockUrlPatterns, enableReadability, readabilityMaxHtmlBytes,
+    screenshotEnabled, screenshotFullPage, screenshotType, screenshotQuality, screenshotMaxBytes, screenshotMaxHeightPx, screenshotReturnDataUri,
+    visionEnabled, artifactsDir, saveArtifacts, saveArtifactsOnEmpty } = cfg;
   let puppeteer;
   try {
     ({ default: puppeteer } = await import('puppeteer'));
@@ -257,6 +476,41 @@ async function tryPuppeteer(url, cfg) {
       }
       browser = await puppeteer.launch(launchOpts);
       const page = await browser.newPage();
+
+      const debug = {
+        url,
+        attempt,
+        finalUrl: null,
+        documentTitle: null,
+        mainResponse: null,
+        requestFailed: [],
+        requestAborted: [],
+        pageErrors: [],
+        console: [],
+      };
+
+      const pushLimited = (arr, item, max = 50) => {
+        if (!Array.isArray(arr)) return;
+        if (arr.length >= max) return;
+        arr.push(item);
+      };
+
+      page.on('pageerror', (e) => pushLimited(debug.pageErrors, String(e?.message || e)));
+      page.on('console', (msg) => {
+        try {
+          pushLimited(debug.console, { type: msg.type?.(), text: msg.text?.() });
+        } catch {}
+      });
+      page.on('requestfailed', (req) => {
+        try {
+          pushLimited(debug.requestFailed, {
+            url: sanitizeDebugUrl(req.url?.() || ''),
+            type: req.resourceType?.(),
+            errorText: req.failure?.()?.errorText || 'unknown'
+          });
+        } catch {}
+      });
+
       await page.setViewport({ width: viewportWidth, height: viewportHeight });
       try {
         await page.setUserAgent({ userAgent: ua, userAgentMetadata: uaMetadata, platform: uaPlatform });
@@ -274,13 +528,44 @@ async function tryPuppeteer(url, cfg) {
       page.on('request', (req) => {
         const rt = req.resourceType();
         const u = req.url();
-        const blockedByType = blockTypes.has(rt);
+        let blockedByType = blockTypes.has(rt);
+        // When screenshot/vision is enabled, blocking stylesheets commonly yields blank/skeleton screenshots.
+        if ((screenshotEnabled || visionEnabled) && rt === 'stylesheet') blockedByType = false;
+        // When vision is enabled, allow images/fonts so the screenshot is visually meaningful.
+        if (visionEnabled && (rt === 'image' || rt === 'font')) blockedByType = false;
         const blockedByPattern = blockUrlPatterns.some((s) => s && u.includes(s));
-        if (blockedByType || blockedByPattern || /analytics|tracking|ads/i.test(u)) req.abort();
-        else req.continue();
+        const blockedByAds = /analytics|tracking|ads/i.test(u);
+        if (blockedByType || blockedByPattern || blockedByAds) {
+          try {
+            pushLimited(debug.requestAborted, {
+              url: sanitizeDebugUrl(u || ''),
+              type: rt,
+              reason: blockedByType ? 'type' : (blockedByPattern ? 'pattern' : 'ads'),
+            });
+          } catch {}
+          req.abort();
+        } else {
+          req.continue();
+        }
       });
 
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+      const mainResp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+      try {
+        debug.finalUrl = page.url();
+      } catch {}
+      try {
+        debug.documentTitle = await page.title();
+      } catch {}
+      try {
+        if (mainResp) {
+          debug.mainResponse = {
+            url: mainResp.url?.(),
+            status: mainResp.status?.(),
+            statusText: mainResp.statusText?.(),
+            headers: mainResp.headers?.(),
+          };
+        }
+      } catch {}
       try { await page.waitForFunction(() => document.readyState === 'complete', { timeout: Math.min(timeout, 10000) }); } catch {}
 
       const start = Date.now();
@@ -303,17 +588,126 @@ async function tryPuppeteer(url, cfg) {
         try { await page.waitForFunction(readyExpression, { timeout: Math.min(8000, remain()) }); } catch {}
       }
 
+      // Optional screenshot (after waits, before extraction)
+      let screenshot = null;
+      let screenshotBuf = null;
+      let screenshotExt = '.png';
+      if (screenshotEnabled) {
+        try {
+          const type = (screenshotType === 'jpeg' || screenshotType === 'jpg') ? 'jpeg' : (screenshotType === 'webp' ? 'webp' : 'png');
+          screenshotExt = type === 'jpeg' ? '.jpg' : (type === 'webp' ? '.webp' : '.png');
+          // Prefer fullPage for vision OCR when possible; will be guarded by max height and fallback.
+          let useFullPage = !!screenshotFullPage || !!visionEnabled;
+          if (useFullPage && Number.isFinite(screenshotMaxHeightPx) && screenshotMaxHeightPx > 0) {
+            try {
+              const h = await page.evaluate(() => {
+                const de = document.documentElement;
+                const b = document.body;
+                return Math.max(de?.scrollHeight || 0, b?.scrollHeight || 0, de?.offsetHeight || 0, b?.offsetHeight || 0);
+              });
+              if (Number.isFinite(Number(h)) && Number(h) > screenshotMaxHeightPx) {
+                useFullPage = false;
+                logger.debug?.('web_parser:screenshot_fullpage_skip_too_tall', { url, heightPx: Number(h), maxHeightPx: screenshotMaxHeightPx });
+              }
+            } catch {}
+          }
+
+          if (!useFullPage) {
+            try {
+              await page.evaluate(() => window.scrollTo(0, 0));
+              await sleep(200);
+            } catch {}
+          }
+
+          let shot;
+          try {
+            shot = await page.screenshot({
+              fullPage: useFullPage,
+              type,
+              quality: (type === 'jpeg' || type === 'webp') ? Math.min(100, Math.max(1, Number(screenshotQuality) || 80)) : undefined,
+              captureBeyondViewport: true,
+            });
+          } catch (e) {
+            const msg = String(e?.message || e);
+            if (useFullPage && /Page is too large/i.test(msg)) {
+              logger.warn?.('web_parser:screenshot_fullpage_too_large_fallback', { url, error: msg });
+              try {
+                await page.evaluate(() => window.scrollTo(0, 0));
+                await sleep(200);
+              } catch {}
+              shot = await page.screenshot({
+                fullPage: false,
+                type,
+                quality: (type === 'jpeg' || type === 'webp') ? Math.min(100, Math.max(1, Number(screenshotQuality) || 80)) : undefined,
+                captureBeyondViewport: true,
+              });
+            } else {
+              throw e;
+            }
+          }
+          const buf = Buffer.from(shot);
+          screenshotBuf = buf;
+          if (buf.length <= screenshotMaxBytes) {
+            const shouldKeepDataUri = screenshotReturnDataUri || visionEnabled;
+            screenshot = {
+              mime: `image/${type}`,
+              bytes: buf.length,
+              dataUri: shouldKeepDataUri ? bufferToDataUri(buf, `image/${type}`) : null,
+            };
+          } else {
+            screenshot = { mime: `image/${type}`, bytes: buf.length, dataUri: null, skipped: true, reason: `screenshot too large (${buf.length} > ${screenshotMaxBytes})` };
+          }
+        } catch (e) {
+          logger.warn?.('web_parser:screenshot_failed', { url, error: String(e?.message || e) });
+        }
+      }
+
       const html = await page.content();
-      let { title, text, metadata } = await extractSmart(html);
+      let { title, text, metadata } = await extractSmart(html, { enableReadability, readabilityMaxHtmlBytes });
       // If low-quality content, try one more scroll and stability wait within remaining time
       if ((text.length < minGoodLen || hasLoadingPhrases(text, loadingPatterns)) && remain() > 0) {
         await scrollToBottom(page, { steps: Math.ceil(scrollSteps / 2), stepPx: scrollStepPx, delayMs: scrollDelayMs });
         if (remain() > 0) await waitDomStable(page, { sampleMs: domStableSampleMs, stableSamples: domStableSamples, timeout: Math.min(8000, remain()) });
         const html2 = await page.content();
-        const ex2 = await extractSmart(html2);
+        const ex2 = await extractSmart(html2, { enableReadability, readabilityMaxHtmlBytes });
         if (ex2 && (ex2.text || '').length >= text.length) ({ title, text, metadata } = ex2);
       }
-      return { method: 'puppeteer', title, text, metadata };
+      const finalTitle = String(title || debug.documentTitle || '').trim();
+      if (!finalTitle && debug.documentTitle) debug.documentTitle = String(debug.documentTitle);
+
+      const empty = !finalTitle && !String(text || '').trim();
+      const suspectScreenshot = screenshotEnabled && (!screenshotBuf || screenshotBuf.length < 12000);
+      let artifacts = null;
+      if ((saveArtifacts || (saveArtifactsOnEmpty && (empty || suspectScreenshot))) && (html || screenshotBuf || debug)) {
+        try {
+          const prefix = `web_parser_${safeSlug(debug.finalUrl || url)}`;
+          artifacts = await saveWebParserArtifacts({
+            baseDir: artifactsDir,
+            prefix,
+            html,
+            screenshotBuf,
+            screenshotExt,
+            debug
+          });
+        } catch (e) {
+          logger.warn?.('web_parser:save_artifacts_failed', { url, error: String(e?.message || e) });
+        }
+      }
+
+      return {
+        method: 'puppeteer',
+        title: finalTitle,
+        text,
+        metadata,
+        screenshot,
+        artifacts,
+        debug: {
+          finalUrl: debug.finalUrl,
+          mainResponse: debug.mainResponse,
+          requestFailed: debug.requestFailed,
+          requestAborted: debug.requestAborted,
+        }
+      };
     } catch (e) {
       lastErr = e;
       logger.warn?.('web_parser:puppeteer attempt failed', { attempt, error: String(e?.message || e) });
@@ -330,7 +724,17 @@ async function tryPuppeteer(url, cfg) {
 
 export default async function webParserHandler(args, options = {}) {
   const url = processUrl(args?.url);
-  if (!url) return { success: false, code: 'INVALID_URL', error: 'URL格式无效' };
+  if (!url) return { success: false, code: 'INVALID_URL', error: 'URL格式无效', advice: buildAdvice('INVALID_URL') };
+
+  const prompt = String(args?.prompt || '').trim();
+  if (!prompt) {
+    return {
+      success: false,
+      code: 'MISSING_PROMPT',
+      error: 'prompt 为必填参数：请说明你希望从该网页获取什么/解决什么问题',
+      advice: buildAdvice('ERR', { url })
+    };
+  }
 
   const penv = options.pluginEnv || {};
   // Derive an overall plugin budget from executor or plugin env, then allocate sub-budgets
@@ -347,25 +751,26 @@ export default async function webParserHandler(args, options = {}) {
   }
   logger.debug?.('web_parser:budget', { pluginBudgetMs, navTimeout: cfg.timeout, maxTotalWaitMs: cfg.maxTotalWaitMs, maxRetries: cfg.maxRetries });
 
-  // Try puppeteer first if enabled; if result质量不佳则尝试axios并择优
   let result = null;
   let errorPuppeteer = null;
-  let pRes = null;
-  if (cfg.enableJS) {
-    try { pRes = await tryPuppeteer(url, cfg); } catch (e) { errorPuppeteer = e; }
+  try {
+    result = await tryPuppeteer(url, cfg);
+  } catch (e) {
+    errorPuppeteer = e;
   }
-  let aRes = null;
-  if (pRes && (pRes.text || '').length >= cfg.minGoodLen) {
-    result = pRes;
-  } else {
-    try { aRes = await tryAxios(url, cfg); } catch (e) { aRes = null; }
-    if (pRes && aRes) {
-      result = (pRes.text || '').length >= (aRes.text || '').length ? pRes : aRes;
-    } else {
-      result = pRes || aRes; // 可能为 null，交由下方错误处理
-    }
+
+  if (!result) {
+    const err = errorPuppeteer || new Error('无法获取页面');
+    const isTimeout = isTimeoutError(err);
+    const msg = String(err?.message || err);
+    const blocked = /403|forbidden|denied|captcha|cloudflare/i.test(msg);
+    return {
+      success: false,
+      code: isTimeout ? 'TIMEOUT' : (blocked ? 'BLOCKED' : 'FETCH_FAILED'),
+      error: msg,
+      advice: buildAdvice(isTimeout ? 'TIMEOUT' : (blocked ? 'BLOCKED' : 'ERR'), { url }),
+    };
   }
-  if (!result) throw new Error(errorPuppeteer ? `puppeteer失败且axios也失败: ${String(errorPuppeteer)}` : '无法获取页面');
 
   // Truncate text by maxBytes (char-based)
   let text = result.text || '';
@@ -373,12 +778,59 @@ export default async function webParserHandler(args, options = {}) {
     text = text.slice(0, cfg.maxBytes) + `\n...[截断 ${text.length - cfg.maxBytes} 字符]`;
   }
 
+  let visionText = '';
+  let vision = { success: false, code: 'DISABLED', error: 'WEB_PARSER_VISION 未启用' };
+  if (result.method === 'puppeteer' && cfg.visionEnabled) {
+    if (!cfg.visionApiKey) {
+      vision = { success: false, code: 'NO_VISION_CONFIG', error: '未配置 vision API Key（请设置 WEB_PARSER_VISION_API_KEY / VISION_API_KEY 或全局 llm.apiKey）' };
+    } else {
+      const shotUri = result?.screenshot?.dataUri;
+      if (!shotUri) {
+        vision = { success: false, code: 'NO_SCREENSHOT', error: '未获取到可用截图（可能过大或截图失败）' };
+      } else {
+        try {
+          const v = await runVisionOnScreenshot({
+            dataUri: shotUri,
+            prompt,
+            model: cfg.visionModel,
+            apiKey: cfg.visionApiKey,
+            baseURL: cfg.visionBaseURL,
+            maxTokens: cfg.visionMaxTokens,
+          });
+          visionText = v;
+          if (!String(v || '').trim()) {
+            vision = { success: false, code: 'EMPTY', model: cfg.visionModel, error: 'vision 返回为空字符串' };
+          } else {
+            vision = { success: true, model: cfg.visionModel, text_length: v.length };
+          }
+        } catch (e) {
+          const isTimeout = isTimeoutError(e);
+          const msg = String(e?.message || e);
+          vision = { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: msg };
+          logger.warn?.('web_parser:vision_failed', { url, error: msg });
+        }
+      }
+    }
+  }
+
+  const screenshot = result?.screenshot
+    ? {
+        ...result.screenshot,
+        dataUri: cfg.screenshotReturnDataUri ? result.screenshot.dataUri : null,
+      }
+    : null;
+
   const data = {
     url,
     method: result.method,
     title: result.title,
     text,
+    visionText,
     metadata: result.metadata,
+    screenshot,
+    vision,
+    artifacts: result.artifacts || null,
+    debug: result.debug || null,
     puppeteerError: errorPuppeteer ? String(errorPuppeteer.message || errorPuppeteer) : undefined,
   };
 

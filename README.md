@@ -61,25 +61,20 @@ Sentra Agent 是一个为生产环境设计的 AI Agent 框架。我们理解构
 
 ### 安装前置依赖
 
-#### 一键安装脚本（推荐，Windows / Linux）
+#### 一键安装脚本（Windows）
 
-我们提供了跨平台的前置依赖检测脚本，会自动按需安装/跳过以下组件：Git、Node.js 18+、Python 3.10+、Redis、PM2（可选 Neo4j）。
+我们提供了 Windows 的前置依赖安装脚本，默认只安装打开 WebUI 所需的关键依赖：Node.js（>=18）、pnpm，并自动安装 `sentra-config-ui` 的依赖（检测到 `pnpm-lock.yaml` 时使用 `--frozen-lockfile`）。脚本仅负责安装，不会启动任何服务。
 
 - **Windows**：
   ```powershell
-  scripts\install-prereqs.bat
+  powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
   ```
-  - 优先调用 `winget`（或已安装的 `choco`），未检测到包管理器会提示手动安装。
-  - 若系统未安装 Node.js 18+，脚本会自动下载临时 Node（默认 v20.18.0）到 `.cache/node-bootstrap`，也可设置 `NODE_VERSION` 指定版本。
-  - 如需使用现有 Node，可在运行前设置 `set NODE_BIN="C:\Program Files\nodejs\node.exe"`。
-
-- **Linux**（macOS 亦可使用） ：
-  ```bash
-  chmod +x scripts/install-prereqs.sh
-  NODE_BIN=node ./scripts/install-prereqs.sh
-  ```
-  - 自动识别 `apt` / `dnf` / `yum` / `pacman`，执行必要的 `sudo` 安装命令。
-  - 若系统无可用 Node ≥ 18，将自动下载指定版本（默认 v20.18.0）到 `.cache/node-bootstrap`。可通过 `NODE_VERSION` 覆盖版本号，或显式设置 `NODE_BIN=/opt/node/bin/node`。
+  - 默认安装：Node.js（优先 winget，失败则使用便携版下载到 `.cache/node-bootstrap`）、pnpm、`sentra-config-ui` 依赖。
+  - 可选安装：仓库根目录依赖（用于后续启动主服务）
+    - `powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -InstallRootDeps`
+  - Redis（Windows 官方推荐路线：Memurai / WSL2 / Docker）
+    - `powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Redis wsl2`
+    - `powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Redis docker`
 
 - 已安装会直接跳过，失败时会给出手动指引。
 

@@ -111,12 +111,9 @@ function validateResponseFormat(response, expectedOutput = 'sentra_response') {
 
   // Special-case: When we EXPECT <sentra-response> but the model outputs ONLY <sentra-tools>,
   // allow the upper layer to decide how to handle it (fallback/restart) in normal mode.
-  // In strict no-tools mode, pure <sentra-tools> is always invalid.
+  // Tool-only output is treated as a control signal and is bubbled to the upper layer.
   const toolsOnlyXml = extractOnlySentraToolsBlock(response);
   if (toolsOnlyXml) {
-    if (expected === 'sentra_response_no_tools') {
-      return { valid: false, reason: '本轮禁止输出 <sentra-tools>：请直接输出 <sentra-response>' };
-    }
     return { valid: true, toolsOnly: true, rawToolsXml: toolsOnlyXml };
   }
 

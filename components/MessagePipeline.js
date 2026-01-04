@@ -113,6 +113,69 @@ function normalizeAssistantContentForHistory(raw) {
   }
 }
 
+async function forceGenerateSentraResponse({
+  chatWithRetry,
+  conversations,
+  model,
+  groupId,
+  msg,
+  toolsXml,
+  mode,
+  phase
+}) {
+  const fallback = '<sentra-response></sentra-response>';
+
+  const normalizedToolsXml = String(toolsXml || '').trim();
+  const safePhase = String(phase || '').trim();
+  const safeMode = mode === 'limit' ? 'limit' : 'promise';
+
+  const sys = [
+    '<sentra-root-directive>',
+    `  <id>tools_only_bridge_${safeMode}_v1</id>`,
+    '  <type>tools_only_bridge</type>',
+    '  <scope>single_turn</scope>',
+    safeMode === 'limit'
+      ? `  <objective>你刚刚输出了纯 <sentra-tools>，但系统已达到工具调用上限，无法继续执行。你必须给用户一个可见的回复：说明你无法继续推进的原因，并给出用户下一步可提供的信息或替代方案。</objective>`
+      : `  <objective>你刚刚输出了纯 <sentra-tools>。请把它当作“你接下来准备做的事”的承诺，并给用户一个自然的过渡回复：告诉用户你将要做什么、需要一点时间/需要进一步信息，但不要暴露工具细节。</objective>`,
+    (safePhase ? `  <phase>${safePhase}</phase>` : null),
+    (normalizedToolsXml
+      ? '  <tools_commitment><![CDATA['
+      : null),
+    (normalizedToolsXml ? normalizedToolsXml : null),
+    (normalizedToolsXml ? '  ]]></tools_commitment>' : null),
+    `  <constraints>`,
+    `    <item>你必须且只能输出一个顶层块：<sentra-response>...</sentra-response>，除此之外不能输出任何内容。</item>`,
+    safeMode === 'limit'
+      ? `    <item>必须包含至少一个 <text1>。语气要像正常聊天：解释你为什么现在不能继续推进，并给出用户下一步可以怎么做。</item>`
+      : `    <item>必须包含至少一个 <text1>。语气要像正常聊天：把工具请求转写成“你接下来准备做的事情/你将要尝试的动作”，给用户一个承上启下的反馈。</item>`,
+    `    <item>严禁输出 <sentra-tools>。</item>`,
+    `  </constraints>`,
+    '</sentra-root-directive>'
+  ].filter(Boolean).join('\n');
+
+  try {
+    if (typeof chatWithRetry !== 'function') return ensureSentraResponseHasTarget(fallback, msg);
+    const baseConv = Array.isArray(conversations) ? conversations : [];
+    const opts = {
+      __sentraExpectedOutput: 'sentra_response'
+    };
+    if (model) {
+      opts.model = model;
+    }
+    const forceResult = await chatWithRetry(
+      [...baseConv, { role: 'system', content: sys }],
+      opts,
+      groupId
+    );
+
+    if (forceResult && forceResult.success && forceResult.response && !forceResult.toolsOnly) {
+      return ensureSentraResponseHasTarget(forceResult.response, msg);
+    }
+  } catch {}
+
+  return ensureSentraResponseHasTarget(fallback, msg);
+}
+
 function normalizeResourceKeys(resources) {
   if (!Array.isArray(resources) || resources.length === 0) return [];
   const keys = [];
@@ -142,45 +205,35 @@ function buildRewriteRootDirectiveXml(previousResponseXml, candidateResponseXml)
   const safePrev = (previousResponseXml || '').trim();
   const safeCand = (candidateResponseXml || '').trim();
 
-  const lines = [];
-  lines.push('<sentra-root-directive>');
-  lines.push('  <id>rewrite_response_v1</id>');
-  lines.push('  <type>rewrite</type>');
-  lines.push('  <scope>conversation</scope>');
-  lines.push(
-    '  <objective>在保持事实、数字和结论不变的前提下，对 candidate_response 中的 `<sentra-response>` 做自然语言改写，避免与 original_response 在句子和段落上高度相似。使用不同的句式、结构和过渡，让回复看起来是一次新的表达，而不是简单复读。</objective>'
-  );
-  lines.push('  <allow_tools>false</allow_tools>');
-  lines.push('  <original_response>');
-  lines.push('    <![CDATA[');
-  if (safePrev) {
-    lines.push(safePrev);
-  }
-  lines.push('    ]]>');
-  lines.push('  </original_response>');
-  lines.push('  <candidate_response>');
-  lines.push('    <![CDATA[');
-  if (safeCand) {
-    lines.push(safeCand);
-  }
-  lines.push('    ]]>');
-  lines.push('  </candidate_response>');
-  lines.push('  <constraints>');
-  lines.push(
-    '    <item>严格保持事实、数值、时间、地点等信息不变，只改变表达方式、句子结构和组织顺序。</item>'
-  );
-  lines.push(
-    '    <item>你必须只输出一个改写后的 `<sentra-response>`，不要在最终答案中重复输出 original_response 或 candidate_response。</item>'
-  );
-  lines.push(
-    '    <item>避免大段原文复制粘贴，避免仅做单词级的微小同义替换，要通过重组段落、调整描述顺序、使用新的过渡语等方式，真正降低与原回复的文字相似度。</item>'
-  );
-  lines.push(
-    '    <item>保持语言风格和礼貌程度与原回复一致，不要加入与当前对话无关的新事实。</item>'
-  );
-  lines.push('  </constraints>');
-  lines.push('</sentra-root-directive>');
-  return lines.join('\n');
+  const wrapCdata = (text) => String(text || '').replace(/]]>/g, ']]]]><![CDATA[>');
+  const prevBlock = safePrev ? wrapCdata(safePrev) : '';
+  const candBlock = safeCand ? wrapCdata(safeCand) : '';
+
+  return [
+    '<sentra-root-directive>',
+    '  <id>rewrite_response_v2</id>',
+    '  <type>rewrite</type>',
+    '  <scope>single_turn</scope>',
+    '  <phase>ReplyRewrite</phase>',
+    '  <objective>你的当前目标是：把 candidate_response 中的 `<sentra-response>` 改写成一条新的、自然的用户可见回复。在保持事实、数字、结论完全一致的前提下，显著降低与 original_response 的句子与段落相似度（通过重组结构、调整信息顺序、改写句式与过渡语来完成），避免“复读”。</objective>',
+    '  <allow_tools>false</allow_tools>',
+    '  <original_response><![CDATA[',
+    prevBlock,
+    '  ]]></original_response>',
+    '  <candidate_response><![CDATA[',
+    candBlock,
+    '  ]]></candidate_response>',
+    '  <constraints>',
+    '    <item>你必须且只能输出一个顶层块：<sentra-response>...</sentra-response>；除此之外不要输出任何字符、解释、前后缀。</item>',
+    '    <item>最终输出的 `<sentra-response>` 必须包含至少一个非空的 `<text1>`。</item>',
+    '    <item>严禁输出 `<sentra-tools>`（本阶段不允许调用工具）。</item>',
+    '    <item>严禁在最终答案中重复输出 original_response 或 candidate_response 的原文块（不要引用/粘贴它们）。</item>',
+    '    <item>严格保持事实、数值、时间、地点、结论不变；不要加入与当前对话无关的新事实，也不要扩大/缩小原意。</item>',
+    '    <item>不要大段复制粘贴；不要仅做同义词替换。必须通过段落重组、信息顺序调整、句式改写与新的过渡表达来降低相似度。</item>',
+    '    <item>保持语言风格、礼貌程度与 candidate_response 一致；如 candidate_response 含有 `<resources>` / `<send>` 等结构，请保持其语义一致且格式有效。</item>',
+    '  </constraints>',
+    '</sentra-root-directive>'
+  ].join('\n');
 }
 
 export async function handleOneMessageCore(ctx, msg, taskId) {
@@ -583,7 +636,11 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
           { role: 'user', content: rootXml }
         ];
 
-        const rewriteResult = await chatWithRetry(convForRewrite, MAIN_AI_MODEL, groupId);
+        const rewriteResult = await chatWithRetry(
+          convForRewrite,
+          { model: MAIN_AI_MODEL, __sentraExpectedOutput: 'sentra_response' },
+          groupId
+        );
         if (!rewriteResult || !rewriteResult.success || !rewriteResult.response) {
           logger.warn('ReplyRewrite: 重写调用失败，将回退使用原始回复', {
             reason: rewriteResult?.reason || 'unknown'
@@ -888,29 +945,82 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
               logger.warn(
                 `toolsOnly回退已使用过，本轮仍收到纯 <sentra-tools>，将放弃回退: ${groupId}`
               );
-              if (pairId) {
-                try {
-                  const toolsXmlForHistory = normalizeAssistantContentForHistory(result.rawToolsXml);
-                  await historyManager.appendToAssistantMessage(groupId, toolsXmlForHistory, pairId);
-                  const saved = await historyManager.finishConversationPair(groupId, pairId, null);
-                  if (saved) {
-                    const chatType = msg?.group_id ? 'group' : 'private';
-                    const userIdForMemory = userid || '';
-                    triggerContextSummarizationIfNeeded({ groupId, chatType, userId: userIdForMemory }).catch(
-                      (e) => {
-                        logger.debug(`ContextMemory: 异步摘要触发失败 ${groupId}`, { err: String(e) });
-                      }
-                    );
-                  }
-                } catch {}
-                pairId = null;
-              }
+              try {
+                const forced = await forceGenerateSentraResponse({
+                  chatWithRetry,
+                  conversations,
+                  model: MAIN_AI_MODEL,
+                  groupId,
+                  msg,
+                  toolsXml: result.rawToolsXml,
+                  mode: 'limit',
+                  phase: 'Judge'
+                });
+
+                if (pairId) {
+                  const forcedForHistory = normalizeAssistantContentForHistory(forced);
+                  await historyManager.appendToAssistantMessage(groupId, forcedForHistory, pairId);
+                }
+
+                const latestSenderMessages = getAllSenderMessages();
+                const finalMsg = latestSenderMessages[latestSenderMessages.length - 1] || msg;
+                const swallow = shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTask);
+                if (!swallow) {
+                  try {
+                    const parsedForced = parseSentraResponse(forced);
+                    if (parsedForced && !parsedForced.shouldSkip) {
+                      await smartSend(finalMsg, forced, sendAndWaitWithConv, true, { hasTool: false });
+                      hasReplied = true;
+                      markReplySentForConversation(conversationId);
+                    }
+                  } catch {}
+                }
+              } catch {}
+
+              try {
+                if (pairId) {
+                  await historyManager.finishConversationPair(groupId, pairId, null);
+                }
+              } catch {}
+              pairId = null;
               return;
             }
 
             if (msg) {
               msg._toolsOnlyFallbackUsed = true;
             }
+
+            try {
+              const promised = await forceGenerateSentraResponse({
+                chatWithRetry,
+                conversations,
+                model: MAIN_AI_MODEL,
+                groupId,
+                msg,
+                toolsXml: result.rawToolsXml,
+                mode: 'promise',
+                phase: 'Judge'
+              });
+
+              if (pairId) {
+                const promisedForHistory = normalizeAssistantContentForHistory(promised);
+                await historyManager.appendToAssistantMessage(groupId, promisedForHistory, pairId);
+              }
+
+              const latestSenderMessages = getAllSenderMessages();
+              const finalMsg = latestSenderMessages[latestSenderMessages.length - 1] || msg;
+              const swallow = shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTask);
+              if (!swallow) {
+                try {
+                  const parsedPromised = parseSentraResponse(promised);
+                  if (parsedPromised && !parsedPromised.shouldSkip) {
+                    await smartSend(finalMsg, promised, sendAndWaitWithConv, true, { hasTool: false });
+                    hasReplied = true;
+                    markReplySentForConversation(conversationId);
+                  }
+                } catch {}
+              }
+            } catch {}
 
             restartObjective = convertToolsXmlToObjective(result.rawToolsXml);
             restartMcp = !!restartObjective;
@@ -925,12 +1035,12 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
             }
             currentRunId = null;
 
-            if (pairId) {
-              try {
-                await historyManager.cancelConversationPairById(groupId, pairId);
-              } catch {}
-              pairId = null;
-            }
+            try {
+              if (pairId) {
+                await historyManager.finishConversationPair(groupId, pairId, null);
+              }
+            } catch {}
+            pairId = null;
 
             if (restartMcp) {
               logger.info(`toolsOnly→objective 回退触发: ${groupId} 将重跑 MCP (attempt=${streamAttempt + 2})`);
@@ -1241,7 +1351,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
 
           const scheduleResult = await chatWithRetry(
             convForSchedule,
-            { model: MAIN_AI_MODEL, __sentraExpectedOutput: 'sentra_response_no_tools' },
+            { model: MAIN_AI_MODEL, __sentraExpectedOutput: 'sentra_response' },
             groupId
           );
 
@@ -1266,22 +1376,28 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
                 `toolsOnly回退已使用过(ScheduleProgress)，本轮仍收到纯 <sentra-tools>，将仅记录不发送: ${groupId}`
               );
               try {
-                const toolsXmlForHistory = normalizeAssistantContentForHistory(scheduleResult.rawToolsXml);
-                await historyManager.appendToAssistantMessage(groupId, toolsXmlForHistory, progressPairId);
-                const savedProgress = await historyManager.finishConversationPair(groupId, progressPairId, null);
-                if (!savedProgress) {
-                  logger.warn(
-                    `保存进度对话对失败(toolsOnly记录): ${groupId} pairId ${String(progressPairId).substring(0, 8)}`
-                  );
-                } else {
-                  const chatType = msg?.group_id ? 'group' : 'private';
-                  const userIdForMemory = userid || '';
-                  triggerContextSummarizationIfNeeded({ groupId, chatType, userId: userIdForMemory }).catch(
-                    (e) => {
-                      logger.debug(`ContextMemory: 异步摘要触发失败 ${groupId}`, { err: String(e) });
-                    }
-                  );
-                }
+                const forced = await forceGenerateSentraResponse({
+                  chatWithRetry,
+                  conversations: convForSchedule,
+                  model: MAIN_AI_MODEL,
+                  groupId,
+                  msg,
+                  toolsXml: scheduleResult.rawToolsXml,
+                  mode: 'limit',
+                  phase: 'ScheduleProgress'
+                });
+
+                const forcedForHistory = normalizeAssistantContentForHistory(forced);
+                await historyManager.appendToAssistantMessage(groupId, forcedForHistory, progressPairId);
+                await historyManager.finishConversationPair(groupId, progressPairId, null);
+
+                try {
+                  const parsedForced = parseSentraResponse(forced);
+                  if (parsedForced && !parsedForced.shouldSkip) {
+                    await smartSend(msg, forced, sendAndWaitWithConv, true, { hasTool: true });
+                    hasReplied = true;
+                  }
+                } catch {}
               } catch {}
               continue;
             }
@@ -1289,6 +1405,31 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
             if (msg) {
               msg._toolsOnlyFallbackUsed = true;
             }
+
+            try {
+              const promised = await forceGenerateSentraResponse({
+                chatWithRetry,
+                conversations: convForSchedule,
+                model: MAIN_AI_MODEL,
+                groupId,
+                msg,
+                toolsXml: scheduleResult.rawToolsXml,
+                mode: 'promise',
+                phase: 'ScheduleProgress'
+              });
+
+              const promisedForHistory = normalizeAssistantContentForHistory(promised);
+              await historyManager.appendToAssistantMessage(groupId, promisedForHistory, progressPairId);
+              await historyManager.finishConversationPair(groupId, progressPairId, null);
+
+              try {
+                const parsedPromised = parseSentraResponse(promised);
+                if (parsedPromised && !parsedPromised.shouldSkip) {
+                  await smartSend(msg, promised, sendAndWaitWithConv, true, { hasTool: true });
+                  hasReplied = true;
+                }
+              } catch {}
+            } catch {}
 
             restartObjective = convertToolsXmlToObjective(scheduleResult.rawToolsXml);
             restartMcp = !!restartObjective;
@@ -1302,10 +1443,6 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
               } catch {}
             }
             currentRunId = null;
-
-            try {
-              await historyManager.cancelConversationPairById(groupId, progressPairId);
-            } catch {}
 
             if (restartMcp) {
               logger.info(
@@ -1519,7 +1656,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
 
               const result = await chatWithRetry(
                 convForFinal,
-                { model: MAIN_AI_MODEL, __sentraExpectedOutput: 'sentra_response_no_tools' },
+                { model: MAIN_AI_MODEL, __sentraExpectedOutput: 'sentra_response' },
                 groupId
               );
               if (result && result.success && result.toolsOnly && result.rawToolsXml) {
@@ -1528,25 +1665,67 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
                     `toolsOnly回退已使用过(ToolFinal)，本轮仍收到纯 <sentra-tools>，将放弃回退: ${groupId}`
                   );
                   try {
-                    const toolsXmlForHistory = normalizeAssistantContentForHistory(result.rawToolsXml);
-                    await historyManager.appendToAssistantMessage(groupId, toolsXmlForHistory, pairId);
-                    const saved = await historyManager.finishConversationPair(groupId, pairId, null);
-                    if (saved) {
-                      const chatType = msg?.group_id ? 'group' : 'private';
-                      const userIdForMemory = userid || '';
-                      triggerContextSummarizationIfNeeded({ groupId, chatType, userId: userIdForMemory }).catch(
-                        (e) => {
-                          logger.debug(`ContextMemory: 异步摘要触发失败 ${groupId}`, { err: String(e) });
-                        }
-                      );
-                    }
+                    const forced = await forceGenerateSentraResponse({
+                      chatWithRetry,
+                      conversations: convForFinal,
+                      model: MAIN_AI_MODEL,
+                      groupId,
+                      msg,
+                      toolsXml: result.rawToolsXml,
+                      mode: 'limit',
+                      phase: 'ToolFinal'
+                    });
+
+                    const forcedForHistory = normalizeAssistantContentForHistory(forced);
+                    await historyManager.appendToAssistantMessage(groupId, forcedForHistory, pairId);
+
+                    try {
+                      const parsedForced = parseSentraResponse(forced);
+                      if (parsedForced && !parsedForced.shouldSkip) {
+                        await smartSend(msg, forced, sendAndWaitWithConv, true, { hasTool: true });
+                        hasReplied = true;
+                      }
+                    } catch {}
+
+                    try {
+                      await historyManager.finishConversationPair(groupId, pairId, null);
+                    } catch {}
+                    pairId = null;
                   } catch {}
-                  pairId = null;
                   break;
                 } else {
                   if (msg) {
                     msg._toolsOnlyFallbackUsed = true;
                   }
+
+                  try {
+                    const promised = await forceGenerateSentraResponse({
+                      chatWithRetry,
+                      conversations: convForFinal,
+                      model: MAIN_AI_MODEL,
+                      groupId,
+                      msg,
+                      toolsXml: result.rawToolsXml,
+                      mode: 'promise',
+                      phase: 'ToolFinal'
+                    });
+
+                    const promisedForHistory = normalizeAssistantContentForHistory(promised);
+                    await historyManager.appendToAssistantMessage(groupId, promisedForHistory, pairId);
+
+                    try {
+                      const parsedPromised = parseSentraResponse(promised);
+                      if (parsedPromised && !parsedPromised.shouldSkip) {
+                        await smartSend(msg, promised, sendAndWaitWithConv, true, { hasTool: true });
+                        hasReplied = true;
+                      }
+                    } catch {}
+
+                    try {
+                      await historyManager.finishConversationPair(groupId, pairId, null);
+                    } catch {}
+                    pairId = null;
+                  } catch {}
 
                   restartObjective = convertToolsXmlToObjective(result.rawToolsXml);
                   restartMcp = !!restartObjective;
@@ -1554,10 +1733,6 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
                     logger.info(
                       `toolsOnly→objective 回退触发(ToolFinal): ${groupId} 将重跑 MCP (attempt=${streamAttempt + 2})`
                     );
-                    try {
-                      await historyManager.cancelConversationPairById(groupId, pairId);
-                    } catch {}
-                    pairId = null;
                     break;
                   }
                 }

@@ -1,6 +1,6 @@
 {
   "name": "web_parser",
-  "description": "智能网页解析（优先 Puppeteer，可回退 axios），返回标题、正文与元数据。支持每插件独立 .env 配置与超时。",
+  "description": "网页解析与视觉网页分析：渲染页面后提取标题/正文/元数据，并可对页面进行全屏截图 + 视觉模型读图（LLM）以补全 DOM 抽取缺失的内容（例如图文混排、截图文字、canvas/图表、被脚本渲染的片段、反爬导致的空 DOM 等）。",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -8,111 +8,9 @@
         "type": "string",
         "description": "要解析的网页 URL（可不带协议，会自动补全为 https://）"
       },
-      "use_js": {
-        "type": "boolean",
-        "description": "是否启用 JS 渲染（需要 puppeteer），默认取插件 .env 的 WEB_PARSER_ENABLE_JAVASCRIPT"
-      },
-      "waitSelector": {
+      "prompt": {
         "type": "string",
-        "description": "可选，等待该选择器出现后再提取内容（JS 渲染时有效）"
-      },
-      "maxBytes": {
-        "type": "integer",
-        "minimum": 1000,
-        "maximum": 2000000,
-        "default": 200000
-      },
-      "timeout": {
-        "type": "integer",
-        "minimum": 1000,
-        "maximum": 300000,
-        "description": "覆盖超时（毫秒），未提供则使用插件超时或全局超时"
-      },
-      "waitStrategy": {
-        "type": "string",
-        "enum": [
-          "auto",
-          "network_idle",
-          "scroll",
-          "dom_stable"
-        ],
-        "description": "等待策略（默认 auto）"
-      },
-      "maxTotalWaitMs": {
-        "type": "integer",
-        "minimum": 500,
-        "maximum": 60000,
-        "description": "最大等待总时长（ms）"
-      },
-      "networkIdleMs": {
-        "type": "integer",
-        "minimum": 100,
-        "maximum": 5000,
-        "description": "网络空闲判定空档（ms）"
-      },
-      "domStableSampleMs": {
-        "type": "integer",
-        "minimum": 100,
-        "maximum": 5000,
-        "description": "DOM 稳定采样间隔（ms）"
-      },
-      "domStableSamples": {
-        "type": "integer",
-        "minimum": 2,
-        "maximum": 20,
-        "description": "DOM 稳定需要的连续采样次数"
-      },
-      "scrollSteps": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 50,
-        "description": "向下滚动步数（触发懒加载）"
-      },
-      "scrollStepPx": {
-        "type": "integer",
-        "minimum": 100,
-        "maximum": 5000,
-        "description": "每步滚动像素"
-      },
-      "scrollDelayMs": {
-        "type": "integer",
-        "minimum": 10,
-        "maximum": 2000,
-        "description": "每步滚动延迟（ms）"
-      },
-      "loadingPatterns": {
-        "oneOf": [
-          {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          {
-            "type": "string"
-          }
-        ],
-        "description": "判定加载中的提示语（数组或逗号分隔字符串）"
-      },
-      "minGoodLen": {
-        "type": "integer",
-        "minimum": 50,
-        "maximum": 50000,
-        "description": "判定正文质量的最小长度阈值"
-      },
-      "blockTypes": {
-        "oneOf": [
-          {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          {
-            "type": "string"
-          }
-        ],
-        "description": "在渲染阶段要拦截的资源类型（例如 image,font,media,stylesheet 等）"
+        "description": "必填：你希望从该网页获取什么/解决什么问题（会优先用于视觉读图提示词）。建议包含目标、关注点与输出形式，例如：\"总结 README 的核心功能、安装步骤与关键配置\" / \"提取页面里的产品定价表\" / \"判断页面是否包含 UI 截图或品牌视觉元素\""
       },
       "schedule": {
         "type": "object",
@@ -143,7 +41,8 @@
       }
     },
     "required": [
-      "url"
+      "url",
+      "prompt"
     ],
     "additionalProperties": false
   },

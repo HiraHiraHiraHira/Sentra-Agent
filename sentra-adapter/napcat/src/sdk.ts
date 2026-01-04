@@ -9,7 +9,7 @@ import { onConfigChange } from './runtimeConfig';
 import { assertOk } from './ob11';
 import { extractReplyInfo, type ReplyInfo } from './utils/reply-parser';
 import { MessageStream, type FormattedMessage } from './stream';
-import { ensureLocalFile } from './utils/fileCache';
+import { ensureLocalFile, isLocalPath } from './utils/fileCache';
 
 export type SDKInit =
   | { adapter: NapcatAdapter | NapcatReverseAdapter }
@@ -360,7 +360,7 @@ export function createSDK(init?: SDKInit): SdkInvoke {
   fn.message = {
     recall: (message_id) => fn('delete_msg', { message_id }),
     get: (message_id) => fn('get_msg', { message_id }),
-    getForward: (id) => fn('get_forward_msg', { id }),
+    getForward: (message_id) => fn('get_forward_msg', { message_id }),
     getGroupHistory: (group_id, message_seq, count = 20) => 
       fn('get_group_msg_history', { group_id, message_seq, count }),
     getFriendHistory: (user_id, message_seq, count = 20) => 
@@ -573,63 +573,140 @@ export function createSDK(init?: SDKInit): SdkInvoke {
       let referred: any | undefined;
       let referredPlain = '';
 
-      const segsToPlain = (segs: any[]): string => {
+      const toMarkdownTarget = (target?: string): string => {
+        if (!target) return '';
+        const t = String(target);
+        if (isLocalPath(t)) {
+          const p = t.replace(/\\/g, '/');
+          if (p.startsWith('//')) {
+            return encodeURI(`file:${p}`);
+          }
+          if (/^[a-zA-Z]:\//.test(p)) {
+            return encodeURI(`file:///${p}`);
+          }
+          return encodeURI(p);
+        }
+        return t;
+      };
+
+      const formatFileSize = (size: string | number): string => {
+        const bytes = typeof size === 'string' ? parseInt(size, 10) : size;
+        if (!Number.isFinite(bytes)) return '未知大小';
+        if (bytes < 1024) return `${bytes}B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+        if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+        return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+      };
+
+      const renderSegmentsMarkdownInline = (segs: any[]): string => {
         if (!Array.isArray(segs)) return '';
         const parts: string[] = [];
         for (const s of segs) {
           if (!s || !s.type) continue;
-          if (s.type === 'text') parts.push(String(s.data?.text ?? ''));
-          else if (s.type === 'image') parts.push('[图片]');
-          else if (s.type === 'video') parts.push('[视频]');
-          else if (s.type === 'file') parts.push(`[文件${s.data?.name ? ':' + s.data.name : ''}]`);
-          else if (s.type === 'record') parts.push('[语音]');
-          else if (s.type === 'face') parts.push(`[表情${s.data?.id ? ':' + s.data.id : ''}]`);
-          else if (s.type === 'at') parts.push(s.data?.qq === 'all' ? '[@全体成员]' : `[@${s.data?.qq ?? ''}]`);
-          else if (s.type === 'json') {
-            const raw = s.data?.data ?? s.data?.content ?? s.data?.json ?? '';
+
+          if (s.type === 'text') {
+            const t = String(s.data?.text ?? '');
+            if (t) parts.push(t);
+            continue;
+          }
+
+          if (s.type === 'at') {
+            const qq = s.data?.qq;
+            if (qq === 'all') parts.push('@全体成员');
+            else if (qq) parts.push(`@${qq}`);
+            continue;
+          }
+
+          if (s.type === 'face') {
+            const text = s.data?.text;
+            const id = s.data?.id;
+            parts.push(text ? String(text) : `表情${id ?? ''}`);
+            continue;
+          }
+
+          if (s.type === 'image') {
+            let label: string | undefined = s.data?.summary && String(s.data.summary).trim();
+            if (label && label.startsWith('[') && label.endsWith(']')) {
+              label = label.substring(1, label.length - 1);
+            }
+            const filename = label || s.data?.file || '图片';
+            const target = toMarkdownTarget(s.data?.path || s.data?.cache_path) || toMarkdownTarget(s.data?.url);
+            parts.push(target ? `![${filename}](${target})` : `图片:${filename}`);
+            continue;
+          }
+
+          if (s.type === 'video') {
+            const filename = s.data?.file || '视频';
+            const target = toMarkdownTarget(s.data?.path) || toMarkdownTarget(s.data?.url);
+            parts.push(target ? `[视频: ${filename}](${target})` : `视频:${filename}`);
+            continue;
+          }
+
+          if (s.type === 'record') {
+            const filename = s.data?.file || '语音';
+            const target = toMarkdownTarget(s.data?.path) || toMarkdownTarget(s.data?.url);
+            parts.push(target ? `[语音: ${filename}](${target})` : `语音:${filename}`);
+            continue;
+          }
+
+          if (s.type === 'file') {
+            const filename = s.data?.file || s.data?.name || '文件';
+            const target = toMarkdownTarget(s.data?.path) || toMarkdownTarget(s.data?.url);
+            const size = s.data?.file_size ?? s.data?.size;
+            const sizeText = size !== undefined && size !== null ? ` (${formatFileSize(size)})` : '';
+            parts.push(target ? `[${filename}](${target})${sizeText}` : `文件:${filename}${sizeText}`);
+            continue;
+          }
+
+          if (s.type === 'share') {
+            const title = s.data?.title || s.data?.url || '分享链接';
+            const url = s.data?.url || '';
+            const content = s.data?.content;
+            const core = url ? `[${title}](${url})` : String(title);
+            parts.push(content ? `分享: ${core}（${String(content)}）` : `分享: ${core}`);
+            continue;
+          }
+
+          if (s.type === 'json' || s.type === 'app') {
+            const raw = s.data?.content ?? s.data?.data ?? s.data?.json ?? '';
+            let title = '';
+            let desc = '';
+            let url = '';
             try {
               const obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
-              const preview = obj?.prompt || obj?.desc || obj?.meta?.detail_1?.desc || obj?.meta?.news?.desc || obj?.view || obj?.title || '';
-              parts.push(preview || '[卡片]');
+              title = obj?.meta?.news?.title || obj?.meta?.detail_1?.title || obj?.prompt || obj?.meta?.title || obj?.title || '';
+              desc = obj?.meta?.news?.desc || obj?.meta?.detail_1?.desc || obj?.desc || obj?.meta?.desc || '';
+              url = obj?.meta?.news?.jumpUrl || obj?.meta?.detail_1?.qqdocurl || obj?.meta?.news?.url || obj?.url || '';
             } catch {
-              parts.push('[卡片]');
+              title = typeof raw === 'string' ? raw : '';
             }
+            const label = s.type === 'json' ? 'JSON卡片' : '应用卡片';
+            const core = url ? `[${title || '(无标题)'}](${url})` : (title || '(无标题)');
+            parts.push(desc ? `${label}: ${core}（${desc}）` : `${label}: ${core}`);
+            continue;
           }
-          else if (s.type === 'xml') {
+
+          if (s.type === 'xml') {
             const raw = s.data?.data ?? s.data?.xml ?? '';
-            if (typeof raw === 'string') {
-              const m = raw.match(/<title>([^<]{1,100})<\/title>/i);
-              parts.push(m?.[1] || '[卡片]');
-            } else {
-              parts.push('[卡片]');
-            }
+            const title = typeof raw === 'string' ? (raw.match(/<title>([^<]{1,100})<\/title>/i)?.[1] || raw) : '';
+            parts.push(`XML卡片: ${title || '(无标题)'}`);
+            continue;
           }
-          else if (s.type === 'share') {
-            const title = s.data?.title || s.data?.url || '';
-            parts.push(title ? `[分享]${title}` : '[分享链接]');
+
+          if (s.type === 'forward') {
+            const id = s.data?.id;
+            parts.push(id ? `转发消息(id=${id})` : '转发消息');
+            continue;
           }
-          else if (s.type === 'app') {
-          const raw = s.data?.content ?? s.data?.data ?? '';
-          let preview = '';
-          try {
-            const obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
-            // 尝试提取有意义的字段：标题或描述
-            const title = obj?.meta?.news?.title || obj?.meta?.detail_1?.title || obj?.prompt || obj?.meta?.title || obj?.title || '';
-            const desc = obj?.meta?.news?.desc || obj?.meta?.detail_1?.desc || obj?.desc || '';
-            preview = title || desc || '';
-          } catch {
-            preview = typeof raw === 'string' ? raw.slice(0, 100) : '';
-          }
-          parts.push(preview ? `[应用]${preview}` : '[应用卡片]');
+
+          parts.push(`[${String(s.type)}]`);
         }
-          else if (s.type === 'forward') parts.push('[转发消息]');
-          else parts.push(`[${String(s.type)}]`);
-        }
+
         return parts.join('');
       };
 
       let embeddedPlain = '';
-      if (reply?.message && Array.isArray(reply.message)) embeddedPlain = segsToPlain(reply.message);
+      if (reply?.message && Array.isArray(reply.message)) embeddedPlain = renderSegmentsMarkdownInline(reply.message);
       if (!embeddedPlain && reply?.raw_message) embeddedPlain = String(reply.raw_message);
 
       if (reply && reply.id) {
@@ -700,7 +777,7 @@ export function createSDK(init?: SDKInit): SdkInvoke {
       }
 
       if (referred && referred.message) {
-        referredPlain = segsToPlain(referred.message as any[]);
+        referredPlain = renderSegmentsMarkdownInline(referred.message as any[]);
       } else if (referred && referred.raw_message) {
         referredPlain = String(referred.raw_message);
       } else {
@@ -738,15 +815,15 @@ export function createSDK(init?: SDKInit): SdkInvoke {
                 // 尝试提取有意义的字段：prompt/desc/title/view 等
                 preview = obj?.prompt || obj?.desc || obj?.meta?.detail_1?.desc || obj?.meta?.news?.desc || obj?.view || obj?.title || '';
                 if (!preview && obj?.config?.type) preview = `类型: ${obj.config.type}`;
-                if (!preview) preview = typeof raw === 'string' ? raw.slice(0, 100) : JSON.stringify(raw).slice(0, 100);
+                if (!preview) preview = typeof raw === 'string' ? raw : JSON.stringify(raw);
               } catch {
-                preview = typeof raw === 'string' ? raw.slice(0, 100) : '';
+                preview = typeof raw === 'string' ? raw : '';
               }
               cards.push({ type: 'json', raw, preview });
             } else if (s.type === 'xml') {
               const raw = s.data?.data ?? s.data?.xml ?? '';
               const m = typeof raw === 'string' ? raw.match(/<title>([^<]{1,64})<\/title>/i) : null;
-              const preview = m?.[1] || (typeof raw === 'string' ? raw.slice(0, 300) : '');
+              const preview = m?.[1] || (typeof raw === 'string' ? raw : '');
               cards.push({ type: 'xml', raw, preview });
             } else if (s.type === 'share') {
               cards.push({ type: 'share', title: s.data?.title, url: s.data?.url, content: s.data?.content, image: s.data?.image, preview: s.data?.title || s.data?.url });
@@ -760,7 +837,7 @@ export function createSDK(init?: SDKInit): SdkInvoke {
                 url = obj?.meta?.news?.jumpUrl || obj?.meta?.detail_1?.qqdocurl || obj?.meta?.news?.url || obj?.url;
                 image = obj?.meta?.news?.preview || obj?.meta?.detail_1?.preview || obj?.meta?.preview || obj?.cover;
               } catch {}
-              const preview = title || (typeof raw === 'string' ? raw.slice(0, 300) : '');
+              const preview = title || (typeof raw === 'string' ? raw : '');
               cards.push({ type: 'app', title, url, image, content, raw, preview });
             }
           }
@@ -771,8 +848,7 @@ export function createSDK(init?: SDKInit): SdkInvoke {
       const media = referred?.message ? collectMedia(referred.message as any[]) : collectMedia(reply?.message as any[]);
 
       const enrichImages = async (items: any[]) => {
-        const limit = items.slice(0, 5);
-        const tasks = limit.map(async (img: any) => {
+        const tasks = items.map(async (img: any) => {
           try {
             const detail: any = await fn.data('get_image', { file: img.file || img.url });
             const localPath = await ensureLocalFile({
@@ -808,8 +884,7 @@ export function createSDK(init?: SDKInit): SdkInvoke {
       };
 
       const enrichRecords = async (items: any[]) => {
-        const limit = items.slice(0, 5);
-        const tasks = limit.map(async (rec: any) => {
+        const tasks = items.map(async (rec: any) => {
           try {
             const detail: any = await fn.data('get_record', { file: rec.file, out_format: 'mp3' });
             const localPath = await ensureLocalFile({
@@ -841,8 +916,7 @@ export function createSDK(init?: SDKInit): SdkInvoke {
       };
 
       const enrichFiles = async (items: any[], msgType?: string, targetId?: number) => {
-        const limit = items.slice(0, 5);
-        const tasks = limit.map(async (f: any) => {
+        const tasks = items.map(async (f: any) => {
           try {
             let detail: any;
             const fileId = f.file_id || f.id;
@@ -883,22 +957,30 @@ export function createSDK(init?: SDKInit): SdkInvoke {
       };
 
       const enrichForwards = async (items: any[]) => {
-        const limit = items.slice(0, 2);
-        const tasks = limit.map(async (fwd: any) => {
+        const tasks = items.map(async (fwd: any) => {
           try {
-            const detail: any = await fn.data('get_forward_msg', { id: fwd.id });
-            const nodes: any[] = (detail?.messages as any[]) || (detail?.data as any)?.messages || [];
+            const messageId = fwd.message_id ?? fwd.id;
+            const detail: any = await fn.data('get_forward_msg', { message_id: messageId, id: messageId });
+            const data = detail?.data ?? detail;
+            const nodes: any[] =
+              (detail?.messages as any[]) ||
+              (detail?.data as any)?.messages ||
+              (data as any)?.message ||
+              (data as any)?.messages ||
+              (data as any)?.data?.messages ||
+              (data as any)?.data?.message ||
+              [];
             const nodesCount = Array.isArray(nodes) ? nodes.length : 0;
             let preview: string[] = [];
             if (Array.isArray(nodes) && nodes.length) {
-              preview = nodes.slice(0, 3).map((n: any) => {
+              preview = nodes.map((n: any) => {
                 const segs = (n?.content as any[]) || (n?.message as any[]) || [];
-                const plain = segsToPlain(segs);
+                const plain = renderSegmentsMarkdownInline(segs);
                 const sender = n?.sender?.nickname || n?.user_id || '?';
-                return `${sender}: ${plain.slice(0, 30)}${plain.length > 30 ? '...' : ''}`;
+                return `${sender}: ${plain || '[空消息]'}`;
               });
             }
-            return { id: fwd.id, count: nodesCount, preview };
+            return { id: messageId, count: nodesCount, preview };
           } catch {
             return { id: fwd.id, count: 0, preview: [] };
           }
@@ -907,8 +989,7 @@ export function createSDK(init?: SDKInit): SdkInvoke {
       };
 
       const enrichCards = async (items: any[]) => {
-        const limit = items.slice(0, 5);
-        return limit.map((c: any) => {
+        return items.map((c: any) => {
           if (c.type === 'share') {
             return { type: 'share', title: c.title, url: c.url, content: c.content, image: c.image, preview: c.preview || c.title || c.url };
           } else if (c.type === 'json') {
