@@ -16,22 +16,37 @@ const logger = createLogger('AckPhraseGenerator');
  * @returns {string} Prompt 文本
  */
 function buildAckPrompt(presetJson, count = 20) {
+    // 兼容多种人设结构：优先从 parameters 提取，回退到 meta
     const meta = presetJson?.meta || {};
-    const name = meta.name || meta.nickname || 'Bot';
-    const personality = meta.personality || '';
-    const speakingStyle = meta.speaking_style || '';
+    const params = presetJson?.parameters || {};
+
+    // 名字：parameters.name > meta.name > meta.nickname > meta.node_name
+    const name = params.name || meta.name || meta.nickname || meta.node_name || 'Bot';
+
+    // 性格：parameters.personality.temperament > parameters.personality.summary > meta.personality
+    const personality = params.personality?.temperament
+        || params.personality?.summary
+        || meta.personality
+        || '';
+
+    // 说话风格：parameters.personality.behavior_guidelines > meta.speaking_style
+    const speakingStyle = params.personality?.behavior_guidelines
+        || meta.speaking_style
+        || '';
+
+    // 语气
     const tone = meta.tone || '';
 
-    const traits = [personality, speakingStyle, tone].filter(Boolean).join('、');
-    const traitDesc = traits ? `性格特点：${traits}` : '';
+    const traits = [personality, speakingStyle, tone].filter(Boolean).join('；');
+    const traitDesc = traits ? `\n性格特点：${traits.slice(0, 300)}` : '';
 
-    return `你是一个名叫"${name}"的 AI 助手。${traitDesc}
+    return `你是一个名叫"${name}"的角色。${traitDesc}
 
 请生成 ${count} 句符合你人设风格的**任务回执短句**。这些短句用于：当用户发来一条需要处理的消息时，你会先发一句简短的回执表示"收到了/正在处理"，然后再进行深度思考和回复。
 
 要求：
 1. 每句话必须很短（5-15个字），口语化
-2. 必须符合你的性格和说话风格
+2. 必须符合你的性格和说话风格（${personality ? personality.slice(0, 50) : '自然'}）
 3. 内容可以是"好的""收到""稍等"之类的意思，但要有个性
 4. 可以包含符合人设的语气词、表情符号
 5. 不能重复，每句要有变化

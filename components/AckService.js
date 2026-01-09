@@ -6,7 +6,7 @@
  */
 
 import { generateAckPhrases, AckPhraseSelector } from '../utils/ackPhraseGenerator.js';
-import { smartSend } from '../utils/sendUtils.js';
+import transport from './NetworkTransport.js';
 import { createLogger } from '../utils/logger.js';
 import { getEnvBool, getEnvInt } from '../utils/envHotReloader.js';
 
@@ -44,6 +44,11 @@ class AckService {
 
             if (this._enabled) {
                 logger.info(`回执服务初始化成功，共 ${phrases.length} 条短语`);
+                // 打印前3句作为预览
+                if (phrases.length > 0) {
+                    const preview = phrases.slice(0, 3).map(p => `"${p}"`).join(', ');
+                    logger.debug(`回执短语预览: ${preview}...`);
+                }
             } else {
                 logger.warn('回执服务初始化完成，但短语库为空');
             }
@@ -108,6 +113,7 @@ class AckService {
 
     /**
      * 发送回执（如果启用且不在冷却期）
+     * 使用 transport.send() 直接发送，绕过队列机制实现真正的即时回执
      * @param {Object} msg - 消息对象
      * @returns {Promise<boolean>} 是否成功发送
      */
@@ -137,11 +143,11 @@ class AckService {
         }
 
         try {
-            // 构造简单的 sentra-response
-            const response = this._buildSimpleResponse(phrase, msg);
+            // 构造直接发送的消息对象
+            const sendPayload = this._buildDirectSendPayload(phrase, msg);
 
-            // 发送（不引用原消息，避免显得机械）
-            await smartSend(msg, response, false);
+            // 直接通过 transport 发送，不经过 smartSend 队列
+            transport.send(sendPayload);
 
             // 记录冷却
             this._markAckSent(conversationId);
@@ -152,6 +158,28 @@ class AckService {
         } catch (e) {
             logger.warn('回执发送失败', { err: String(e) });
             return false;
+        }
+    }
+
+    /**
+     * 构造直接发送的消息 payload
+     * @private
+     */
+    _buildDirectSendPayload(text, msg) {
+        const isPrivate = msg?.type === 'private' || !msg?.group_id;
+
+        if (isPrivate) {
+            return {
+                type: 'send_private_msg',
+                user_id: String(msg?.sender_id || ''),
+                message: text
+            };
+        } else {
+            return {
+                type: 'send_group_msg',
+                group_id: String(msg?.group_id || ''),
+                message: text
+            };
         }
     }
 
