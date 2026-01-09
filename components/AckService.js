@@ -143,8 +143,8 @@ class AckService {
         }
 
         try {
-            // 构造直接发送的消息对象
-            const sendPayload = this._buildDirectSendPayload(phrase, msg);
+            // 构造直接发送的消息 payload
+            const sendPayload = await this._buildDirectSendPayload(phrase, msg);
 
             // 直接通过 transport 发送，不经过 smartSend 队列
             transport.send(sendPayload);
@@ -165,20 +165,38 @@ class AckService {
      * 构造直接发送的消息 payload
      * @private
      */
-    _buildDirectSendPayload(text, msg) {
+    async _buildDirectSendPayload(text, msg) {
         const isPrivate = msg?.type === 'private' || !msg?.group_id;
+        // 构建消息段
+        const messageParts = [{
+            type: 'text',
+            data: { text: text }
+        }];
+
+        // 生成唯一请求ID (虽不需要等待结果，但协议通常需要)
+        const requestId = `ack-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
         if (isPrivate) {
+            const userId = Number(msg?.sender_id);
+            if (isNaN(userId)) {
+                throw new Error(`无效的用户ID: ${msg?.sender_id}`);
+            }
             return {
-                type: 'send_private_msg',
-                user_id: String(msg?.sender_id || ''),
-                message: text
+                type: 'sdk',
+                path: 'send.private',
+                args: [userId, messageParts],
+                requestId
             };
         } else {
+            const groupId = Number(msg?.group_id);
+            if (isNaN(groupId)) {
+                throw new Error(`无效的群ID: ${msg?.group_id}`);
+            }
             return {
-                type: 'send_group_msg',
-                group_id: String(msg?.group_id || ''),
-                message: text
+                type: 'sdk',
+                path: 'send.group',
+                args: [groupId, messageParts],
+                requestId
             };
         }
     }
