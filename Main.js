@@ -52,6 +52,7 @@ import transport from './components/NetworkTransport.js';
 import commandRegistry from './components/CommandRegistry.js';
 import { initCoreCommands } from './plugins/CoreCommands.js';
 import messageService from './components/MessageService.js';
+import ackService from './components/AckService.js';
 
 const ENV_PATH = '.env';
 loadEnv(ENV_PATH);
@@ -250,6 +251,13 @@ async function refreshAgentPreset() {
   AGENT_PRESET_PLAIN_TEXT = snapshot.plainText || '';
   AGENT_PRESET_SOURCE_PATH = snapshot.sourcePath || '';
   AGENT_PRESET_SOURCE_FILE_NAME = snapshot.sourceFileName || '';
+
+  // 初始化/刷新回执短语缓存
+  try {
+    await ackService.init(agent, AGENT_PRESET_JSON);
+  } catch (e) {
+    logger.warn('回执服务初始化失败（已忽略）', { err: String(e) });
+  }
 }
 
 await refreshAgentPreset();
@@ -840,7 +848,9 @@ setupSocketHandlers({
   completeTask,
   // 新增：指令模块与网络传输
   commandRegistry,
-  transport
+  transport,
+  // 新增：拟人化回执服务
+  ackService
 });
 
 async function runDesireTick() {

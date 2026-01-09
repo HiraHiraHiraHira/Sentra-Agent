@@ -18,7 +18,8 @@ export function setupSocketHandlers(ctx) {
     shouldReply,
     handleOneMessage,
     handleGroupReplyCandidate,
-    completeTask
+    completeTask,
+    ackService
   } = ctx;
 
   const incomingDedupTtlMsRaw = getEnvInt('INCOMING_MESSAGE_DEDUP_TTL_MS', 60000);
@@ -282,6 +283,16 @@ export function setupSocketHandlers(ctx) {
         }
 
         logger.debug(`进入回复流程: taskId=${taskId || 'null'}`);
+
+        // === 即时回执 ===
+        // 在进入 LLM Pipeline 之前，发送一条拟人化的"收到"短句
+        if (ackService && typeof ackService.sendAckIfEnabled === 'function') {
+          try {
+            await ackService.sendAckIfEnabled(bundledMsg);
+          } catch (e) {
+            logger.debug('回执发送失败（已忽略）', { err: String(e) });
+          }
+        }
 
         if (bundledMsg.type === 'group' && typeof handleGroupReplyCandidate === 'function') {
           await handleGroupReplyCandidate(

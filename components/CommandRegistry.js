@@ -9,6 +9,7 @@
  */
 
 import { createLogger } from '../utils/logger.js';
+import { getEnvBool } from '../utils/envHotReloader.js';
 import messageService from './MessageService.js';
 
 const logger = createLogger('CommandRegistry');
@@ -67,6 +68,11 @@ class CommandRegistry {
      * @returns {Promise<boolean>} - 是否已处理
      */
     async handle(msg, context = {}) {
+        // 检查指令系统是否启用
+        if (!getEnvBool('COMMANDS_ENABLED', true)) {
+            return false;
+        }
+
         const text = (msg?.text || msg?.summary || '').trim();
         if (!text) return false;
 
