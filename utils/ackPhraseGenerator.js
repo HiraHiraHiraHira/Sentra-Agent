@@ -73,11 +73,14 @@ function parsePhrasesFromResponse(response) {
     // 1. 去除 Markdown 代码块标记
     clean = clean.replace(/```[a-zA-Z]*\n?/g, '').replace(/```/g, '');
 
-    // 2. 尝试提取最外层的 []
+    // 2. 关键优化：统一将中文引号/弯引号转换为标准 ASCII 引号
+    clean = clean
+        .replace(/[""]/g, '"')   // 中文双引号 -> "
+        .replace(/['']/g, "'");  // 中文单引号 -> '
+
+    // 3. 尝试提取最外层的 []
     const match = clean.match(/\[[\s\S]*\]/);
-    if (match) {
-        clean = match[0];
-    }
+    const contentToParse = match ? match[0] : clean;
 
     // 内部帮助函数：校验并返回数组
     const validateArray = (arr) => {
@@ -89,36 +92,50 @@ function parsePhrasesFromResponse(response) {
         return null;
     };
 
-    // 3. 尝试标准 JSON 解析
+    // 4. 尝试标准 JSON 解析
     try {
-        const parsed = JSON.parse(clean);
+        const parsed = JSON.parse(contentToParse);
         const valid = validateArray(parsed);
         if (valid && valid.length > 0) return valid;
     } catch { }
 
-    // 4. 尝试作为 JS 对象字面量解析 (兼容单引号 ['a', 'b'])
+    // 5. 尝试作为 JS 对象字面量解析 (兼容单引号)
     try {
-        // 简单安全检查：确保只包含字符串数组结构
-        if (clean.startsWith('[') && clean.endsWith(']')) {
-            const parsed = new Function('return ' + clean)();
+        if (contentToParse.startsWith('[') && contentToParse.endsWith(']')) {
+            const parsed = new Function('return ' + contentToParse)();
             const valid = validateArray(parsed);
             if (valid && valid.length > 0) return valid;
         }
     } catch { }
 
-    // 5. 回退：按行分割并清洗
-    // 针对 ["aaa", "bbb",] 或 - aaa 等各种列表格式
+    // 6. 策略C: 正则提取（稳健处理单行拼接 "A", "B", "C"）
+    // 匹配双引号或单引号包裹的内容，支持转义字符
+    const regex = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'/g;
+    const matches = [];
+    let m;
+    while ((m = regex.exec(contentToParse)) !== null) {
+        // m[1] 是双引号内容，m[2] 是单引号内容
+        const val = m[1] !== undefined ? m[1] : m[2];
+        if (val && val.trim().length >= 2) {
+            matches.push(val.trim());
+        }
+    }
+    if (matches.length > 1) { // 至少匹配到两个才认为是有效列表，避免匹配到偶尔出现的单个引用词
+        return [...new Set(matches)].slice(0, 30);
+    }
+
+    // 7. 回退：按行分割并清洗
     const lines = response.split('\n')
         .map(line => {
-            //以此去掉行首的 [ - * 数字 和 引号，去掉行尾的 引号 , ]
+            // 针对行首尾的清洗也要考虑刚才的引号标准化
             return line
+                .replace(/[""]/g, '"').replace(/['']/g, "'") // 局部也做一次标准化
                 .replace(/^[\[\d\.\-\*\s"']+/g, '')
                 .replace(/[,"'\]\s]+$/g, '')
                 .trim();
         })
-        .filter(line => line.length >= 2 && line.length <= 40); // 长度限制放宽一点
+        .filter(line => line.length >= 2 && line.length <= 40);
 
-    // 简单去重
     return [...new Set(lines)].slice(0, 30);
 }
 
