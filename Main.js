@@ -51,6 +51,7 @@ import { replySendQueue } from './utils/replySendQueue.js';
 import transport from './components/NetworkTransport.js';
 import commandRegistry from './components/CommandRegistry.js';
 import { initCoreCommands } from './plugins/CoreCommands.js';
+import messageService from './components/MessageService.js';
 
 const ENV_PATH = '.env';
 loadEnv(ENV_PATH);
@@ -329,6 +330,9 @@ onEnvReload(() => {
 const historyManager = new GroupHistoryManager({
   maxConversationPairs: getEnvInt('MAX_CONVERSATION_PAIRS', 20)
 });
+
+// 初始化 MessageService（用于统一发送和历史记录）
+messageService.init({ historyManager });
 
 startMemoryMonitor([
   {

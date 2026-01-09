@@ -2,9 +2,14 @@
  * CommandRegistry - 指令注册表
  * 
  * 管理模型无关的指令/插件，在消息到达 LLM 管道之前进行拦截。
+ * 
+ * 增强功能：
+ * - 统一权限校验
+ * - 通过 MessageService 发送回复（自动记录历史）
  */
 
 import { createLogger } from '../utils/logger.js';
+import messageService from './MessageService.js';
 
 const logger = createLogger('CommandRegistry');
 
@@ -17,9 +22,10 @@ class CommandRegistry {
      * 注册一个指令
      * @param {Object} command - 指令配置
      * @param {RegExp|Function} command.pattern - 匹配模式（正则或函数）
-     * @param {Function} command.handler - 处理函数 (msg, context) => Promise<void>
+     * @param {Function} command.handler - 处理函数 (msg, context) => Promise<{text?: string} | void>
      * @param {string} [command.name] - 指令名称（用于日志）
      * @param {string} [command.description] - 指令描述
+     * @param {string} [command.permission] - 权限要求 ('admin' | undefined)
      */
     register(command) {
         if (!command || (!command.pattern && typeof command.match !== 'function')) {
@@ -36,7 +42,8 @@ class CommandRegistry {
             match: command.match,
             handler: command.handler,
             name: command.name || '(unnamed)',
-            description: command.description || ''
+            description: command.description || '',
+            permission: command.permission || null
         });
 
         logger.debug(`CommandRegistry: 已注册指令 "${command.name || '(unnamed)'}""`);
@@ -56,7 +63,7 @@ class CommandRegistry {
     /**
      * 尝试处理消息
      * @param {Object} msg - 消息对象
-     * @param {Object} context - 上下文（包含 transport 等）
+     * @param {Object} context - 上下文
      * @returns {Promise<boolean>} - 是否已处理
      */
     async handle(msg, context = {}) {
@@ -80,9 +87,31 @@ class CommandRegistry {
             }
 
             if (matched) {
+                // === 权限校验 ===
+                if (cmd.permission === 'admin') {
+                    const senderId = String(msg?.sender_id || '');
+                    if (!messageService.isAdmin(senderId)) {
+                        logger.info(`Command denied: ${cmd.name} (sender=${senderId} 无权限)`);
+                        // 静默拒绝（不回复），但返回 true 阻止流向 LLM
+                        return true;
+                    }
+                }
+
                 logger.info(`Command handled: ${cmd.name} (text="${text.slice(0, 50)}")`);
+
                 try {
-                    await cmd.handler(msg, context);
+                    // 执行 handler，获取返回值
+                    const result = await cmd.handler(msg, context);
+
+                    // === 统一发送 ===
+                    // 如果 handler 返回了 { text: '...' }，则通过 MessageService 发送
+                    if (result && typeof result.text === 'string') {
+                        await messageService.sendText(msg, result.text, {
+                            recordHistory: result.recordHistory !== false,
+                            source: `command:${cmd.name}`
+                        });
+                    }
+
                     return true;
                 } catch (e) {
                     logger.warn(`CommandRegistry: 指令 "${cmd.name}" 执行异常`, { err: String(e) });
@@ -101,7 +130,8 @@ class CommandRegistry {
     getCommands() {
         return this._commands.map(c => ({
             name: c.name,
-            description: c.description
+            description: c.description,
+            permission: c.permission
         }));
     }
 

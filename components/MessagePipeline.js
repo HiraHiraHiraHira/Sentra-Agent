@@ -101,7 +101,7 @@ function normalizeAssistantContentForHistory(raw) {
   try {
     const toolsOnly = typeof s === 'string' && s.startsWith('<sentra-tools>') && s.endsWith('</sentra-tools>') && !s.includes('<sentra-response>');
     if (toolsOnly) return s;
-  } catch {}
+  } catch { }
   try {
     const parsed = parseSentraResponse(s);
     if (parsed && parsed.shouldSkip) {
@@ -171,7 +171,7 @@ async function forceGenerateSentraResponse({
     if (forceResult && forceResult.success && forceResult.response && !forceResult.toolsOnly) {
       return ensureSentraResponseHasTarget(forceResult.response, msg);
     }
-  } catch {}
+  } catch { }
 
   return ensureSentraResponseHasTarget(fallback, msg);
 }
@@ -527,7 +527,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
     logger.debug(
       `MCP上下文: ${groupId} 使用历史${effectiveHistoryConversations.length}条 (limit=${contextPairsLimit}) → 转换后${mcpHistory.length}条 + 当前1条 = 总计${conversation.length}条`
     );
-    
+
     // 获取用户画像（如果启用）
     let personaContext = '';
     if (personaManager && userid) {
@@ -544,7 +544,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
         const ua = await emo.userAnalytics(userid, { days: 7 });
         emoXml = buildSentraEmoSection(ua);
       }
-    } catch {}
+    } catch { }
 
     const agentPresetXml = AGENT_PRESET_XML || '';
 
@@ -553,7 +553,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
       if (ctx && ctx.socialContextManager && typeof ctx.socialContextManager.getXml === 'function') {
         socialXml = await ctx.socialContextManager.getXml();
       }
-    } catch {}
+    } catch { }
 
     // 组合系统提示词：baseSystem + persona + emo + memory + agent-preset(最后)
     let memoryXml = '';
@@ -685,7 +685,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
             });
             return null;
           }
-        } catch {}
+        } catch { }
 
         logger.info('ReplyRewrite: 重写成功，将使用改写后的回复替代原始回复');
         return rewritten;
@@ -792,174 +792,219 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
         conversation: conversation,
         overlays
       })) {
-      logger.debug('Agent事件', ev);
+        logger.debug('Agent事件', ev);
 
-      if (currentTaskId && isTaskCancelled(currentTaskId)) {
-        isCancelled = true;
-        logger.info(`检测到任务已被取消: ${groupId} taskId=${currentTaskId}`);
-        break;
-      }
-
-      // 在 start 事件时缓存消息 - 缓存最后一条待回复消息
-      if (ev.type === 'start' && ev.runId) {
-        currentRunId = ev.runId;
-        // 记录 runId 和会话，用于后续在“改主意”场景下仅取消本会话下的运行
-        trackRunForSender(userid, groupId, ev.runId);
-
-        // 实时获取最新的消息列表
-        senderMessages = getAllSenderMessages();
-
-        // 保存消息缓存（用于插件通过 runId 反查 user_id / group_id 等上下文）
-        if (typeof saveMessageCache === 'function') {
-          try {
-            const cacheMsg = senderMessages[senderMessages.length - 1] || msg;
-            await saveMessageCache(ev.runId, cacheMsg);
-          } catch (e) {
-            logger.debug(`保存消息缓存失败: ${groupId} runId=${ev.runId}`, { err: String(e) });
-          }
+        if (currentTaskId && isTaskCancelled(currentTaskId)) {
+          isCancelled = true;
+          logger.info(`检测到任务已被取消: ${groupId} taskId=${currentTaskId}`);
+          break;
         }
 
-        // 检查是否有新消息到达
-        if (senderMessages.length > initialMessageCount) {
-          hasSupplementDuringTask = true;
-          logger.info(
-            `动态感知: ${groupId} 检测到新消息 ${initialMessageCount} -> ${senderMessages.length}，将更新上下文`
-          );
-        }
-      }
+        // 在 start 事件时缓存消息 - 缓存最后一条待回复消息
+        if (ev.type === 'start' && ev.runId) {
+          currentRunId = ev.runId;
+          // 记录 runId 和会话，用于后续在“改主意”场景下仅取消本会话下的运行
+          trackRunForSender(userid, groupId, ev.runId);
 
-      if (ev.type === 'judge') {
-        if (!convId) convId = randomUUID();
-        if (!ev.need) {
-          // 开始构建 Bot 回复
-          pairId = await historyManager.startAssistantMessage(groupId);
-          logger.debug(`创建pairId-Judge: ${groupId} pairId ${pairId?.substring(0, 8)}`);
-
-          // 实时获取最新的sender消息列表
+          // 实时获取最新的消息列表
           senderMessages = getAllSenderMessages();
 
-          // 检查是否有新消息：如果有，需要拼接所有消息作为上下文
+          // 保存消息缓存（用于插件通过 runId 反查 user_id / group_id 等上下文）
+          if (typeof saveMessageCache === 'function') {
+            try {
+              const cacheMsg = senderMessages[senderMessages.length - 1] || msg;
+              await saveMessageCache(ev.runId, cacheMsg);
+            } catch (e) {
+              logger.debug(`保存消息缓存失败: ${groupId} runId=${ev.runId}`, { err: String(e) });
+            }
+          }
+
+          // 检查是否有新消息到达
           if (senderMessages.length > initialMessageCount) {
-            logger.info(`动态感知Judge: ${groupId} 检测到新消息，拼接完整上下文`);
-          }
-
-          const latestMsgJudge = senderMessages[senderMessages.length - 1] || msg;
-
-          let judgeBaseContent;
-          if (isProactive && !isProactiveFirst) {
-            // 后续主动回合：不再围绕最近用户消息构造 user-question，仅使用 root 指令
-            judgeBaseContent = '';
-            currentUserContent = proactiveRootXml || '';
-          } else {
-            // 获取历史上下文（仅供参考：群聊包含“其他成员(上)+该用户累计(下)”，私聊仅该用户历史）
-            const contextXml = historyManager.getPendingMessagesContext(groupId, userid);
-            // 构建当前需要回复的消息（主要内容）- 使用最新的消息
-            const userQuestion = buildSentraUserQuestionBlock(latestMsgJudge);
-
-            // 组合上下文：历史上下文 + 当前消息
-            if (contextXml) {
-              judgeBaseContent = contextXml + '\n\n' + userQuestion;
-            } else {
-              judgeBaseContent = userQuestion;
-            }
-
-            currentUserContent = proactiveRootXml
-              ? `${proactiveRootXml}\n\n${judgeBaseContent}`
-              : judgeBaseContent;
-          }
-
-          // Judge 判定无需工具：为当前对话显式注入占位工具与结果，便于后续模型判断
-          let placeholderToolsXml = '';
-          let placeholderResultXml = '';
-          try {
-            const rawReason =
-              (typeof latestMsgJudge?.objective === 'string' &&
-                latestMsgJudge.objective.trim()) ||
-              (typeof latestMsgJudge?.summary === 'string' &&
-                latestMsgJudge.summary.trim()) ||
-              (typeof latestMsgJudge?.text === 'string' &&
-                latestMsgJudge.text.trim()) ||
-              'No tool required for this message.';
-            const reasonText = rawReason.trim();
-            const toolsXML = buildSentraToolsBlockFromArgsObject('none', {
-              no_tool: true,
-              reason: reasonText
-            });
-
-            const evNoTool = {
-              type: 'tool_result',
-              aiName: 'none',
-              plannedStepIndex: 0,
-              reason: reasonText,
-              result: {
-                success: true,
-                code: 'NO_TOOL',
-                provider: 'system',
-                data: { no_tool: true, reason: reasonText }
-              }
-            };
-            const resultXML = buildSentraResultBlock(evNoTool);
-            placeholderToolsXml = toolsXML;
-            placeholderResultXml = resultXML;
-          } catch {}
-
-          try {
-            if (pairId) {
-              await historyManager.appendToConversationPairMessages(groupId, pairId, 'user', currentUserContent);
-              if (placeholderToolsXml) {
-                await historyManager.appendToConversationPairMessages(groupId, pairId, 'assistant', placeholderToolsXml);
-              }
-              if (placeholderResultXml) {
-                await historyManager.appendToConversationPairMessages(groupId, pairId, 'user', placeholderResultXml);
-              }
-            }
-          } catch {}
-
-          if (placeholderToolsXml) {
-            conversations.push({ role: 'assistant', content: placeholderToolsXml });
-          }
-          const judgeUserForModel = placeholderResultXml
-            ? (placeholderResultXml + '\n\n' + currentUserContent)
-            : currentUserContent;
-          conversations.push({ role: 'user', content: judgeUserForModel });
-          // logger.debug('Conversations', conversations);
-          //console.log(JSON.stringify(conversations, null, 2))
-          const result = await chatWithRetry(conversations, MAIN_AI_MODEL, groupId);
-
-          if (!result.success) {
-            logger.error(
-              `AI响应失败Judge: ${groupId} 原因 ${result.reason}, 重试${result.retries}次`
+            hasSupplementDuringTask = true;
+            logger.info(
+              `动态感知: ${groupId} 检测到新消息 ${initialMessageCount} -> ${senderMessages.length}，将更新上下文`
             );
-            if (pairId) {
-              logger.debug(
-                `取消pairId-Judge失败: ${groupId} pairId ${pairId.substring(0, 8)}`
-              );
-              await historyManager.cancelConversationPairById(groupId, pairId);
-              pairId = null;
-            }
-            return;
           }
+        }
 
-          if (result.toolsOnly && result.rawToolsXml) {
-            if (msg && msg._toolsOnlyFallbackUsed) {
-              logger.warn(
-                `toolsOnly回退已使用过，本轮仍收到纯 <sentra-tools>，将放弃回退: ${groupId}`
+        if (ev.type === 'judge') {
+          if (!convId) convId = randomUUID();
+          if (!ev.need) {
+            // 开始构建 Bot 回复
+            pairId = await historyManager.startAssistantMessage(groupId);
+            logger.debug(`创建pairId-Judge: ${groupId} pairId ${pairId?.substring(0, 8)}`);
+
+            // 实时获取最新的sender消息列表
+            senderMessages = getAllSenderMessages();
+
+            // 检查是否有新消息：如果有，需要拼接所有消息作为上下文
+            if (senderMessages.length > initialMessageCount) {
+              logger.info(`动态感知Judge: ${groupId} 检测到新消息，拼接完整上下文`);
+            }
+
+            const latestMsgJudge = senderMessages[senderMessages.length - 1] || msg;
+
+            let judgeBaseContent;
+            if (isProactive && !isProactiveFirst) {
+              // 后续主动回合：不再围绕最近用户消息构造 user-question，仅使用 root 指令
+              judgeBaseContent = '';
+              currentUserContent = proactiveRootXml || '';
+            } else {
+              // 获取历史上下文（仅供参考：群聊包含“其他成员(上)+该用户累计(下)”，私聊仅该用户历史）
+              const contextXml = historyManager.getPendingMessagesContext(groupId, userid);
+              // 构建当前需要回复的消息（主要内容）- 使用最新的消息
+              const userQuestion = buildSentraUserQuestionBlock(latestMsgJudge);
+
+              // 组合上下文：历史上下文 + 当前消息
+              if (contextXml) {
+                judgeBaseContent = contextXml + '\n\n' + userQuestion;
+              } else {
+                judgeBaseContent = userQuestion;
+              }
+
+              currentUserContent = proactiveRootXml
+                ? `${proactiveRootXml}\n\n${judgeBaseContent}`
+                : judgeBaseContent;
+            }
+
+            // Judge 判定无需工具：为当前对话显式注入占位工具与结果，便于后续模型判断
+            let placeholderToolsXml = '';
+            let placeholderResultXml = '';
+            try {
+              const rawReason =
+                (typeof latestMsgJudge?.objective === 'string' &&
+                  latestMsgJudge.objective.trim()) ||
+                (typeof latestMsgJudge?.summary === 'string' &&
+                  latestMsgJudge.summary.trim()) ||
+                (typeof latestMsgJudge?.text === 'string' &&
+                  latestMsgJudge.text.trim()) ||
+                'No tool required for this message.';
+              const reasonText = rawReason.trim();
+              const toolsXML = buildSentraToolsBlockFromArgsObject('none', {
+                no_tool: true,
+                reason: reasonText
+              });
+
+              const evNoTool = {
+                type: 'tool_result',
+                aiName: 'none',
+                plannedStepIndex: 0,
+                reason: reasonText,
+                result: {
+                  success: true,
+                  code: 'NO_TOOL',
+                  provider: 'system',
+                  data: { no_tool: true, reason: reasonText }
+                }
+              };
+              const resultXML = buildSentraResultBlock(evNoTool);
+              placeholderToolsXml = toolsXML;
+              placeholderResultXml = resultXML;
+            } catch { }
+
+            try {
+              if (pairId) {
+                await historyManager.appendToConversationPairMessages(groupId, pairId, 'user', currentUserContent);
+                if (placeholderToolsXml) {
+                  await historyManager.appendToConversationPairMessages(groupId, pairId, 'assistant', placeholderToolsXml);
+                }
+                if (placeholderResultXml) {
+                  await historyManager.appendToConversationPairMessages(groupId, pairId, 'user', placeholderResultXml);
+                }
+              }
+            } catch { }
+
+            if (placeholderToolsXml) {
+              conversations.push({ role: 'assistant', content: placeholderToolsXml });
+            }
+            const judgeUserForModel = placeholderResultXml
+              ? (placeholderResultXml + '\n\n' + currentUserContent)
+              : currentUserContent;
+            conversations.push({ role: 'user', content: judgeUserForModel });
+            // logger.debug('Conversations', conversations);
+            //console.log(JSON.stringify(conversations, null, 2))
+            const result = await chatWithRetry(conversations, MAIN_AI_MODEL, groupId);
+
+            if (!result.success) {
+              logger.error(
+                `AI响应失败Judge: ${groupId} 原因 ${result.reason}, 重试${result.retries}次`
               );
+              if (pairId) {
+                logger.debug(
+                  `取消pairId-Judge失败: ${groupId} pairId ${pairId.substring(0, 8)}`
+                );
+                await historyManager.cancelConversationPairById(groupId, pairId);
+                pairId = null;
+              }
+              return;
+            }
+
+            if (result.toolsOnly && result.rawToolsXml) {
+              if (msg && msg._toolsOnlyFallbackUsed) {
+                logger.warn(
+                  `toolsOnly回退已使用过，本轮仍收到纯 <sentra-tools>，将放弃回退: ${groupId}`
+                );
+                try {
+                  const forced = await forceGenerateSentraResponse({
+                    chatWithRetry,
+                    conversations,
+                    model: MAIN_AI_MODEL,
+                    groupId,
+                    msg,
+                    toolsXml: result.rawToolsXml,
+                    mode: 'limit',
+                    phase: 'Judge'
+                  });
+
+                  if (pairId) {
+                    const forcedForHistory = normalizeAssistantContentForHistory(forced);
+                    await historyManager.appendToAssistantMessage(groupId, forcedForHistory, pairId);
+                  }
+
+                  const latestSenderMessages = getAllSenderMessages();
+                  const finalMsg = latestSenderMessages[latestSenderMessages.length - 1] || msg;
+                  const swallow = shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTask);
+                  if (!swallow) {
+                    try {
+                      const parsedForced = parseSentraResponse(forced);
+                      if (parsedForced && !parsedForced.shouldSkip) {
+                        await smartSend(finalMsg, forced, true, { hasTool: false });
+                        hasReplied = true;
+                        markReplySentForConversation(conversationId);
+                      }
+                    } catch { }
+                  }
+                } catch { }
+
+                try {
+                  if (pairId) {
+                    await historyManager.finishConversationPair(groupId, pairId, null);
+                  }
+                } catch { }
+                pairId = null;
+                return;
+              }
+
+              if (msg) {
+                msg._toolsOnlyFallbackUsed = true;
+              }
+
               try {
-                const forced = await forceGenerateSentraResponse({
+                const promised = await forceGenerateSentraResponse({
                   chatWithRetry,
                   conversations,
                   model: MAIN_AI_MODEL,
                   groupId,
                   msg,
                   toolsXml: result.rawToolsXml,
-                  mode: 'limit',
+                  mode: 'promise',
                   phase: 'Judge'
                 });
 
                 if (pairId) {
-                  const forcedForHistory = normalizeAssistantContentForHistory(forced);
-                  await historyManager.appendToAssistantMessage(groupId, forcedForHistory, pairId);
+                  const promisedForHistory = normalizeAssistantContentForHistory(promised);
+                  await historyManager.appendToAssistantMessage(groupId, promisedForHistory, pairId);
                 }
 
                 const latestSenderMessages = getAllSenderMessages();
@@ -967,624 +1012,557 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
                 const swallow = shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTask);
                 if (!swallow) {
                   try {
-                    const parsedForced = parseSentraResponse(forced);
-                    if (parsedForced && !parsedForced.shouldSkip) {
-                      await smartSend(finalMsg, forced, sendAndWaitWithConv, true, { hasTool: false });
+                    const parsedPromised = parseSentraResponse(promised);
+                    if (parsedPromised && !parsedPromised.shouldSkip) {
+                      await smartSend(finalMsg, promised, true, { hasTool: false });
                       hasReplied = true;
                       markReplySentForConversation(conversationId);
                     }
-                  } catch {}
+                  } catch { }
                 }
-              } catch {}
+              } catch { }
+
+              restartObjective = convertToolsXmlToObjective(result.rawToolsXml);
+              restartMcp = !!restartObjective;
+
+              if (currentRunId && sdk && typeof sdk.cancelRun === 'function') {
+                try {
+                  sdk.cancelRun(currentRunId);
+                  try {
+                    untrackRunForSender(userid, groupId, currentRunId);
+                  } catch { }
+                } catch { }
+              }
+              currentRunId = null;
 
               try {
                 if (pairId) {
                   await historyManager.finishConversationPair(groupId, pairId, null);
                 }
-              } catch {}
+              } catch { }
               pairId = null;
+
+              if (restartMcp) {
+                logger.info(`toolsOnly→objective 回退触发: ${groupId} 将重跑 MCP (attempt=${streamAttempt + 2})`);
+                break;
+              }
+            }
+
+            let response = result.response;
+            const noReply = !!result.noReply;
+            logger.success(`AI响应成功Judge: ${groupId} 重试${result.retries}次`);
+
+            const rewrittenJudge = await maybeRewriteSentraResponse(response);
+            if (rewrittenJudge && typeof rewrittenJudge === 'string') {
+              response = rewrittenJudge;
+            }
+
+            response = ensureSentraResponseHasTarget(response, msg);
+
+            const responseForHistory = normalizeAssistantContentForHistory(response);
+            await historyManager.appendToAssistantMessage(groupId, responseForHistory, pairId);
+
+            const latestSenderMessages = getAllSenderMessages();
+            if (latestSenderMessages.length > initialMessageCount) {
+              hasSupplementDuringTask = true;
+              logger.info(
+                `动态感知Judge: ${groupId} 检测到补充消息 ${initialMessageCount} -> ${latestSenderMessages.length}，整合到上下文`
+              );
+            }
+
+            if (isCancelled) {
+              logger.info(`任务已取消: ${groupId} 跳过发送Judge阶段`);
               return;
             }
 
-            if (msg) {
-              msg._toolsOnlyFallbackUsed = true;
-            }
+            if (!noReply) {
+              await maybeWaitForSupplementBeforeSend();
 
-            try {
-              const promised = await forceGenerateSentraResponse({
-                chatWithRetry,
-                conversations,
-                model: MAIN_AI_MODEL,
-                groupId,
-                msg,
-                toolsXml: result.rawToolsXml,
-                mode: 'promise',
-                phase: 'Judge'
-              });
+              senderMessages = getAllSenderMessages();
+              const finalMsg = senderMessages[senderMessages.length - 1] || msg;
+              const allowReply = true;
 
-              if (pairId) {
-                const promisedForHistory = normalizeAssistantContentForHistory(promised);
-                await historyManager.appendToAssistantMessage(groupId, promisedForHistory, pairId);
-              }
-
-              const latestSenderMessages = getAllSenderMessages();
-              const finalMsg = latestSenderMessages[latestSenderMessages.length - 1] || msg;
               const swallow = shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTask);
-              if (!swallow) {
-                try {
-                  const parsedPromised = parseSentraResponse(promised);
-                  if (parsedPromised && !parsedPromised.shouldSkip) {
-                    await smartSend(finalMsg, promised, sendAndWaitWithConv, true, { hasTool: false });
-                    hasReplied = true;
-                    markReplySentForConversation(conversationId);
+              if (swallow) {
+                logger.info(
+                  `补充消息吞吐策略: ${groupId} 本轮Judge阶段检测到补充消息，跳过外发，仅保留内部对话记录 (conversation=${conversationId})`
+                );
+              } else {
+                logger.debug(
+                  `引用消息Judge: ${groupId} 消息${finalMsg.message_id}, sender ${finalMsg.sender_id}, 队列${senderMessages.length}条, 允许引用 ${allowReply}`
+                );
+                await smartSend(finalMsg, response, allowReply, { hasTool: false });
+                hasReplied = true;
+                if (ctx.desireManager) {
+                  try {
+                    await ctx.desireManager.onBotMessage(finalMsg, { proactive: !!msg?._proactive });
+                  } catch (e) {
+                    logger.debug('DesireManager onBotMessage(Judge) failed', { err: String(e) });
                   }
-                } catch {}
+                }
+
+                markReplySentForConversation(conversationId);
               }
-            } catch {}
-
-            restartObjective = convertToolsXmlToObjective(result.rawToolsXml);
-            restartMcp = !!restartObjective;
-
-            if (currentRunId && sdk && typeof sdk.cancelRun === 'function') {
-              try {
-                sdk.cancelRun(currentRunId);
-                try {
-                  untrackRunForSender(userid, groupId, currentRunId);
-                } catch {}
-              } catch {}
+            } else {
+              logger.info(`Judge 阶段: 模型选择保持沉默 (noReply=true)，跳过发送`);
             }
-            currentRunId = null;
 
-            try {
-              if (pairId) {
-                await historyManager.finishConversationPair(groupId, pairId, null);
-              }
-            } catch {}
-            pairId = null;
-
-            if (restartMcp) {
-              logger.info(`toolsOnly→objective 回退触发: ${groupId} 将重跑 MCP (attempt=${streamAttempt + 2})`);
-              break;
-            }
-          }
-
-          let response = result.response;
-          const noReply = !!result.noReply;
-          logger.success(`AI响应成功Judge: ${groupId} 重试${result.retries}次`);
-
-          const rewrittenJudge = await maybeRewriteSentraResponse(response);
-          if (rewrittenJudge && typeof rewrittenJudge === 'string') {
-            response = rewrittenJudge;
-          }
-
-          response = ensureSentraResponseHasTarget(response, msg);
-
-          const responseForHistory = normalizeAssistantContentForHistory(response);
-          await historyManager.appendToAssistantMessage(groupId, responseForHistory, pairId);
-
-          const latestSenderMessages = getAllSenderMessages();
-          if (latestSenderMessages.length > initialMessageCount) {
-            hasSupplementDuringTask = true;
-            logger.info(
-              `动态感知Judge: ${groupId} 检测到补充消息 ${initialMessageCount} -> ${latestSenderMessages.length}，整合到上下文`
+            const saved = await historyManager.finishConversationPair(
+              groupId,
+              pairId,
+              null
             );
-          }
 
-          if (isCancelled) {
-            logger.info(`任务已取消: ${groupId} 跳过发送Judge阶段`);
+            if (saved) {
+              const chatType = msg?.group_id ? 'group' : 'private';
+              const userIdForMemory = userid || '';
+              triggerContextSummarizationIfNeeded({ groupId, chatType, userId: userIdForMemory }).catch(
+                (e) => {
+                  logger.debug(`ContextMemory: 异步摘要触发失败 ${groupId}`, { err: String(e) });
+                }
+              );
+              triggerPresetTeachingIfNeeded({
+                groupId,
+                chatType,
+                userId: userIdForMemory,
+                userContent: currentUserContent,
+                assistantContent: response
+              }).catch((e) => {
+                logger.debug(`PresetTeaching: 异步教导触发失败 ${groupId}`, { err: String(e) });
+              });
+            }
+
+            pairId = null;
             return;
           }
-
-          if (!noReply) {
-            await maybeWaitForSupplementBeforeSend();
-
-            senderMessages = getAllSenderMessages();
-            const finalMsg = senderMessages[senderMessages.length - 1] || msg;
-            const allowReply = true;
-
-            const swallow = shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTask);
-            if (swallow) {
-              logger.info(
-                `补充消息吞吐策略: ${groupId} 本轮Judge阶段检测到补充消息，跳过外发，仅保留内部对话记录 (conversation=${conversationId})`
-              );
-            } else {
-              logger.debug(
-                `引用消息Judge: ${groupId} 消息${finalMsg.message_id}, sender ${finalMsg.sender_id}, 队列${senderMessages.length}条, 允许引用 ${allowReply}`
-              );
-              await smartSend(finalMsg, response, sendAndWaitWithConv, allowReply, { hasTool: false });
-              hasReplied = true;
-              if (ctx.desireManager) {
-                try {
-                  await ctx.desireManager.onBotMessage(finalMsg, { proactive: !!msg?._proactive });
-                } catch (e) {
-                  logger.debug('DesireManager onBotMessage(Judge) failed', { err: String(e) });
-                }
-              }
-
-              markReplySentForConversation(conversationId);
-            }
-          } else {
-            logger.info(`Judge 阶段: 模型选择保持沉默 (noReply=true)，跳过发送`);
-          }
-
-          const saved = await historyManager.finishConversationPair(
-            groupId,
-            pairId,
-            null
-          );
-
-          if (saved) {
-            const chatType = msg?.group_id ? 'group' : 'private';
-            const userIdForMemory = userid || '';
-            triggerContextSummarizationIfNeeded({ groupId, chatType, userId: userIdForMemory }).catch(
-              (e) => {
-                logger.debug(`ContextMemory: 异步摘要触发失败 ${groupId}`, { err: String(e) });
-              }
-            );
-            triggerPresetTeachingIfNeeded({
-              groupId,
-              chatType,
-              userId: userIdForMemory,
-              userContent: currentUserContent,
-              assistantContent: response
-            }).catch((e) => {
-              logger.debug(`PresetTeaching: 异步教导触发失败 ${groupId}`, { err: String(e) });
-            });
-          }
-
-          pairId = null;
-          return;
         }
-      }
 
-      if (ev.type === 'plan') {
-        logger.info('执行计划', ev.plan.steps);
-      }
+        if (ev.type === 'plan') {
+          logger.info('执行计划', ev.plan.steps);
+        }
 
-      if (ev.type === 'args') {
-        try {
-          const idx = typeof ev.plannedStepIndex === 'number' ? ev.plannedStepIndex : ev.stepIndex;
-          if (typeof idx === 'number') {
-            pendingToolArgsByStepIndex.set(idx, {
-              aiName: ev.aiName,
-              args: ev.args && typeof ev.args === 'object' ? ev.args : {}
-            });
-          }
-        } catch {}
-        continue;
-      }
-
-      if (ev.type === 'args_group') {
-        try {
-          const items = Array.isArray(ev.items) ? ev.items : [];
-          for (const item of items) {
-            if (!item || typeof item !== 'object') continue;
-            const idx = typeof item.plannedStepIndex === 'number' ? item.plannedStepIndex : item.stepIndex;
-            if (typeof idx !== 'number') continue;
-            pendingToolArgsByStepIndex.set(idx, {
-              aiName: item.aiName,
-              args: item.args && typeof item.args === 'object' ? item.args : {}
-            });
-          }
-        } catch {}
-        continue;
-      }
-
-      // Schedule 延迟机制：
-      // - status = 'scheduled'  表示已成功解析并设置 schedule，触发一条“定时任务已创建”的普通回复；
-      // - status = 'in_progress' 表示到达 delayMs 时工具尚未完成，触发一条“任务仍在执行中的进度”回复；
-      // 这两类事件都被包装为虚拟工具 schedule_progress 的 <sentra-result>，再通过主模型生成最终自然语言回复，
-      // 与普通 tool_result 路径保持一致（同样走 chatWithRetry + <sentra-response> 流程），不直接发送底层 message 文本。
-      if (
-        ev.type === 'tool_choice' &&
-        (ev.status === 'in_progress' || ev.status === 'scheduled')
-      ) {
-        const isScheduled = ev.status === 'scheduled';
-        try {
-          const senderMsgsNow = getAllSenderMessages();
-          const latestMsgProgress = senderMsgsNow[senderMsgsNow.length - 1] || msg;
-
-          let progressBaseContent = '';
-          if (isProactive && !isProactiveFirst) {
-            progressBaseContent = proactiveRootXml || '';
-          } else {
-            const contextXml = historyManager.getPendingMessagesContext(groupId, userid);
-            const userQuestion = buildSentraUserQuestionBlock(latestMsgProgress);
-            if (contextXml) {
-              progressBaseContent = contextXml + '\n\n' + userQuestion;
-            } else {
-              progressBaseContent = userQuestion;
-            }
-            if (proactiveRootXml) {
-              progressBaseContent = `${proactiveRootXml}\n\n${progressBaseContent}`;
-            }
-          }
-
-          if (isScheduled && typeof enqueueDelayedJob === 'function') {
-            try {
-              const baseArgs = ev.args && typeof ev.args === 'object' ? { ...ev.args } : {};
-              if (Object.prototype.hasOwnProperty.call(baseArgs, 'schedule')) {
-                delete baseArgs.schedule;
-              }
-
-              const delayMs = Number.isFinite(ev.delayMs) ? ev.delayMs : Number(ev.delayMs || 0) || 0;
-              let fireAt = 0;
-              if (ev.schedule && ev.schedule.targetISO) {
-                const ts = Date.parse(ev.schedule.targetISO);
-                if (Number.isFinite(ts) && ts > 0) {
-                  fireAt = ts;
-                }
-              }
-              if (!fireAt) {
-                fireAt = Date.now() + Math.max(0, delayMs);
-              }
-
-              const scheduleMode = ev.scheduleMode || (ev.schedule && ev.schedule.mode) || undefined;
-
-              const job = {
-                jobId: randomUUID(),
-                runId: ev.runId || null,
+        if (ev.type === 'args') {
+          try {
+            const idx = typeof ev.plannedStepIndex === 'number' ? ev.plannedStepIndex : ev.stepIndex;
+            if (typeof idx === 'number') {
+              pendingToolArgsByStepIndex.set(idx, {
                 aiName: ev.aiName,
-                args: baseArgs,
-                schedule: ev.schedule || null,
-                delayMs,
-                scheduleMode,
-                plannedStepIndex: typeof ev.stepIndex === 'number' ? ev.stepIndex : 0,
-                // 基础身份信息：用于在缓存缺失时仍可回退到合理的上下文
-                userId: userid,
-                groupId: msg?.group_id || null,
-                type: msg?.type || (msg?.group_id ? 'group' : 'private'),
-                // 人类可读原因：供延迟任务到期时作为上下文摘要
-                reason:
-                  ev.reason ||
-                  (ev.schedule && ev.schedule.text
-                    ? `定时执行 ${ev.schedule.text}`
-                    : '延迟任务到期自动执行'),
-                createdAt: Date.now(),
-                fireAt
-              };
+                args: ev.args && typeof ev.args === 'object' ? ev.args : {}
+              });
+            }
+          } catch { }
+          continue;
+        }
 
-              await enqueueDelayedJob(job);
+        if (ev.type === 'args_group') {
+          try {
+            const items = Array.isArray(ev.items) ? ev.items : [];
+            for (const item of items) {
+              if (!item || typeof item !== 'object') continue;
+              const idx = typeof item.plannedStepIndex === 'number' ? item.plannedStepIndex : item.stepIndex;
+              if (typeof idx !== 'number') continue;
+              pendingToolArgsByStepIndex.set(idx, {
+                aiName: item.aiName,
+                args: item.args && typeof item.args === 'object' ? item.args : {}
+              });
+            }
+          } catch { }
+          continue;
+        }
 
-              const mode = scheduleMode || 'delayed_exec';
-              if (mode === 'delayed_exec' && sdk && typeof sdk.cancelRun === 'function' && ev.runId) {
-                try {
-                  sdk.cancelRun(ev.runId);
-                  try {
-                    untrackRunForSender(userid, groupId, ev.runId);
-                  } catch {}
-                } catch (e) {
-                  logger.debug('取消延迟任务对应的 MCP run 失败', {
-                    groupId,
-                    runId: ev.runId,
-                    err: String(e)
-                  });
+        // Schedule 延迟机制：
+        // - status = 'scheduled'  表示已成功解析并设置 schedule，触发一条“定时任务已创建”的普通回复；
+        // - status = 'in_progress' 表示到达 delayMs 时工具尚未完成，触发一条“任务仍在执行中的进度”回复；
+        // 这两类事件都被包装为虚拟工具 schedule_progress 的 <sentra-result>，再通过主模型生成最终自然语言回复，
+        // 与普通 tool_result 路径保持一致（同样走 chatWithRetry + <sentra-response> 流程），不直接发送底层 message 文本。
+        if (
+          ev.type === 'tool_choice' &&
+          (ev.status === 'in_progress' || ev.status === 'scheduled')
+        ) {
+          const isScheduled = ev.status === 'scheduled';
+          try {
+            const senderMsgsNow = getAllSenderMessages();
+            const latestMsgProgress = senderMsgsNow[senderMsgsNow.length - 1] || msg;
+
+            let progressBaseContent = '';
+            if (isProactive && !isProactiveFirst) {
+              progressBaseContent = proactiveRootXml || '';
+            } else {
+              const contextXml = historyManager.getPendingMessagesContext(groupId, userid);
+              const userQuestion = buildSentraUserQuestionBlock(latestMsgProgress);
+              if (contextXml) {
+                progressBaseContent = contextXml + '\n\n' + userQuestion;
+              } else {
+                progressBaseContent = userQuestion;
+              }
+              if (proactiveRootXml) {
+                progressBaseContent = `${proactiveRootXml}\n\n${progressBaseContent}`;
+              }
+            }
+
+            if (isScheduled && typeof enqueueDelayedJob === 'function') {
+              try {
+                const baseArgs = ev.args && typeof ev.args === 'object' ? { ...ev.args } : {};
+                if (Object.prototype.hasOwnProperty.call(baseArgs, 'schedule')) {
+                  delete baseArgs.schedule;
                 }
-              }
-            } catch (e) {
-              logger.warn('入队延迟任务失败，将继续按普通进度事件处理', {
-                err: String(e)
-              });
-            }
-          }
 
-          const progressEv = {
-            type: 'tool_result',
-            aiName: 'schedule_progress',
-            plannedStepIndex: typeof ev.stepIndex === 'number' ? ev.stepIndex : 0,
-            executionIndex: -1,
-            reason:
-              ev.reason ||
-              (isScheduled
-                ? '任务已成功设置定时执行'
-                : 'Scheduled tool is still running'),
-            nextStep: '',
-            args: {
-              original_aiName: ev.aiName,
-              status: ev.status,
-              elapsedMs: ev.elapsedMs,
-              delayMs: ev.delayMs,
-              schedule: ev.schedule
-            },
-            result: {
-              success: true,
-              code: isScheduled ? 'SCHEDULED' : 'IN_PROGRESS',
-              provider: 'system',
-              data: {
-                // 正在执行的真实 MCP 工具
+                const delayMs = Number.isFinite(ev.delayMs) ? ev.delayMs : Number(ev.delayMs || 0) || 0;
+                let fireAt = 0;
+                if (ev.schedule && ev.schedule.targetISO) {
+                  const ts = Date.parse(ev.schedule.targetISO);
+                  if (Number.isFinite(ts) && ts > 0) {
+                    fireAt = ts;
+                  }
+                }
+                if (!fireAt) {
+                  fireAt = Date.now() + Math.max(0, delayMs);
+                }
+
+                const scheduleMode = ev.scheduleMode || (ev.schedule && ev.schedule.mode) || undefined;
+
+                const job = {
+                  jobId: randomUUID(),
+                  runId: ev.runId || null,
+                  aiName: ev.aiName,
+                  args: baseArgs,
+                  schedule: ev.schedule || null,
+                  delayMs,
+                  scheduleMode,
+                  plannedStepIndex: typeof ev.stepIndex === 'number' ? ev.stepIndex : 0,
+                  // 基础身份信息：用于在缓存缺失时仍可回退到合理的上下文
+                  userId: userid,
+                  groupId: msg?.group_id || null,
+                  type: msg?.type || (msg?.group_id ? 'group' : 'private'),
+                  // 人类可读原因：供延迟任务到期时作为上下文摘要
+                  reason:
+                    ev.reason ||
+                    (ev.schedule && ev.schedule.text
+                      ? `定时执行 ${ev.schedule.text}`
+                      : '延迟任务到期自动执行'),
+                  createdAt: Date.now(),
+                  fireAt
+                };
+
+                await enqueueDelayedJob(job);
+
+                const mode = scheduleMode || 'delayed_exec';
+                if (mode === 'delayed_exec' && sdk && typeof sdk.cancelRun === 'function' && ev.runId) {
+                  try {
+                    sdk.cancelRun(ev.runId);
+                    try {
+                      untrackRunForSender(userid, groupId, ev.runId);
+                    } catch { }
+                  } catch (e) {
+                    logger.debug('取消延迟任务对应的 MCP run 失败', {
+                      groupId,
+                      runId: ev.runId,
+                      err: String(e)
+                    });
+                  }
+                }
+              } catch (e) {
+                logger.warn('入队延迟任务失败，将继续按普通进度事件处理', {
+                  err: String(e)
+                });
+              }
+            }
+
+            const progressEv = {
+              type: 'tool_result',
+              aiName: 'schedule_progress',
+              plannedStepIndex: typeof ev.stepIndex === 'number' ? ev.stepIndex : 0,
+              executionIndex: -1,
+              reason:
+                ev.reason ||
+                (isScheduled
+                  ? '任务已成功设置定时执行'
+                  : 'Scheduled tool is still running'),
+              nextStep: '',
+              args: {
                 original_aiName: ev.aiName,
-                // 进度类型：schedule_ack / delay_progress
-                kind: isScheduled ? 'schedule_ack' : 'delay_progress',
                 status: ev.status,
-                // 延迟与耗时信息
-                delayMs: ev.delayMs,
                 elapsedMs: ev.elapsedMs,
-                // 解析后的日程信息，供主模型按 MCP 语义理解
-                schedule_text: ev.schedule?.text,
-                schedule_targetISO: ev.schedule?.targetISO,
-                schedule_timezone: ev.schedule?.timezone
-              }
-            },
-            elapsedMs: ev.elapsedMs || 0,
-            dependsOn: [],
-            dependedBy: [],
-            groupId: null,
-            groupSize: 1,
-            toolMeta: { provider: 'system' }
-          };
+                delayMs: ev.delayMs,
+                schedule: ev.schedule
+              },
+              result: {
+                success: true,
+                code: isScheduled ? 'SCHEDULED' : 'IN_PROGRESS',
+                provider: 'system',
+                data: {
+                  // 正在执行的真实 MCP 工具
+                  original_aiName: ev.aiName,
+                  // 进度类型：schedule_ack / delay_progress
+                  kind: isScheduled ? 'schedule_ack' : 'delay_progress',
+                  status: ev.status,
+                  // 延迟与耗时信息
+                  delayMs: ev.delayMs,
+                  elapsedMs: ev.elapsedMs,
+                  // 解析后的日程信息，供主模型按 MCP 语义理解
+                  schedule_text: ev.schedule?.text,
+                  schedule_targetISO: ev.schedule?.targetISO,
+                  schedule_timezone: ev.schedule?.timezone
+                }
+              },
+              elapsedMs: ev.elapsedMs || 0,
+              dependsOn: [],
+              dependedBy: [],
+              groupId: null,
+              groupSize: 1,
+              toolMeta: { provider: 'system' }
+            };
 
-          let progressContent = '';
-          try {
-            progressContent = buildSentraResultBlock(progressEv);
-          } catch (e) {
-            logger.warn('构建 <sentra-result> 失败，回退 JSON 注入');
-            progressContent = JSON.stringify(progressEv);
-          }
-
-          let progressToolsXml = '';
-          try {
-            progressToolsXml = buildSentraToolsBlockFromArgsObject('schedule_progress', progressEv.args || {});
-          } catch {}
-
-          const fullUserContent = progressBaseContent
-            ? progressContent + '\n\n' + progressBaseContent
-            : progressContent;
-
-          const progressPairId = await historyManager.startAssistantMessage(groupId);
-
-          // 使用与普通 tool_result 相同的主逻辑：
-          // 将 schedule_progress 结果 + 用户上下文 作为一条新的 user 消息送入 MAIN_AI_MODEL，
-          // 由模型生成最终要发送给用户的自然语言回复。
-          try {
-            await historyManager.appendToConversationPairMessages(groupId, progressPairId, 'user', progressBaseContent || '');
-            if (progressToolsXml) {
-              await historyManager.appendToConversationPairMessages(groupId, progressPairId, 'assistant', progressToolsXml);
-            }
-            await historyManager.appendToConversationPairMessages(groupId, progressPairId, 'user', progressContent || '');
-          } catch {}
-
-          const convForSchedule = [
-            ...conversations,
-            ...(progressToolsXml ? [{ role: 'assistant', content: progressToolsXml }] : []),
-            { role: 'user', content: fullUserContent }
-          ];
-
-          const scheduleResult = await chatWithRetry(
-            convForSchedule,
-            { model: MAIN_AI_MODEL, __sentraExpectedOutput: 'sentra_response' },
-            groupId
-          );
-
-          if (!scheduleResult.success) {
-            logger.error(
-              `AI响应失败ScheduleProgress: ${groupId} 原因 ${scheduleResult.reason}, 重试${scheduleResult.retries}次`
-            );
+            let progressContent = '';
             try {
-              await historyManager.cancelConversationPairById(groupId, progressPairId);
+              progressContent = buildSentraResultBlock(progressEv);
             } catch (e) {
-              logger.debug('取消pairId-ScheduleProgress失败', {
-                groupId,
-                err: String(e)
-              });
+              logger.warn('构建 <sentra-result> 失败，回退 JSON 注入');
+              progressContent = JSON.stringify(progressEv);
             }
-            continue;
-          }
 
-          if (scheduleResult.toolsOnly && scheduleResult.rawToolsXml) {
-            if (msg && msg._toolsOnlyFallbackUsed) {
-              logger.warn(
-                `toolsOnly回退已使用过(ScheduleProgress)，本轮仍收到纯 <sentra-tools>，将仅记录不发送: ${groupId}`
+            let progressToolsXml = '';
+            try {
+              progressToolsXml = buildSentraToolsBlockFromArgsObject('schedule_progress', progressEv.args || {});
+            } catch { }
+
+            const fullUserContent = progressBaseContent
+              ? progressContent + '\n\n' + progressBaseContent
+              : progressContent;
+
+            const progressPairId = await historyManager.startAssistantMessage(groupId);
+
+            // 使用与普通 tool_result 相同的主逻辑：
+            // 将 schedule_progress 结果 + 用户上下文 作为一条新的 user 消息送入 MAIN_AI_MODEL，
+            // 由模型生成最终要发送给用户的自然语言回复。
+            try {
+              await historyManager.appendToConversationPairMessages(groupId, progressPairId, 'user', progressBaseContent || '');
+              if (progressToolsXml) {
+                await historyManager.appendToConversationPairMessages(groupId, progressPairId, 'assistant', progressToolsXml);
+              }
+              await historyManager.appendToConversationPairMessages(groupId, progressPairId, 'user', progressContent || '');
+            } catch { }
+
+            const convForSchedule = [
+              ...conversations,
+              ...(progressToolsXml ? [{ role: 'assistant', content: progressToolsXml }] : []),
+              { role: 'user', content: fullUserContent }
+            ];
+
+            const scheduleResult = await chatWithRetry(
+              convForSchedule,
+              { model: MAIN_AI_MODEL, __sentraExpectedOutput: 'sentra_response' },
+              groupId
+            );
+
+            if (!scheduleResult.success) {
+              logger.error(
+                `AI响应失败ScheduleProgress: ${groupId} 原因 ${scheduleResult.reason}, 重试${scheduleResult.retries}次`
               );
               try {
-                const forced = await forceGenerateSentraResponse({
+                await historyManager.cancelConversationPairById(groupId, progressPairId);
+              } catch (e) {
+                logger.debug('取消pairId-ScheduleProgress失败', {
+                  groupId,
+                  err: String(e)
+                });
+              }
+              continue;
+            }
+
+            if (scheduleResult.toolsOnly && scheduleResult.rawToolsXml) {
+              if (msg && msg._toolsOnlyFallbackUsed) {
+                logger.warn(
+                  `toolsOnly回退已使用过(ScheduleProgress)，本轮仍收到纯 <sentra-tools>，将仅记录不发送: ${groupId}`
+                );
+                try {
+                  const forced = await forceGenerateSentraResponse({
+                    chatWithRetry,
+                    conversations: convForSchedule,
+                    model: MAIN_AI_MODEL,
+                    groupId,
+                    msg,
+                    toolsXml: scheduleResult.rawToolsXml,
+                    mode: 'limit',
+                    phase: 'ScheduleProgress'
+                  });
+
+                  const forcedForHistory = normalizeAssistantContentForHistory(forced);
+                  await historyManager.appendToAssistantMessage(groupId, forcedForHistory, progressPairId);
+                  await historyManager.finishConversationPair(groupId, progressPairId, null);
+
+                  try {
+                    const parsedForced = parseSentraResponse(forced);
+                    if (parsedForced && !parsedForced.shouldSkip) {
+                      await smartSend(msg, forced, true, { hasTool: true });
+                      hasReplied = true;
+                    }
+                  } catch { }
+                } catch { }
+                continue;
+              }
+
+              if (msg) {
+                msg._toolsOnlyFallbackUsed = true;
+              }
+
+              try {
+                const promised = await forceGenerateSentraResponse({
                   chatWithRetry,
                   conversations: convForSchedule,
                   model: MAIN_AI_MODEL,
                   groupId,
                   msg,
                   toolsXml: scheduleResult.rawToolsXml,
-                  mode: 'limit',
+                  mode: 'promise',
                   phase: 'ScheduleProgress'
                 });
 
-                const forcedForHistory = normalizeAssistantContentForHistory(forced);
-                await historyManager.appendToAssistantMessage(groupId, forcedForHistory, progressPairId);
+                const promisedForHistory = normalizeAssistantContentForHistory(promised);
+                await historyManager.appendToAssistantMessage(groupId, promisedForHistory, progressPairId);
                 await historyManager.finishConversationPair(groupId, progressPairId, null);
 
                 try {
-                  const parsedForced = parseSentraResponse(forced);
-                  if (parsedForced && !parsedForced.shouldSkip) {
-                    await smartSend(msg, forced, sendAndWaitWithConv, true, { hasTool: true });
+                  const parsedPromised = parseSentraResponse(promised);
+                  if (parsedPromised && !parsedPromised.shouldSkip) {
+                    await smartSend(msg, promised, true, { hasTool: true });
                     hasReplied = true;
                   }
-                } catch {}
-              } catch {}
+                } catch { }
+              } catch { }
+
+              restartObjective = convertToolsXmlToObjective(scheduleResult.rawToolsXml);
+              restartMcp = !!restartObjective;
+
+              if (currentRunId && sdk && typeof sdk.cancelRun === 'function') {
+                try {
+                  sdk.cancelRun(currentRunId);
+                  try {
+                    untrackRunForSender(userid, groupId, currentRunId);
+                  } catch { }
+                } catch { }
+              }
+              currentRunId = null;
+
+              if (restartMcp) {
+                logger.info(
+                  `toolsOnly→objective 回退触发(ScheduleProgress): ${groupId} 将重跑 MCP (attempt=${streamAttempt + 2})`
+                );
+                break;
+              }
               continue;
             }
 
-            if (msg) {
-              msg._toolsOnlyFallbackUsed = true;
-            }
+            const scheduleResponse = scheduleResult.response;
+            const scheduleNoReply = !!scheduleResult.noReply;
 
-            try {
-              const promised = await forceGenerateSentraResponse({
-                chatWithRetry,
-                conversations: convForSchedule,
-                model: MAIN_AI_MODEL,
-                groupId,
-                msg,
-                toolsXml: scheduleResult.rawToolsXml,
-                mode: 'promise',
-                phase: 'ScheduleProgress'
-              });
+            const scheduleResponseWithTarget = ensureSentraResponseHasTarget(scheduleResponse, msg);
 
-              const promisedForHistory = normalizeAssistantContentForHistory(promised);
-              await historyManager.appendToAssistantMessage(groupId, promisedForHistory, progressPairId);
-              await historyManager.finishConversationPair(groupId, progressPairId, null);
+            const scheduleResponseForHistory = normalizeAssistantContentForHistory(scheduleResponseWithTarget);
+            await historyManager.appendToAssistantMessage(groupId, scheduleResponseForHistory, progressPairId);
 
-              try {
-                const parsedPromised = parseSentraResponse(promised);
-                if (parsedPromised && !parsedPromised.shouldSkip) {
-                  await smartSend(msg, promised, sendAndWaitWithConv, true, { hasTool: true });
-                  hasReplied = true;
-                }
-              } catch {}
-            } catch {}
-
-            restartObjective = convertToolsXmlToObjective(scheduleResult.rawToolsXml);
-            restartMcp = !!restartObjective;
-
-            if (currentRunId && sdk && typeof sdk.cancelRun === 'function') {
-              try {
-                sdk.cancelRun(currentRunId);
-                try {
-                  untrackRunForSender(userid, groupId, currentRunId);
-                } catch {}
-              } catch {}
-            }
-            currentRunId = null;
-
-            if (restartMcp) {
-              logger.info(
-                `toolsOnly→objective 回退触发(ScheduleProgress): ${groupId} 将重跑 MCP (attempt=${streamAttempt + 2})`
+            const savedProgress = await historyManager.finishConversationPair(
+              groupId,
+              progressPairId,
+              null
+            );
+            if (!savedProgress) {
+              logger.warn(
+                `保存进度对话对失败: ${groupId} pairId ${String(progressPairId).substring(0, 8)}`
               );
-              break;
             }
-            continue;
-          }
 
-          const scheduleResponse = scheduleResult.response;
-          const scheduleNoReply = !!scheduleResult.noReply;
+            if (!scheduleNoReply) {
+              const latestSenderMessages = getAllSenderMessages();
+              const finalMsgProgress =
+                latestSenderMessages[latestSenderMessages.length - 1] || msg;
+              const allowReplyProgress = true;
 
-          const scheduleResponseWithTarget = ensureSentraResponseHasTarget(scheduleResponse, msg);
-
-          const scheduleResponseForHistory = normalizeAssistantContentForHistory(scheduleResponseWithTarget);
-          await historyManager.appendToAssistantMessage(groupId, scheduleResponseForHistory, progressPairId);
-
-          const savedProgress = await historyManager.finishConversationPair(
-            groupId,
-            progressPairId,
-            null
-          );
-          if (!savedProgress) {
-            logger.warn(
-              `保存进度对话对失败: ${groupId} pairId ${String(progressPairId).substring(0, 8)}`
-            );
-          }
-
-          if (!scheduleNoReply) {
-            const latestSenderMessages = getAllSenderMessages();
-            const finalMsgProgress =
-              latestSenderMessages[latestSenderMessages.length - 1] || msg;
-            const allowReplyProgress = true;
-
-            await smartSend(
-              finalMsgProgress,
-              scheduleResponseWithTarget,
-              sendAndWaitWithConv,
-              allowReplyProgress,
-              { hasTool: true }
-            );
-            hasReplied = true;
-            if (ctx.desireManager) {
-              try {
-                await ctx.desireManager.onBotMessage(finalMsgProgress, {
-                  proactive: !!msg?._proactive
-                });
-              } catch (e) {
-                logger.debug('DesireManager onBotMessage(ToolProgress) failed', {
-                  err: String(e)
-                });
+              await smartSend(
+                finalMsgProgress,
+                scheduleResponseWithTarget,
+                allowReplyProgress,
+                { hasTool: true }
+              );
+              hasReplied = true;
+              if (ctx.desireManager) {
+                try {
+                  await ctx.desireManager.onBotMessage(finalMsgProgress, {
+                    proactive: !!msg?._proactive
+                  });
+                } catch (e) {
+                  logger.debug('DesireManager onBotMessage(ToolProgress) failed', {
+                    err: String(e)
+                  });
+                }
               }
-            }
-            markReplySentForConversation(conversationId);
-          } else {
-            logger.info(
-              `ScheduleProgress 阶段: 模型选择保持沉默 (noReply=true)，跳过发送`
-            );
-          }
-        } catch (e) {
-          logger.warn('处理 Schedule 延迟进度事件失败，将忽略本次中间状态', {
-            err: String(e)
-          });
-        }
-        if (isScheduled) {
-          endedBySchedule = true;
-          break;
-        }
-        continue;
-      }
-
-      if (ev.type === 'tool_result' || ev.type === 'tool_result_group') {
-        if (!pairId) {
-          pairId = await historyManager.startAssistantMessage(groupId);
-          logger.debug(`创建pairId-ToolResult: ${groupId} pairId ${pairId?.substring(0, 8)}`);
-        }
-
-        if (!currentUserContent) {
-          senderMessages = getAllSenderMessages();
-
-          if (senderMessages.length > initialMessageCount) {
-            logger.info(
-              `动态感知ToolResult: ${groupId} 检测到新消息，拼接完整上下文`
-            );
-          }
-
-          const latestMsgTool = senderMessages[senderMessages.length - 1] || msg;
-
-          if (isProactive && !isProactiveFirst) {
-            // 后续主动回合：仅基于 root 指令和工具结果做总结，不重新注入用户问题
-            currentUserContent = proactiveRootXml || '';
-          } else {
-            // 获取历史上下文（仅供参考：群聊包含“其他成员(上)+该用户累计(下)”，私聊仅该用户历史）
-            const contextXml = historyManager.getPendingMessagesContext(groupId, userid);
-            const userQuestion = buildSentraUserQuestionBlock(latestMsgTool);
-
-            let toolBaseContent;
-            if (contextXml) {
-              toolBaseContent = contextXml + '\n\n' + userQuestion;
+              markReplySentForConversation(conversationId);
             } else {
-              toolBaseContent = userQuestion;
+              logger.info(
+                `ScheduleProgress 阶段: 模型选择保持沉默 (noReply=true)，跳过发送`
+              );
             }
-
-            currentUserContent = proactiveRootXml
-              ? `${proactiveRootXml}\n\n${toolBaseContent}`
-              : toolBaseContent;
+          } catch (e) {
+            logger.warn('处理 Schedule 延迟进度事件失败，将忽略本次中间状态', {
+              err: String(e)
+            });
           }
+          if (isScheduled) {
+            endedBySchedule = true;
+            break;
+          }
+          continue;
         }
 
-        // 新策略：工具结果阶段只做收集，不立即触发主模型回复；
-        // 在 completed 阶段统一生成一次最终回复，保证“工具轮=4条消息”。
-        try {
-          if (ev.type === 'tool_result') {
-            const idx = typeof ev.plannedStepIndex === 'number'
-              ? ev.plannedStepIndex
-              : (typeof ev.stepIndex === 'number' ? ev.stepIndex : null);
-            const cached = idx != null ? pendingToolArgsByStepIndex.get(idx) : null;
-            const toolName = cached?.aiName || ev.aiName;
-            const toolArgs = cached?.args || (ev.args && typeof ev.args === 'object' ? ev.args : {});
+        if (ev.type === 'tool_result' || ev.type === 'tool_result_group') {
+          if (!pairId) {
+            pairId = await historyManager.startAssistantMessage(groupId);
+            logger.debug(`创建pairId-ToolResult: ${groupId} pairId ${pairId?.substring(0, 8)}`);
+          }
 
-            if (toolName) {
-              const key = `${toolName}|${JSON.stringify(toolArgs)}`;
-              if (!toolTurnInvocationSet.has(key)) {
-                toolTurnInvocationSet.add(key);
-                toolTurnInvocations.push({ aiName: toolName, args: toolArgs });
+          if (!currentUserContent) {
+            senderMessages = getAllSenderMessages();
+
+            if (senderMessages.length > initialMessageCount) {
+              logger.info(
+                `动态感知ToolResult: ${groupId} 检测到新消息，拼接完整上下文`
+              );
+            }
+
+            const latestMsgTool = senderMessages[senderMessages.length - 1] || msg;
+
+            if (isProactive && !isProactiveFirst) {
+              // 后续主动回合：仅基于 root 指令和工具结果做总结，不重新注入用户问题
+              currentUserContent = proactiveRootXml || '';
+            } else {
+              // 获取历史上下文（仅供参考：群聊包含“其他成员(上)+该用户累计(下)”，私聊仅该用户历史）
+              const contextXml = historyManager.getPendingMessagesContext(groupId, userid);
+              const userQuestion = buildSentraUserQuestionBlock(latestMsgTool);
+
+              let toolBaseContent;
+              if (contextXml) {
+                toolBaseContent = contextXml + '\n\n' + userQuestion;
+              } else {
+                toolBaseContent = userQuestion;
               }
+
+              currentUserContent = proactiveRootXml
+                ? `${proactiveRootXml}\n\n${toolBaseContent}`
+                : toolBaseContent;
             }
-            if (idx != null) {
-              pendingToolArgsByStepIndex.delete(idx);
-            }
-            toolTurnResultEvents.push(ev);
-          } else {
-            const events = Array.isArray(ev.events) ? ev.events : [];
-            for (const item of events) {
-              if (!item || typeof item !== 'object') continue;
-              const idx = typeof item.plannedStepIndex === 'number'
-                ? item.plannedStepIndex
-                : (typeof item.stepIndex === 'number' ? item.stepIndex : null);
+          }
+
+          // 新策略：工具结果阶段只做收集，不立即触发主模型回复；
+          // 在 completed 阶段统一生成一次最终回复，保证“工具轮=4条消息”。
+          try {
+            if (ev.type === 'tool_result') {
+              const idx = typeof ev.plannedStepIndex === 'number'
+                ? ev.plannedStepIndex
+                : (typeof ev.stepIndex === 'number' ? ev.stepIndex : null);
               const cached = idx != null ? pendingToolArgsByStepIndex.get(idx) : null;
-              const toolName = cached?.aiName || item.aiName;
-              const toolArgs = cached?.args || (item.args && typeof item.args === 'object' ? item.args : {});
+              const toolName = cached?.aiName || ev.aiName;
+              const toolArgs = cached?.args || (ev.args && typeof ev.args === 'object' ? ev.args : {});
+
               if (toolName) {
                 const key = `${toolName}|${JSON.stringify(toolArgs)}`;
                 if (!toolTurnInvocationSet.has(key)) {
@@ -1595,234 +1573,254 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
               if (idx != null) {
                 pendingToolArgsByStepIndex.delete(idx);
               }
-              toolTurnResultEvents.push(item);
+              toolTurnResultEvents.push(ev);
+            } else {
+              const events = Array.isArray(ev.events) ? ev.events : [];
+              for (const item of events) {
+                if (!item || typeof item !== 'object') continue;
+                const idx = typeof item.plannedStepIndex === 'number'
+                  ? item.plannedStepIndex
+                  : (typeof item.stepIndex === 'number' ? item.stepIndex : null);
+                const cached = idx != null ? pendingToolArgsByStepIndex.get(idx) : null;
+                const toolName = cached?.aiName || item.aiName;
+                const toolArgs = cached?.args || (item.args && typeof item.args === 'object' ? item.args : {});
+                if (toolName) {
+                  const key = `${toolName}|${JSON.stringify(toolArgs)}`;
+                  if (!toolTurnInvocationSet.has(key)) {
+                    toolTurnInvocationSet.add(key);
+                    toolTurnInvocations.push({ aiName: toolName, args: toolArgs });
+                  }
+                }
+                if (idx != null) {
+                  pendingToolArgsByStepIndex.delete(idx);
+                }
+                toolTurnResultEvents.push(item);
+              }
             }
-          }
-        } catch {}
-      }
-
-      if (ev.type === 'completed') {
-        logger.info('任务完成(completed)', {
-          runId: ev.runId || null,
-          attempted: ev?.exec?.attempted,
-          succeeded: ev?.exec?.succeeded
-        });
-
-        if (ev.runId) {
-          untrackRunForSender(userid, groupId, ev.runId);
+          } catch { }
         }
 
-        if (isCancelled) {
-          logger.info(`任务已取消: ${groupId} 跳过保存对话对(completed阶段)`);
+        if (ev.type === 'completed') {
+          logger.info('任务完成(completed)', {
+            runId: ev.runId || null,
+            attempted: ev?.exec?.attempted,
+            succeeded: ev?.exec?.succeeded
+          });
+
+          if (ev.runId) {
+            untrackRunForSender(userid, groupId, ev.runId);
+          }
+
+          if (isCancelled) {
+            logger.info(`任务已取消: ${groupId} 跳过保存对话对(completed阶段)`);
+            if (pairId) {
+              logger.debug(`清理pairId: ${groupId} pairId ${pairId?.substring(0, 8)}`);
+              await historyManager.cancelConversationPairById(groupId, pairId);
+              pairId = null;
+            }
+            break;
+          }
+
           if (pairId) {
-            logger.debug(`清理pairId: ${groupId} pairId ${pairId?.substring(0, 8)}`);
-            await historyManager.cancelConversationPairById(groupId, pairId);
+            let toolResponse = null;
+            let toolNoReply = false;
+            try {
+              if (toolTurnResultEvents.length > 0) {
+                const toolsXml = toolTurnInvocations.length > 0
+                  ? buildSentraToolsBlockFromInvocations(toolTurnInvocations)
+                  : '';
+                const resultGroupEv = {
+                  type: 'tool_result_group',
+                  groupId: 'tool_turn',
+                  groupSize: toolTurnResultEvents.length,
+                  orderIndices: toolTurnResultEvents.map((x, i) => (typeof x?.plannedStepIndex === 'number' ? x.plannedStepIndex : i)),
+                  events: toolTurnResultEvents
+                };
+                const resultXml = buildSentraResultBlock(resultGroupEv);
+
+                try {
+                  await historyManager.appendToConversationPairMessages(groupId, pairId, 'user', currentUserContent);
+                  if (toolsXml) {
+                    await historyManager.appendToConversationPairMessages(groupId, pairId, 'assistant', toolsXml);
+                  }
+                  await historyManager.appendToConversationPairMessages(groupId, pairId, 'user', resultXml);
+                } catch { }
+
+                const fullUserContent = resultXml + '\n\n' + currentUserContent;
+                const convForFinal = [
+                  ...conversations,
+                  ...(toolsXml ? [{ role: 'assistant', content: toolsXml }] : []),
+                  { role: 'user', content: fullUserContent }
+                ];
+
+                const result = await chatWithRetry(
+                  convForFinal,
+                  { model: MAIN_AI_MODEL, __sentraExpectedOutput: 'sentra_response' },
+                  groupId
+                );
+                if (result && result.success && result.toolsOnly && result.rawToolsXml) {
+                  if (msg && msg._toolsOnlyFallbackUsed) {
+                    logger.warn(
+                      `toolsOnly回退已使用过(ToolFinal)，本轮仍收到纯 <sentra-tools>，将放弃回退: ${groupId}`
+                    );
+                    try {
+                      const forced = await forceGenerateSentraResponse({
+                        chatWithRetry,
+                        conversations: convForFinal,
+                        model: MAIN_AI_MODEL,
+                        groupId,
+                        msg,
+                        toolsXml: result.rawToolsXml,
+                        mode: 'limit',
+                        phase: 'ToolFinal'
+                      });
+
+                      const forcedForHistory = normalizeAssistantContentForHistory(forced);
+                      await historyManager.appendToAssistantMessage(groupId, forcedForHistory, pairId);
+
+                      try {
+                        const parsedForced = parseSentraResponse(forced);
+                        if (parsedForced && !parsedForced.shouldSkip) {
+                          await smartSend(msg, forced, true, { hasTool: true });
+                          hasReplied = true;
+                        }
+                      } catch { }
+
+                      try {
+                        await historyManager.finishConversationPair(groupId, pairId, null);
+                      } catch { }
+                      pairId = null;
+                    } catch { }
+                    break;
+                  } else {
+                    if (msg) {
+                      msg._toolsOnlyFallbackUsed = true;
+                    }
+
+                    try {
+                      const promised = await forceGenerateSentraResponse({
+                        chatWithRetry,
+                        conversations: convForFinal,
+                        model: MAIN_AI_MODEL,
+                        groupId,
+                        msg,
+                        toolsXml: result.rawToolsXml,
+                        mode: 'promise',
+                        phase: 'ToolFinal'
+                      });
+
+                      const promisedForHistory = normalizeAssistantContentForHistory(promised);
+                      await historyManager.appendToAssistantMessage(groupId, promisedForHistory, pairId);
+
+                      try {
+                        const parsedPromised = parseSentraResponse(promised);
+                        if (parsedPromised && !parsedPromised.shouldSkip) {
+                          await smartSend(msg, promised, true, { hasTool: true });
+                          hasReplied = true;
+                        }
+                      } catch { }
+
+                      try {
+                        await historyManager.finishConversationPair(groupId, pairId, null);
+                      } catch { }
+                      pairId = null;
+                    } catch { }
+
+                    restartObjective = convertToolsXmlToObjective(result.rawToolsXml);
+                    restartMcp = !!restartObjective;
+                    if (restartMcp) {
+                      logger.info(
+                        `toolsOnly→objective 回退触发(ToolFinal): ${groupId} 将重跑 MCP (attempt=${streamAttempt + 2})`
+                      );
+                      break;
+                    }
+                  }
+                }
+
+                if (result && result.success) {
+                  toolResponse = result.response;
+                  toolNoReply = !!result.noReply;
+                } else {
+                  logger.error(
+                    `AI响应失败ToolFinal: ${groupId} 原因 ${result?.reason || 'unknown'}, 重试${result?.retries || 0}次`
+                  );
+                }
+              }
+            } catch (e) {
+              logger.warn('ToolFinal: 生成最终回复异常', { err: String(e) });
+            }
+
+            if (toolResponse) {
+              const rewritten = await maybeRewriteSentraResponse(toolResponse);
+              if (rewritten && typeof rewritten === 'string') {
+                toolResponse = rewritten;
+              }
+
+              toolResponse = ensureSentraResponseHasTarget(toolResponse, msg);
+
+              const toolResponseForHistory = normalizeAssistantContentForHistory(toolResponse);
+              await historyManager.appendToAssistantMessage(groupId, toolResponseForHistory, pairId);
+
+              if (!toolNoReply) {
+                await maybeWaitForSupplementBeforeSend();
+
+                const latestSenderMessagesForSend = getAllSenderMessages();
+                const finalMsgTool =
+                  latestSenderMessagesForSend[latestSenderMessagesForSend.length - 1] || msg;
+                const swallow = shouldSwallowReplyForConversation(
+                  conversationId,
+                  hasSupplementDuringTask
+                );
+                if (!swallow) {
+                  await smartSend(
+                    finalMsgTool,
+                    toolResponse,
+                    true,
+                    { hasTool: true }
+                  );
+                  hasReplied = true;
+                  if (ctx.desireManager) {
+                    try {
+                      await ctx.desireManager.onBotMessage(finalMsgTool, {
+                        proactive: !!msg?._proactive
+                      });
+                    } catch (e) {
+                      logger.debug('DesireManager onBotMessage(ToolFinal) failed', {
+                        err: String(e)
+                      });
+                    }
+                  }
+                  markReplySentForConversation(conversationId);
+                }
+              }
+            }
+
+            logger.debug(`保存对话对: ${groupId} pairId ${pairId.substring(0, 8)}`);
+            const saved = await historyManager.finishConversationPair(groupId, pairId, null);
+            if (!saved) {
+              logger.warn(`保存失败: ${groupId} pairId ${pairId.substring(0, 8)} 状态不一致`);
+            }
+
+            if (saved) {
+              const chatType = msg?.group_id ? 'group' : 'private';
+              const userIdForMemory = userid || '';
+              triggerContextSummarizationIfNeeded({ groupId, chatType, userId: userIdForMemory }).catch(
+                (e) => {
+                  logger.debug(`ContextMemory: 异步摘要触发失败 ${groupId}`, { err: String(e) });
+                }
+              );
+            }
+
             pairId = null;
+          } else {
+            logger.warn(`跳过保存: ${groupId} pairId为null`);
           }
           break;
         }
 
-        if (pairId) {
-          let toolResponse = null;
-          let toolNoReply = false;
-          try {
-            if (toolTurnResultEvents.length > 0) {
-              const toolsXml = toolTurnInvocations.length > 0
-                ? buildSentraToolsBlockFromInvocations(toolTurnInvocations)
-                : '';
-              const resultGroupEv = {
-                type: 'tool_result_group',
-                groupId: 'tool_turn',
-                groupSize: toolTurnResultEvents.length,
-                orderIndices: toolTurnResultEvents.map((x, i) => (typeof x?.plannedStepIndex === 'number' ? x.plannedStepIndex : i)),
-                events: toolTurnResultEvents
-              };
-              const resultXml = buildSentraResultBlock(resultGroupEv);
-
-              try {
-                await historyManager.appendToConversationPairMessages(groupId, pairId, 'user', currentUserContent);
-                if (toolsXml) {
-                  await historyManager.appendToConversationPairMessages(groupId, pairId, 'assistant', toolsXml);
-                }
-                await historyManager.appendToConversationPairMessages(groupId, pairId, 'user', resultXml);
-              } catch {}
-
-              const fullUserContent = resultXml + '\n\n' + currentUserContent;
-              const convForFinal = [
-                ...conversations,
-                ...(toolsXml ? [{ role: 'assistant', content: toolsXml }] : []),
-                { role: 'user', content: fullUserContent }
-              ];
-
-              const result = await chatWithRetry(
-                convForFinal,
-                { model: MAIN_AI_MODEL, __sentraExpectedOutput: 'sentra_response' },
-                groupId
-              );
-              if (result && result.success && result.toolsOnly && result.rawToolsXml) {
-                if (msg && msg._toolsOnlyFallbackUsed) {
-                  logger.warn(
-                    `toolsOnly回退已使用过(ToolFinal)，本轮仍收到纯 <sentra-tools>，将放弃回退: ${groupId}`
-                  );
-                  try {
-                    const forced = await forceGenerateSentraResponse({
-                      chatWithRetry,
-                      conversations: convForFinal,
-                      model: MAIN_AI_MODEL,
-                      groupId,
-                      msg,
-                      toolsXml: result.rawToolsXml,
-                      mode: 'limit',
-                      phase: 'ToolFinal'
-                    });
-
-                    const forcedForHistory = normalizeAssistantContentForHistory(forced);
-                    await historyManager.appendToAssistantMessage(groupId, forcedForHistory, pairId);
-
-                    try {
-                      const parsedForced = parseSentraResponse(forced);
-                      if (parsedForced && !parsedForced.shouldSkip) {
-                        await smartSend(msg, forced, sendAndWaitWithConv, true, { hasTool: true });
-                        hasReplied = true;
-                      }
-                    } catch {}
-
-                    try {
-                      await historyManager.finishConversationPair(groupId, pairId, null);
-                    } catch {}
-                    pairId = null;
-                  } catch {}
-                  break;
-                } else {
-                  if (msg) {
-                    msg._toolsOnlyFallbackUsed = true;
-                  }
-
-                  try {
-                    const promised = await forceGenerateSentraResponse({
-                      chatWithRetry,
-                      conversations: convForFinal,
-                      model: MAIN_AI_MODEL,
-                      groupId,
-                      msg,
-                      toolsXml: result.rawToolsXml,
-                      mode: 'promise',
-                      phase: 'ToolFinal'
-                    });
-
-                    const promisedForHistory = normalizeAssistantContentForHistory(promised);
-                    await historyManager.appendToAssistantMessage(groupId, promisedForHistory, pairId);
-
-                    try {
-                      const parsedPromised = parseSentraResponse(promised);
-                      if (parsedPromised && !parsedPromised.shouldSkip) {
-                        await smartSend(msg, promised, sendAndWaitWithConv, true, { hasTool: true });
-                        hasReplied = true;
-                      }
-                    } catch {}
-
-                    try {
-                      await historyManager.finishConversationPair(groupId, pairId, null);
-                    } catch {}
-                    pairId = null;
-                  } catch {}
-
-                  restartObjective = convertToolsXmlToObjective(result.rawToolsXml);
-                  restartMcp = !!restartObjective;
-                  if (restartMcp) {
-                    logger.info(
-                      `toolsOnly→objective 回退触发(ToolFinal): ${groupId} 将重跑 MCP (attempt=${streamAttempt + 2})`
-                    );
-                    break;
-                  }
-                }
-              }
-
-              if (result && result.success) {
-                toolResponse = result.response;
-                toolNoReply = !!result.noReply;
-              } else {
-                logger.error(
-                  `AI响应失败ToolFinal: ${groupId} 原因 ${result?.reason || 'unknown'}, 重试${result?.retries || 0}次`
-                );
-              }
-            }
-          } catch (e) {
-            logger.warn('ToolFinal: 生成最终回复异常', { err: String(e) });
-          }
-
-          if (toolResponse) {
-            const rewritten = await maybeRewriteSentraResponse(toolResponse);
-            if (rewritten && typeof rewritten === 'string') {
-              toolResponse = rewritten;
-            }
-
-            toolResponse = ensureSentraResponseHasTarget(toolResponse, msg);
-
-            const toolResponseForHistory = normalizeAssistantContentForHistory(toolResponse);
-            await historyManager.appendToAssistantMessage(groupId, toolResponseForHistory, pairId);
-
-            if (!toolNoReply) {
-              await maybeWaitForSupplementBeforeSend();
-
-              const latestSenderMessagesForSend = getAllSenderMessages();
-              const finalMsgTool =
-                latestSenderMessagesForSend[latestSenderMessagesForSend.length - 1] || msg;
-              const swallow = shouldSwallowReplyForConversation(
-                conversationId,
-                hasSupplementDuringTask
-              );
-              if (!swallow) {
-                await smartSend(
-                  finalMsgTool,
-                  toolResponse,
-                  sendAndWaitWithConv,
-                  true,
-                  { hasTool: true }
-                );
-                hasReplied = true;
-                if (ctx.desireManager) {
-                  try {
-                    await ctx.desireManager.onBotMessage(finalMsgTool, {
-                      proactive: !!msg?._proactive
-                    });
-                  } catch (e) {
-                    logger.debug('DesireManager onBotMessage(ToolFinal) failed', {
-                      err: String(e)
-                    });
-                  }
-                }
-                markReplySentForConversation(conversationId);
-              }
-            }
-          }
-
-          logger.debug(`保存对话对: ${groupId} pairId ${pairId.substring(0, 8)}`);
-          const saved = await historyManager.finishConversationPair(groupId, pairId, null);
-          if (!saved) {
-            logger.warn(`保存失败: ${groupId} pairId ${pairId.substring(0, 8)} 状态不一致`);
-          }
-
-          if (saved) {
-            const chatType = msg?.group_id ? 'group' : 'private';
-            const userIdForMemory = userid || '';
-            triggerContextSummarizationIfNeeded({ groupId, chatType, userId: userIdForMemory }).catch(
-              (e) => {
-                logger.debug(`ContextMemory: 异步摘要触发失败 ${groupId}`, { err: String(e) });
-              }
-            );
-          }
-
-          pairId = null;
-        } else {
-          logger.warn(`跳过保存: ${groupId} pairId为null`);
+        if (ev.type === 'summary') {
+          logger.info('对话总结(summary，非结束信号)', ev.summary);
         }
-        break;
-      }
-
-      if (ev.type === 'summary') {
-        logger.info('对话总结(summary，非结束信号)', ev.summary);
-      }
       }
 
       if (restartMcp && restartObjective && streamAttempt === 0) {

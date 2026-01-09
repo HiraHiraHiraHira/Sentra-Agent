@@ -51,7 +51,7 @@ export function createDelayJobRunJob(ctx) {
     if (personaManager && senderId) {
       try {
         personaXml = personaManager.formatPersonaForContext(senderId);
-      } catch {}
+      } catch { }
     }
     let emoXml = '';
     try {
@@ -59,12 +59,12 @@ export function createDelayJobRunJob(ctx) {
         const ua = await emo.userAnalytics(senderId, { days: 7 });
         emoXml = buildSentraEmoSection(ua);
       }
-    } catch {}
+    } catch { }
     let memoryXml = '';
     if (getContextMemoryEnabled()) {
       try {
         memoryXml = await getDailyContextMemoryXml(groupIdKey);
-      } catch {}
+      } catch { }
     }
     const agentPresetXml = AGENT_PRESET_XML || '';
 
@@ -73,7 +73,7 @@ export function createDelayJobRunJob(ctx) {
       if (ctx && ctx.socialContextManager && typeof ctx.socialContextManager.getXml === 'function') {
         socialXml = await ctx.socialContextManager.getXml();
       }
-    } catch {}
+    } catch { }
 
     const parts = [baseSystem, personaXml, emoXml, memoryXml, socialXml, agentPresetXml].filter(Boolean);
     return parts.join('\n\n');
@@ -82,11 +82,11 @@ export function createDelayJobRunJob(ctx) {
   async function sendDelayedReply(baseMsg, reply, hasToolFlag = true) {
     if (!reply) return;
     try {
-      if (typeof smartSend === 'function' && typeof sendAndWaitResult === 'function') {
+      if (typeof smartSend === 'function') {
         const allowReply = true;
-        await smartSend(baseMsg, reply, sendAndWaitResult, allowReply, { hasTool: hasToolFlag });
+        await smartSend(baseMsg, reply, allowReply, { hasTool: hasToolFlag });
       } else {
-        logger.warn('DelayJobWorker: 缺少 smartSend/sendAndWaitResult，无法发送延迟任务回复', {
+        logger.warn('DelayJobWorker: 缺少 smartSend，无法发送延迟任务回复', {
           type: baseMsg?.type,
           group_id: baseMsg?.group_id || null,
           sender_id: baseMsg?.sender_id || null
@@ -182,8 +182,8 @@ export function createDelayJobRunJob(ctx) {
               (job && job.reason)
                 ? job.reason
                 : (scheduleInfo && scheduleInfo.text)
-                ? `正在执行定时任务 ${scheduleInfo.text}`
-                : '定时任务仍在执行中',
+                  ? `正在执行定时任务 ${scheduleInfo.text}`
+                  : '定时任务仍在执行中',
             nextStep: '',
             args: {
               original_aiName: aiName,
