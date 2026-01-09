@@ -68,34 +68,58 @@ function parsePhrasesFromResponse(response) {
         return [];
     }
 
-    // 尝试提取 JSON 数组
-    const trimmed = response.trim();
+    let clean = response.trim();
 
-    // 尝试直接解析
+    // 1. 去除 Markdown 代码块标记
+    clean = clean.replace(/```[a-zA-Z]*\n?/g, '').replace(/```/g, '');
+
+    // 2. 尝试提取最外层的 []
+    const match = clean.match(/\[[\s\S]*\]/);
+    if (match) {
+        clean = match[0];
+    }
+
+    // 内部帮助函数：校验并返回数组
+    const validateArray = (arr) => {
+        if (Array.isArray(arr)) {
+            return arr
+                .filter(p => typeof p === 'string' && p.trim())
+                .map(p => p.trim());
+        }
+        return null;
+    };
+
+    // 3. 尝试标准 JSON 解析
     try {
-        const parsed = JSON.parse(trimmed);
-        if (Array.isArray(parsed)) {
-            return parsed.filter(p => typeof p === 'string' && p.trim()).map(p => p.trim());
+        const parsed = JSON.parse(clean);
+        const valid = validateArray(parsed);
+        if (valid && valid.length > 0) return valid;
+    } catch { }
+
+    // 4. 尝试作为 JS 对象字面量解析 (兼容单引号 ['a', 'b'])
+    try {
+        // 简单安全检查：确保只包含字符串数组结构
+        if (clean.startsWith('[') && clean.endsWith(']')) {
+            const parsed = new Function('return ' + clean)();
+            const valid = validateArray(parsed);
+            if (valid && valid.length > 0) return valid;
         }
     } catch { }
 
-    // 尝试提取 [...] 部分
-    const match = trimmed.match(/\[[\s\S]*\]/);
-    if (match) {
-        try {
-            const parsed = JSON.parse(match[0]);
-            if (Array.isArray(parsed)) {
-                return parsed.filter(p => typeof p === 'string' && p.trim()).map(p => p.trim());
-            }
-        } catch { }
-    }
+    // 5. 回退：按行分割并清洗
+    // 针对 ["aaa", "bbb",] 或 - aaa 等各种列表格式
+    const lines = response.split('\n')
+        .map(line => {
+            //以此去掉行首的 [ - * 数字 和 引号，去掉行尾的 引号 , ]
+            return line
+                .replace(/^[\[\d\.\-\*\s"']+/g, '')
+                .replace(/[,"'\]\s]+$/g, '')
+                .trim();
+        })
+        .filter(line => line.length >= 2 && line.length <= 40); // 长度限制放宽一点
 
-    // 回退：按行分割
-    const lines = trimmed.split('\n')
-        .map(line => line.replace(/^[\d\.\-\*\s]+/, '').replace(/["']/g, '').trim())
-        .filter(line => line.length >= 2 && line.length <= 30);
-
-    return lines.slice(0, 20);
+    // 简单去重
+    return [...new Set(lines)].slice(0, 30);
 }
 
 /**
