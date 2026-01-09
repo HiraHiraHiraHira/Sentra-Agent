@@ -154,16 +154,31 @@ export function setupSocketHandlers(ctx) {
           (typeof msg?.text === 'string' && msg.text.trim())
             ? msg.text
             : ((typeof msg?.objective === 'string' && msg.objective.trim())
-                ? msg.objective
-                : (msg?.summary || ''));
+              ? msg.objective
+              : (msg?.summary || ''));
         if (userid && emoText && emo && shouldAnalyzeEmotion(emoText, userid)) {
-          emo.analyze(emoText, { userid, username }).catch(() => {});
+          emo.analyze(emoText, { userid, username }).catch(() => { });
         }
         const groupId = conversationKey;
         const summary =
           (typeof msg?.objective === 'string' && msg.objective.trim())
             ? msg.objective
             : (msg?.summary || msg?.text || '');
+
+        // === 指令拦截 ===
+        // 在记录历史之前，检查是否为指令，如果是则直接处理并返回
+        if (ctx.commandRegistry) {
+          try {
+            const handled = await ctx.commandRegistry.handle(msg, { transport: ctx.transport });
+            if (handled) {
+              logger.debug('消息已被指令处理，跳过 LLM 管道');
+              return;
+            }
+          } catch (e) {
+            logger.debug('CommandRegistry handle 异常，继续正常流程', { err: String(e) });
+          }
+        }
+
         await historyManager.addPendingMessage(groupId, summary, msg);
 
         if (personaManager && userid && summary) {
