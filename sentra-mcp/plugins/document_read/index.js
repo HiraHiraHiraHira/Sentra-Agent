@@ -8,6 +8,7 @@ import pdfParse from 'pdf-parse';
 import { XMLParser } from 'fast-xml-parser';
 import iconv from 'iconv-lite';
 import { httpRequest } from '../../src/utils/http.js';
+import { toAbsoluteLocalPath } from '../../src/utils/path.js';
 
 function isHttpUrl(s) {
   try { const u = new URL(String(s)); return u.protocol === 'http:' || u.protocol === 'https:'; } catch { return false; }
@@ -129,8 +130,8 @@ async function fetchDocument(src) {
     if (ct) mimeType = ct;
     try { const u = new URL(src); ext = path.extname(u.pathname).toLowerCase(); } catch {}
   } else {
-    const absPath = path.resolve(src);
-    if (!path.isAbsolute(absPath)) throw new Error('Local file path must be absolute');
+    const absPath = toAbsoluteLocalPath(src);
+    if (!absPath) throw new Error('Local file path must be absolute');
     buffer = await fs.readFile(absPath);
     ext = path.extname(absPath).toLowerCase();
     mimeType = String(mime.lookup(absPath) || '');

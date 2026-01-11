@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import logger from '../../src/logger/index.js';
 import { httpClient } from '../../src/utils/http.js';
 import mime from 'mime-types';
+import { toAbsoluteLocalPath } from '../../src/utils/path.js';
 
 function normalizeBaseUrl(raw) {
   const v = String(raw || '').trim();
@@ -220,8 +221,8 @@ async function readAudioAsDataUri(src, { timeoutMs, headers }) {
       try { const u = new URL(String(src)); format = guessInputAudioFormatByPath(u.pathname); } catch {}
     }
   } else {
-    const p = path.resolve(String(src));
-    if (!path.isAbsolute(p)) throw new Error('local audio path must be absolute');
+    const p = toAbsoluteLocalPath(src);
+    if (!p) throw new Error('local audio path must be absolute');
     buf = fssync.readFileSync(p);
     type = guessAudioMimeByPath(p);
     format = guessInputAudioFormatByPath(p);
@@ -621,11 +622,11 @@ async function postWithRetry(url, formData, timeoutMs, retries, retryBaseMs, ext
 }
 
 export default async function handler(args = {}, options = {}) {
-  const filePath = String(args.file || '').trim();
+  const fileInput = String(args.file || '').trim();
   const language = args.language || null;
   const prompt = args.prompt || null;
   
-  if (!filePath) {
+  if (!fileInput) {
     return { success: false, code: 'INVALID', error: 'file is required', advice: buildAdvice('INVALID', { tool: 'av_transcribe' }) };
   }
   
@@ -653,7 +654,7 @@ export default async function handler(args = {}, options = {}) {
 
     logger.info?.('av_transcribe:start', {
       label: 'PLUGIN',
-      file: filePath,
+      file: fileInput,
       language: (mode === 'chat' || mode === 'gemini') ? null : (language || 'auto'),
       model,
       mode
@@ -661,13 +662,20 @@ export default async function handler(args = {}, options = {}) {
 
     const baseTmpDir = resolveBaseDir(penv);
 
+    const isUrlAudio = isHttpUrl(fileInput);
+    const localFilePath = !isUrlAudio ? toAbsoluteLocalPath(fileInput) : null;
+    if (!isUrlAudio && !localFilePath) {
+      return { success: false, code: 'INVALID_PATH', error: 'local audio path must be absolute', advice: buildAdvice('INVALID', { tool: 'av_transcribe', file: fileInput }) };
+    }
+
+    const filePath = isUrlAudio ? fileInput : localFilePath;
+
     if (mode === 'chat' || mode === 'gemini') {
       const fetchHeaders = buildFetchHeaders(penv, args);
 
       const chatLanguage = null;
       const chatPrompt = null;
 
-      const isUrlAudio = isHttpUrl(filePath);
       let localAudio = !isUrlAudio ? await readAudioAsDataUri(filePath, { timeoutMs, headers: fetchHeaders }) : null;
       const audioUrl = isUrlAudio ? filePath : null;
 

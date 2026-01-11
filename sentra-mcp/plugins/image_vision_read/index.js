@@ -5,6 +5,7 @@ import { config } from '../../src/config/index.js';
 import OpenAI from 'openai';
 import mime from 'mime-types';
 import { httpRequest } from '../../src/utils/http.js';
+import { toAbsoluteLocalPath } from '../../src/utils/path.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -87,8 +88,8 @@ async function readImageAsBase64WithMime(src, convertGif = false) {
     }
   } else {
     // treat as local absolute path
-    const p = path.resolve(src);
-    if (!path.isAbsolute(p)) {
+    const p = toAbsoluteLocalPath(src);
+    if (!p) {
       throw new Error('local image path must be absolute');
     }
     buf = await fs.readFile(p);
