@@ -121,7 +121,7 @@ class ReplySendQueue {
           const resources = [];
           let emoji = null;
           let hasTool = false;
-          let hasTargetRouting = false;
+          const routingKeys = new Set();
 
           for (let i = 0; i < batch.length; i++) {
             const item = batch[i];
@@ -148,8 +148,15 @@ class ReplySendQueue {
               resources.push(r);
             }
 
-            if (parsed && (parsed.group_id || parsed.user_id)) {
-              hasTargetRouting = true;
+            if (groupId) {
+              let rk = null;
+              if (parsed && parsed.group_id != null && String(parsed.group_id).trim() !== '') {
+                rk = `G:${String(parsed.group_id).trim()}`;
+              } else if (parsed && parsed.user_id != null && String(parsed.user_id).trim() !== '') {
+                rk = `U:${String(parsed.user_id).trim()}`;
+              }
+              // 未显式指定目标时，视为当前批次目标
+              routingKeys.add(rk || groupId);
             }
 
             if (parsed && parsed.emoji && parsed.emoji.source) {
@@ -161,8 +168,14 @@ class ReplySendQueue {
             }
           }
 
-          if (hasTargetRouting) {
-            throw new Error('skip_send_fusion_due_to_target_routing');
+          if (routingKeys.size > 0) {
+            // 允许融合的前提：全部都发往当前 batch 的同一目标（同一群或同一私聊）
+            // 例如：批次 groupId=G:123，所有 routed 也必须是 G:123
+            const keys = Array.from(routingKeys);
+            const allSameTarget = keys.every((k) => k === groupId);
+            if (!allSameTarget) {
+              throw new Error(`skip_send_fusion_due_to_target_routing:${keys.join(',')}`);
+            }
           }
 
           const fusion = await decideSendFusionBatch({ groupId, userQuestion: '', candidates });

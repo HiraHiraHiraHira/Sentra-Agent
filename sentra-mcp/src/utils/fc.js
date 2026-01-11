@@ -494,6 +494,37 @@ function stripCodeFences(s) {
   return t;
 }
 
+function valueToTypedXml(value) {
+  if (value === null || value === undefined) {
+    return '<null></null>';
+  }
+  if (typeof value === 'string') {
+    return `<string>${escapeXmlEntities(value)}</string>`;
+  }
+  if (typeof value === 'number') {
+    if (Number.isFinite(value)) return `<number>${escapeXmlEntities(String(value))}</number>`;
+    return `<string>${escapeXmlEntities(String(value))}</string>`;
+  }
+  if (typeof value === 'boolean') {
+    return `<boolean>${value ? 'true' : 'false'}</boolean>`;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '<array></array>';
+    const inner = value.map((v) => valueToTypedXml(v)).join('');
+    return `<array>${inner}</array>`;
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value);
+    if (entries.length === 0) return '<object></object>';
+    const props = entries.map(([k, v]) => {
+      const safeKey = escapeXmlEntities(String(k ?? ''));
+      return `<parameter name="${safeKey}">${valueToTypedXml(v)}</parameter>`;
+    }).join('');
+    return `<object>${props}</object>`;
+  }
+  return `<string>${escapeXmlEntities(String(value))}</string>`;
+}
+
 /**
  * Format a tool call to Sentra XML format
  * @param {string} name - Tool name
@@ -503,17 +534,9 @@ function stripCodeFences(s) {
 export function formatSentraToolCall(name, args = {}) {
   const safeName = escapeXmlEntities(String(name ?? ''));
   const params = Object.entries(args || {}).map(([key, value]) => {
-    let content;
-    if (typeof value === 'object' && value !== null) {
-      content = JSON.stringify(value);
-    } else if (typeof value === 'string') {
-      content = value;
-    } else {
-      content = String(value);
-    }
     const safeKey = escapeXmlEntities(String(key ?? ''));
-    const safeContent = escapeXmlEntities(String(content ?? ''));
-    return `    <parameter name="${safeKey}">${safeContent}</parameter>`;
+    const typed = valueToTypedXml(value);
+    return `    <parameter name="${safeKey}">${typed}</parameter>`;
   }).join('\n');
   
   return `<sentra-tools>
@@ -535,22 +558,20 @@ ${params}
  */
 export function formatSentraResult({ stepIndex, aiName, reason, args, result }) {
   const reasonText = Array.isArray(reason) ? reason.join('; ') : String(reason || '');
-  const argsJson = JSON.stringify(args || {});
   const resultData = result?.data !== undefined ? result.data : result;
-  const resultJson = JSON.stringify(resultData);
   const success = result?.success !== false;
 
   const safeStep = escapeXmlEntities(String(stepIndex ?? 0));
   const safeTool = escapeXmlEntities(String(aiName ?? ''));
   const safeSuccess = escapeXmlEntities(String(success));
   const safeReason = escapeXmlEntities(reasonText);
-  const safeArgs = escapeXmlEntities(argsJson);
-  const safeData = escapeXmlEntities(resultJson);
+  const argsXml = valueToTypedXml(args || {});
+  const dataXml = valueToTypedXml(resultData);
   
   return `<sentra-result step="${safeStep}" tool="${safeTool}" success="${safeSuccess}">
   <reason>${safeReason}</reason>
-  <arguments>${safeArgs}</arguments>
-  <data>${safeData}</data>
+  <arguments>${argsXml}</arguments>
+  <data>${dataXml}</data>
 </sentra-result>`;
 }
 

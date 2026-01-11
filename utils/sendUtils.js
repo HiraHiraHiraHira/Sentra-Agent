@@ -5,15 +5,141 @@
 
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { parseSentraResponse } from './protocolUtils.js';
 import { parseTextSegments, buildSegmentMessage } from './messageUtils.js';
 import { getReplyableMessageId, updateConversationHistory } from './conversationUtils.js';
 import { createLogger } from './logger.js';
 import { replySendQueue } from './replySendQueue.js';
-import { getEnv, getEnvBool, getEnvInt } from './envHotReloader.js';
+import { getEnv, getEnvBool, getEnvInt, onEnvReload } from './envHotReloader.js';
 import { randomUUID } from 'crypto';
 
 const logger = createLogger('SendUtils');
+
+let _cfgCache = null;
+function _getCfg() {
+  if (_cfgCache) return _cfgCache;
+
+  let base64MaxBytes = 2 * 1024 * 1024;
+  const mbText = getEnv('NAPCAT_BASE64_MAX_MB', undefined);
+  const mb = mbText !== undefined ? Number(mbText) : NaN;
+  if (Number.isFinite(mb) && mb > 0) {
+    base64MaxBytes = Math.floor(mb * 1024 * 1024);
+  }
+
+  _cfgCache = {
+    base64MaxBytes,
+    crossChat: {
+      enabled: getEnvBool('CROSS_CHAT_SEND_ENABLED', true),
+      allowedGroupIds: _parseCsvIdSet(getEnv('CROSS_CHAT_SEND_ALLOW_GROUP_IDS', '')),
+      allowedUserIds: _parseCsvIdSet(getEnv('CROSS_CHAT_SEND_ALLOW_USER_IDS', '')),
+      allowedSenderIds: _parseCsvIdSet(getEnv('CROSS_CHAT_SEND_ALLOW_SENDER_IDS', '')),
+      requireTargetIdInUserText: getEnvBool('CROSS_CHAT_SEND_REQUIRE_TARGET_IN_USER_TEXT', false),
+      maxCrossOpsPerResponse: getEnvInt('CROSS_CHAT_SEND_MAX_OPS_PER_RESPONSE', 6)
+    }
+  };
+
+  return _cfgCache;
+}
+
+onEnvReload(() => {
+  _cfgCache = null;
+});
+
+function _isAdapterSendFailed(result) {
+  try {
+    const status = result?.data?.status;
+    const retcode = result?.data?.retcode;
+    if (status && String(status).toLowerCase() === 'failed') return true;
+    if (typeof retcode === 'number' && retcode !== 0) return true;
+    if (typeof retcode === 'string' && retcode.trim() && retcode.trim() !== '0') return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function _toFileUrlIfLikelyLocal(p) {
+  const s = String(p || '').trim();
+  if (!s) return s;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (/^file:\/\//i.test(s)) return s;
+  if (/^base64:\/\//i.test(s)) return s;
+  try {
+    const abs = path.isAbsolute(s) ? s : path.resolve(s);
+    return pathToFileURL(abs).href;
+  } catch {
+    return s;
+  }
+}
+
+function _resolveLocalPathFromFileField(p) {
+  const s = String(p || '').trim();
+  if (!s) return '';
+  if (/^base64:\/\//i.test(s)) return '';
+  if (/^https?:\/\//i.test(s)) return '';
+  if (/^file:\/\//i.test(s)) {
+    try {
+      return fileURLToPath(s);
+    } catch {
+      return '';
+    }
+  }
+  return s;
+}
+
+function _getBase64MaxBytes() {
+  return _getCfg().base64MaxBytes;
+}
+
+function _readBase64FileIfAllowed(fileField) {
+  try {
+    const maxBytes = _getBase64MaxBytes();
+    const localPath = _resolveLocalPathFromFileField(fileField);
+    if (!localPath) return null;
+    const stat = fs.statSync(localPath);
+    if (!stat?.isFile?.()) return null;
+    if (maxBytes > 0 && stat.size > maxBytes) return null;
+    const buf = fs.readFileSync(localPath);
+    if (maxBytes > 0 && buf.length > maxBytes) return null;
+    return `base64://${buf.toString('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
+function _withNormalizedFileField(messageParts) {
+  if (!Array.isArray(messageParts)) return messageParts;
+  return messageParts.map((p) => {
+    const f = p?.data?.file;
+    if (!f) return p;
+    return { ...p, data: { ...p.data, file: _toFileUrlIfLikelyLocal(f) } };
+  });
+}
+
+function _withBase64FallbackForImages(messageParts) {
+  if (!Array.isArray(messageParts)) return { parts: messageParts, changed: false };
+  let changed = false;
+  const parts = messageParts.map((p) => {
+    if (!p || typeof p !== 'object') return p;
+    if (p.type !== 'image') return p;
+    const f = p?.data?.file;
+    if (!f) return p;
+    if (/^base64:\/\//i.test(String(f))) return p;
+    const b64 = _readBase64FileIfAllowed(f);
+    if (!b64) return p;
+    changed = true;
+    return { ...p, data: { ...p.data, file: b64 } };
+  });
+  return { parts, changed };
+}
+
+function _shouldRetryAsFileUrl(result) {
+  const msg = String(result?.data?.message || '').toLowerCase();
+  if (msg.includes('识别url失败')) return true;
+  if (msg.includes('url')) return true;
+  return false;
+}
 
 function _parseCsvIdSet(raw) {
   const s = String(raw || '').trim();
@@ -27,14 +153,7 @@ function _parseCsvIdSet(raw) {
 }
 
 function _getCrossChatSendConfig() {
-  return {
-    enabled: getEnvBool('CROSS_CHAT_SEND_ENABLED', true),
-    allowedGroupIds: _parseCsvIdSet(getEnv('CROSS_CHAT_SEND_ALLOW_GROUP_IDS', '')),
-    allowedUserIds: _parseCsvIdSet(getEnv('CROSS_CHAT_SEND_ALLOW_USER_IDS', '')),
-    allowedSenderIds: _parseCsvIdSet(getEnv('CROSS_CHAT_SEND_ALLOW_SENDER_IDS', '')),
-    requireTargetIdInUserText: getEnvBool('CROSS_CHAT_SEND_REQUIRE_TARGET_IN_USER_TEXT', false),
-    maxCrossOpsPerResponse: getEnvInt('CROSS_CHAT_SEND_MAX_OPS_PER_RESPONSE', 6)
-  };
+  return _getCfg().crossChat;
 }
 
 function _collectUserProvidedTextForCrossAuth(msg) {
@@ -422,11 +541,11 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       group.files.forEach(file => {
         logger.debug(`添加媒体: ${file.fileType} - ${file.fileName}`);
         if (file.fileType === 'image') {
-          mediaMessageParts.push({ type: 'image', data: { file: file.path } });
+          mediaMessageParts.push({ type: 'image', data: { file: _toFileUrlIfLikelyLocal(file.path) } });
         } else if (file.fileType === 'video') {
-          mediaMessageParts.push({ type: 'video', data: { file: file.path } });
+          mediaMessageParts.push({ type: 'video', data: { file: _toFileUrlIfLikelyLocal(file.path) } });
         } else if (file.fileType === 'record') {
-          mediaMessageParts.push({ type: 'record', data: { file: file.path } });
+          mediaMessageParts.push({ type: 'record', data: { file: _toFileUrlIfLikelyLocal(file.path) } });
         }
       });
 
@@ -447,12 +566,26 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
 
       if (rt.kind === 'private') {
         const requestId = `private-media-${Date.now()}`;
-        const result = await sendAndWaitResult({
+        let normalizedParts = _withNormalizedFileField(mediaMessageParts);
+        let result = await sendAndWaitResult({
           type: "sdk",
           path: replyForMedia ? "send.privateReply" : "send.private",
-          args: replyForMedia ? [Number(rt.id), replyMessageId, mediaMessageParts] : [Number(rt.id), mediaMessageParts],
+          args: replyForMedia ? [Number(rt.id), replyMessageId, normalizedParts] : [Number(rt.id), normalizedParts],
           requestId
         });
+        if (result && _isAdapterSendFailed(result)) {
+          const fb = _withBase64FallbackForImages(normalizedParts);
+          if (fb.changed) {
+            const retryId = `${requestId}-base64`;
+            normalizedParts = fb.parts;
+            result = await sendAndWaitResult({
+              type: "sdk",
+              path: replyForMedia ? "send.privateReply" : "send.private",
+              args: replyForMedia ? [Number(rt.id), replyMessageId, normalizedParts] : [Number(rt.id), normalizedParts],
+              requestId: retryId
+            });
+          }
+        }
         logger.debug('媒体发送结果', {
           ok: !!result?.ok,
           requestId,
@@ -462,12 +595,26 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         });
       } else if (rt.kind === 'group') {
         const requestId = `group-media-${Date.now()}`;
-        const result = await sendAndWaitResult({
+        let normalizedParts = _withNormalizedFileField(mediaMessageParts);
+        let result = await sendAndWaitResult({
           type: "sdk",
           path: replyForMedia ? "send.groupReply" : "send.group",
-          args: replyForMedia ? [Number(rt.id), replyMessageId, mediaMessageParts] : [Number(rt.id), mediaMessageParts],
+          args: replyForMedia ? [Number(rt.id), replyMessageId, normalizedParts] : [Number(rt.id), normalizedParts],
           requestId
         });
+        if (result && _isAdapterSendFailed(result)) {
+          const fb = _withBase64FallbackForImages(normalizedParts);
+          if (fb.changed) {
+            const retryId = `${requestId}-base64`;
+            normalizedParts = fb.parts;
+            result = await sendAndWaitResult({
+              type: "sdk",
+              path: replyForMedia ? "send.groupReply" : "send.group",
+              args: replyForMedia ? [Number(rt.id), replyMessageId, normalizedParts] : [Number(rt.id), normalizedParts],
+              requestId: retryId
+            });
+          }
+        }
         logger.debug('媒体发送结果', {
           ok: !!result?.ok,
           requestId,
@@ -509,19 +656,47 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       }
 
       if (rt.kind === 'private') {
-        await sendAndWaitResult({
+        const requestId = `file-upload-private-${Date.now()}`;
+        const fileField = _toFileUrlIfLikelyLocal(file.path);
+        let result = await sendAndWaitResult({
           type: "sdk",
           path: "file.uploadPrivate",
-          args: [Number(rt.id), file.path, file.fileName],
-          requestId: `file-upload-private-${Date.now()}`
+          args: [Number(rt.id), fileField, file.fileName],
+          requestId
         });
+
+        if (result && _isAdapterSendFailed(result)) {
+          const b64 = _readBase64FileIfAllowed(fileField);
+          if (b64) {
+            result = await sendAndWaitResult({
+              type: "sdk",
+              path: "file.uploadPrivate",
+              args: [Number(rt.id), b64, file.fileName],
+              requestId: `${requestId}-base64`
+            });
+          }
+        }
       } else if (rt.kind === 'group') {
-        await sendAndWaitResult({
+        const requestId = `file-upload-group-${Date.now()}`;
+        const fileField = _toFileUrlIfLikelyLocal(file.path);
+        let result = await sendAndWaitResult({
           type: "sdk",
           path: "file.uploadGroup",
-          args: [Number(rt.id), file.path, file.fileName, ""],
-          requestId: `file-upload-group-${Date.now()}`
+          args: [Number(rt.id), fileField, file.fileName, ""],
+          requestId
         });
+
+        if (result && _isAdapterSendFailed(result)) {
+          const b64 = _readBase64FileIfAllowed(fileField);
+          if (b64) {
+            result = await sendAndWaitResult({
+              type: "sdk",
+              path: "file.uploadGroup",
+              args: [Number(rt.id), b64, file.fileName, ""],
+              requestId: `${requestId}-base64`
+            });
+          }
+        }
       }
       
       await new Promise(resolve => setTimeout(resolve, 800));
@@ -570,19 +745,34 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       
       // 构建图片消息
       const emojiMessageParts = [
-        { type: 'image', data: { file: emojiPath } }
+        { type: 'image', data: { file: _toFileUrlIfLikelyLocal(emojiPath) } }
       ];
       
       logger.debug('发送表情包作为图片消息');
       
       if (rt.kind === 'private') {
         const requestId = `private-emoji-${Date.now()}`;
-        const result = await sendAndWaitResult({
+        let normalizedParts = _withNormalizedFileField(emojiMessageParts);
+        let result = await sendAndWaitResult({
           type: "sdk",
           path: "send.private",
-          args: [Number(rt.id), emojiMessageParts],
+          args: [Number(rt.id), normalizedParts],
           requestId
         });
+
+        if (result && _isAdapterSendFailed(result)) {
+          const fb = _withBase64FallbackForImages(normalizedParts);
+          if (fb.changed) {
+            const retryId = `${requestId}-base64`;
+            normalizedParts = fb.parts;
+            result = await sendAndWaitResult({
+              type: "sdk",
+              path: "send.private",
+              args: [Number(rt.id), normalizedParts],
+              requestId: retryId
+            });
+          }
+        }
         logger.debug('表情包发送结果', {
           ok: !!result?.ok,
           requestId,
@@ -592,12 +782,27 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         });
       } else if (rt.kind === 'group') {
         const requestId = `group-emoji-${Date.now()}`;
-        const result = await sendAndWaitResult({
+        let normalizedParts = _withNormalizedFileField(emojiMessageParts);
+        let result = await sendAndWaitResult({
           type: "sdk",
           path: "send.group",
-          args: [Number(rt.id), emojiMessageParts],
+          args: [Number(rt.id), normalizedParts],
           requestId
         });
+
+        if (result && _isAdapterSendFailed(result)) {
+          const fb = _withBase64FallbackForImages(normalizedParts);
+          if (fb.changed) {
+            const retryId = `${requestId}-base64`;
+            normalizedParts = fb.parts;
+            result = await sendAndWaitResult({
+              type: "sdk",
+              path: "send.group",
+              args: [Number(rt.id), normalizedParts],
+              requestId: retryId
+            });
+          }
+        }
         logger.debug('表情包发送结果', {
           ok: !!result?.ok,
           requestId,

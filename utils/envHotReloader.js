@@ -10,7 +10,7 @@ let watcherStarted = false;
 let currentWatcher = null;
 let currentWatchedPath = null;
 let pendingReloadTimer = null;
-let lastFileVars = new Map();
+const lastFileVarsByPath = new Map();
 const reloadListeners = new Set();
 
 function safeReadFileText(fullPath) {
@@ -116,11 +116,11 @@ export function loadEnv(envPath = '.env') {
       return;
     }
 
-    const prevVars = lastFileVars || new Map();
+    const prevVars = lastFileVarsByPath.get(fullPath) || new Map();
     const diff = diffEnvMaps(prevVars, nextVars);
 
     applyEnvMap(prevVars, nextVars);
-    lastFileVars = nextVars;
+    lastFileVarsByPath.set(fullPath, nextVars);
 
     logger.info('已从文件加载/刷新环境变量', {
       path: fullPath,
