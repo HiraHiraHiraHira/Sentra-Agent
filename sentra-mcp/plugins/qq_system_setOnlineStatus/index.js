@@ -1,4 +1,5 @@
 import wsCall from '../../src/utils/ws_rpc.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -61,15 +62,15 @@ export default async function handler(args = {}, options = {}) {
   const status = Number(sraw);
   const ext_status = Number(eraw);
   const battery_status = Number(braw);
-  if (!Number.isFinite(status)) return { success: false, code: 'INVALID', error: 'status 为必填，需为整数', advice: buildAdvice('INVALID', { tool: 'qq_system_setOnlineStatus' }) };
-  if (!Number.isFinite(ext_status)) return { success: false, code: 'INVALID', error: 'ext_status 为必填，需为整数', advice: buildAdvice('INVALID', { tool: 'qq_system_setOnlineStatus', status }) };
-  if (!Number.isFinite(battery_status)) return { success: false, code: 'INVALID', error: 'battery_status 为必填，需为整数', advice: buildAdvice('INVALID', { tool: 'qq_system_setOnlineStatus', status, ext_status }) };
+  if (!Number.isFinite(status)) return fail('status 为必填，需为整数', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_system_setOnlineStatus' }) });
+  if (!Number.isFinite(ext_status)) return fail('ext_status 为必填，需为整数', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_system_setOnlineStatus', status }) });
+  if (!Number.isFinite(battery_status)) return fail('battery_status 为必填，需为整数', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_system_setOnlineStatus', status, ext_status }) });
   const argsArr = [{ status, ext_status, battery_status }];
   try {
     const resp = await wsCall({ url, path, args: argsArr, requestId, timeoutMs });
-    return { success: true, data: { request: { type: 'sdk', path, args: argsArr, requestId }, response: resp } };
+    return ok({ request: { type: 'sdk', path, args: argsArr, requestId }, response: resp });
   } catch (e) {
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_system_setOnlineStatus', status, ext_status, battery_status }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_system_setOnlineStatus', status, ext_status, battery_status }) });
   }
 }

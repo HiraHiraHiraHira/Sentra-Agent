@@ -9,6 +9,7 @@ import { XMLParser } from 'fast-xml-parser';
 import iconv from 'iconv-lite';
 import { httpRequest } from '../../src/utils/http.js';
 import { toAbsoluteLocalPath } from '../../src/utils/path.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isHttpUrl(s) {
   try { const u = new URL(String(s)); return u.protocol === 'http:' || u.protocol === 'https:'; } catch { return false; }
@@ -147,7 +148,7 @@ export default async function handler(args = {}, options = {}) {
   const penv = options?.pluginEnv || {};
   const maxFileSizeMB = Number(penv.DOC_MAX_FILE_SIZE_MB || process.env.DOC_MAX_FILE_SIZE_MB || 10);
   
-  if (!files.length) return { success: false, code: 'INVALID', error: 'files is required (array of urls or absolute paths)' };
+  if (!files.length) return fail('files is required (array of urls or absolute paths)', 'INVALID');
   
   logger.info?.('document_read:start', { label: 'PLUGIN', fileCount: files.length, encoding, maxFileSizeMB });
   const results = [];
@@ -171,6 +172,13 @@ export default async function handler(args = {}, options = {}) {
   }
   
   const successCount = results.filter(r => !r.error).length;
-  if (successCount === 0) return { success: false, code: 'ALL_FAILED', error: 'All files failed to parse', data: { results } };
-  return { success: true, data: { files: results, total: files.length, success: successCount, failed: files.length - successCount } };
+  if (successCount === 0) {
+    return fail('All files failed to parse', 'ALL_FAILED', { detail: { results } });
+  }
+  return ok({
+    files: results,
+    total: files.length,
+    success: successCount,
+    failed: files.length - successCount
+  }, successCount === files.length ? 'OK' : 'PARTIAL_SUCCESS');
 }

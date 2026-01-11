@@ -1,4 +1,5 @@
 import wsCall from '../../src/utils/ws_rpc.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -59,17 +60,17 @@ export default async function handler(args = {}, options = {}) {
   if (args.sex !== undefined) {
     const sx = String(args.sex);
     if (sx === '0' || sx === '1' || sx === '2') payload.sex = sx; else {
-      return { success: false, code: 'INVALID', error: 'sex 仅允许 "0"|"1"|"2"', advice: buildAdvice('INVALID', { tool: 'qq_account_setQQProfile', sex: sx }) };
+      return fail('sex 仅允许 "0"|"1"|"2"', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_account_setQQProfile', sex: sx }) });
     }
   }
   if (!('nickname' in payload) && !('personal_note' in payload) && !('sex' in payload)) {
-    return { success: false, code: 'INVALID', error: '至少提供 nickname/personal_note/sex 其中一个', advice: buildAdvice('INVALID', { tool: 'qq_account_setQQProfile' }) };
+    return fail('至少提供 nickname/personal_note/sex 其中一个', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_account_setQQProfile' }) });
   }
   try {
     const resp = await wsCall({ url, path, args: [payload], requestId, timeoutMs });
-    return { success: true, data: { request: { type: 'sdk', path, args: [payload], requestId }, response: resp } };
+    return ok({ request: { type: 'sdk', path, args: [payload], requestId }, response: resp });
   } catch (e) {
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_account_setQQProfile', payload }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_account_setQQProfile', payload }) });
   }
 }

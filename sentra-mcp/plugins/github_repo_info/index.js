@@ -1,5 +1,6 @@
 import logger from '../../src/logger/index.js';
 import { httpClient } from '../../src/utils/http.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function parseGitHubRepoSpec(input) {
   const raw = String(input || '').trim();
@@ -113,7 +114,7 @@ export default async function handler(args = {}, options = {}) {
     const penv = options?.pluginEnv || {};
     const repoUrl = String(args.repoUrl || '').trim();
     if (!repoUrl) {
-      return { success: false, code: 'INVALID', error: 'repoUrl 为必填参数，例如："username/repo" 或完整 GitHub 链接' };
+      return fail('repoUrl 为必填参数，例如："username/repo" 或完整 GitHub 链接', 'INVALID');
     }
 
     const { owner, repo } = parseGitHubRepoSpec(repoUrl);
@@ -200,7 +201,7 @@ export default async function handler(args = {}, options = {}) {
       else if (status === 401) code = 'UNAUTHORIZED';
       else if (status === 403 && /rate limit/i.test(String(msg))) code = 'RATE_LIMIT';
       else if (status === 403) code = 'FORBIDDEN';
-      return { success: false, code, error: msg };
+      return fail(msg, code);
     }
 
     const rateMeta = getRateMetaFromHeaders(repoMetaResp.headers || {});
@@ -307,7 +308,7 @@ export default async function handler(args = {}, options = {}) {
 
     info.元数据 = { rate_limit: rateMeta, partial_errors: partialErrors };
 
-    return { success: true, data: info };
+    return ok(info);
   } catch (e) {
     const msg = String(e?.message || e);
     const status = e?.status || (e?.response?.status) || null;
@@ -326,8 +327,6 @@ export default async function handler(args = {}, options = {}) {
       hint = '仓库不存在、已重命名，或当前凭据无权访问。请核对 owner/repo 或使用具有权限的令牌。';
     }
     try { logger.error('github_repo_info: 调用失败', { label: 'PLUGIN', error: msg, status, code }); } catch {}
-    const out = { success: false, code, error: msg };
-    if (hint) out.hint = hint;
-    return out;
+    return fail(msg, code, hint ? { hint } : {});
   }
 }

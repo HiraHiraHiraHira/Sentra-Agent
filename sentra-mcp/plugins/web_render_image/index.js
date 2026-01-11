@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import logger from '../../src/logger/index.js';
 import { abs as toAbs, toPosix, toFileUrl } from '../../src/utils/path.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -270,12 +271,12 @@ export default async function handler(args = {}, options = {}) {
 
     // url 参数已不再支持
     if (typeof args.url === 'string' && args.url.trim()) {
-      return { success: false, code: 'UNSUPPORTED', error: 'web_render_image 插件仅支持 html 或 file 参数，不再支持 url。', advice: buildAdvice('UNSUPPORTED', { tool: 'web_render_image' }) };
+      return fail('web_render_image 插件仅支持 html 或 file 参数，不再支持 url。', 'UNSUPPORTED', { advice: buildAdvice('UNSUPPORTED', { tool: 'web_render_image' }) });
     }
 
     // 至少提供 html 或 file 之一
     if (!htmlRaw && !file) {
-      return { success: false, code: 'INVALID', error: '必须提供 html 或 file 参数之一', advice: buildAdvice('INVALID', { tool: 'web_render_image' }) };
+      return fail('必须提供 html 或 file 参数之一', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'web_render_image' }) });
     }
 
     // === 2. 准备输出目录和文件名 ===
@@ -291,7 +292,7 @@ export default async function handler(args = {}, options = {}) {
     try {
       ({ default: puppeteer } = await import('puppeteer'));
     } catch (e) {
-      return { success: false, code: 'NO_PUPPETEER', error: 'puppeteer 未安装或加载失败', advice: buildAdvice('NO_PUPPETEER', { tool: 'web_render_image' }) };
+      return fail('puppeteer 未安装或加载失败', 'NO_PUPPETEER', { advice: buildAdvice('NO_PUPPETEER', { tool: 'web_render_image' }) });
     }
 
     const launchArgs = [
@@ -345,7 +346,7 @@ export default async function handler(args = {}, options = {}) {
       const absFile = toAbs(file);
       const exists = await fs.stat(absFile).then(() => true).catch(() => false);
       if (!exists) {
-        return { success: false, code: 'FILE_NOT_FOUND', error: `文件不存在: ${absFile}`, advice: buildAdvice('FILE_NOT_FOUND', { tool: 'web_render_image', file: absFile }) };
+        return fail(`文件不存在: ${absFile}`, 'FILE_NOT_FOUND', { advice: buildAdvice('FILE_NOT_FOUND', { tool: 'web_render_image', file: absFile }) });
       }
       fileUrl = toFileUrl(absFile);
     }
@@ -389,7 +390,7 @@ export default async function handler(args = {}, options = {}) {
       // 截取指定元素
       const element = await page.$(selector);
       if (!element) {
-        return { success: false, code: 'SELECTOR_NOT_FOUND', error: `选择器未匹配到元素: ${selector}`, advice: buildAdvice('SELECTOR_NOT_FOUND', { tool: 'web_render_image', selector }) };
+        return fail(`选择器未匹配到元素: ${selector}`, 'SELECTOR_NOT_FOUND', { advice: buildAdvice('SELECTOR_NOT_FOUND', { tool: 'web_render_image', selector }) });
       }
       await element.screenshot({
         path: outPath,
@@ -409,27 +410,19 @@ export default async function handler(args = {}, options = {}) {
     const absPosix = toPosix(outPath);
     const md = `![${path.basename(outPath)}](${absPosix})`;
 
-    return {
-      success: true,
-      data: {
-        action: 'web_render_image',
-        path_markdown: md,
-        size_bytes: stat.size,
-        format: 'png',
-        viewport: { width: 1366, height: 768, scale: 2 },
-        source: htmlRaw ? 'html' : 'file',
-        failed_resources: failedResources.length > 0 ? failedResources : undefined,
-      },
-    };
+    return ok({
+      action: 'web_render_image',
+      path_markdown: md,
+      size_bytes: stat.size,
+      format: 'png',
+      viewport: { width: 1366, height: 768, scale: 2 },
+      source: htmlRaw ? 'html' : 'file',
+      failed_resources: failedResources.length > 0 ? failedResources : undefined,
+    });
   } catch (e) {
     logger.error?.('web_render_image: 渲染失败', { label: 'PLUGIN', error: String(e?.message || e), stack: e?.stack });
     const isTimeout = isTimeoutError(e);
-    return {
-      success: false,
-      code: isTimeout ? 'TIMEOUT' : 'RENDER_ERROR',
-      error: String(e?.message || e),
-      advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'RENDER_ERROR', { tool: 'web_render_image' }),
-    };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'RENDER_ERROR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'RENDER_ERROR', { tool: 'web_render_image' }) });
   } finally {
     // 确保资源清理（最佳实践）
     try {

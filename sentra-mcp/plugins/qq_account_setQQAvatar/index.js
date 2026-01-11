@@ -1,4 +1,5 @@
 import wsCall from '../../src/utils/ws_rpc.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -54,12 +55,12 @@ export default async function handler(args = {}, options = {}) {
   const path = 'account.setQQAvatar';
   const requestId = `${path}-${Date.now()}`;
   const file = String(args.file || '');
-  if (!file) return { success: false, code: 'INVALID', error: 'file 不能为空', advice: buildAdvice('INVALID', { tool: 'qq_account_setQQAvatar' }) };
+  if (!file) return fail('file 不能为空', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_account_setQQAvatar' }) });
   try {
     const resp = await wsCall({ url, path, args: [{ file }], requestId, timeoutMs });
-    return { success: true, data: { request: { type: 'sdk', path, args: [{ file }], requestId }, response: resp } };
+    return ok({ request: { type: 'sdk', path, args: [{ file }], requestId }, response: resp });
   } catch (e) {
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_account_setQQAvatar', file }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_account_setQQAvatar', file }) });
   }
 }

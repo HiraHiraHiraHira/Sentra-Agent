@@ -6,8 +6,185 @@
 import { z } from 'zod';
 import { jsonToXMLLines, extractXMLTag, extractAllXMLTags, extractFilesFromContent, valueToXMLString, USER_QUESTION_FILTER_KEYS, extractFullXMLTag, extractAllFullXMLTags, escapeXmlAttr, unescapeXml, stripTypedValueWrapper, extractXmlAttrValue, extractInnerXmlFromFullTag } from './xmlUtils.js';
 import { createLogger } from './logger.js';
+import { XMLParser } from 'fast-xml-parser';
 
 const logger = createLogger('ProtocolUtils');
+
+let __xmlParser;
+function getXmlParser() {
+  if (__xmlParser) return __xmlParser;
+  __xmlParser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '',
+    textNodeName: '#text',
+    trimValues: true,
+    parseTagValue: false,
+    parseAttributeValue: false,
+  });
+  return __xmlParser;
+}
+
+function getTextNode(v) {
+  if (v == null) return '';
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (typeof v === 'object') {
+    if (typeof v['#text'] === 'string') return v['#text'];
+  }
+  return '';
+}
+
+function normalizeToArray(v) {
+  if (!v) return [];
+  return Array.isArray(v) ? v : [v];
+}
+
+function normalizeMentionIds(ids) {
+  if (!Array.isArray(ids)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const mid of ids) {
+    const raw = String(mid ?? '').trim();
+    if (!raw) continue;
+    const lowered = raw.toLowerCase ? raw.toLowerCase() : raw;
+    const normalized = (lowered === '@all') ? 'all' : raw;
+    if (normalized !== 'all' && !/^\d+$/.test(normalized)) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+function sanitizeMentionsBySegment(map, maxSegments) {
+  try {
+    if (!map || typeof map !== 'object') return {};
+    const out = {};
+    for (const [k, v] of Object.entries(map)) {
+      const idx = String(k ?? '').trim();
+      if (!idx || !/^\d+$/.test(idx)) continue;
+      const n = parseInt(idx, 10);
+      if (!Number.isFinite(n) || n <= 0) continue;
+      if (Number.isFinite(maxSegments) && maxSegments > 0 && n > maxSegments) continue;
+      const ids = normalizeMentionIds(Array.isArray(v) ? v : [v]);
+      if (ids.length > 0) out[String(n)] = ids;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function pickFirstTypedValue(paramObj) {
+  if (!paramObj || typeof paramObj !== 'object') return '';
+  if (paramObj.null !== undefined) return null;
+  if (paramObj.boolean !== undefined) return parseBooleanLike(stripTypedValueWrapper(unescapeXml(getTextNode(paramObj.boolean))));
+  if (paramObj.number !== undefined) return inferScalarForParam(stripTypedValueWrapper(unescapeXml(getTextNode(paramObj.number))));
+  if (paramObj.string !== undefined) return stripTypedValueWrapper(unescapeXml(getTextNode(paramObj.string)));
+
+  // Fallback: treat inner text as scalar
+  const raw = stripTypedValueWrapper(unescapeXml(getTextNode(paramObj)));
+  if (raw) return inferScalarForParam(raw);
+  return '';
+}
+
+function xmlNodeToJs(value) {
+  if (value == null) return null;
+
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return inferScalarForParam(String(value));
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((v) => xmlNodeToJs(v));
+  }
+
+  if (typeof value !== 'object') {
+    return inferScalarForParam(String(value));
+  }
+
+  const keys = Object.keys(value);
+  const hasItem = Object.prototype.hasOwnProperty.call(value, 'item');
+  if (hasItem) {
+    const items = normalizeToArray(value.item);
+    const arr = [];
+    for (const it of items) {
+      if (it == null) continue;
+      if (typeof it !== 'object') {
+        arr.push(inferScalarForParam(String(it)));
+        continue;
+      }
+      const idxRaw = it.index != null ? String(it.index) : '';
+      const idx = idxRaw && /^\d+$/.test(idxRaw) ? parseInt(idxRaw, 10) : null;
+      const copy = { ...it };
+      delete copy.index;
+      const v = xmlNodeToJs(copy);
+      if (idx == null) arr.push(v);
+      else arr[idx] = v;
+    }
+    return arr;
+  }
+
+  const obj = {};
+  const text = (value['#text'] != null) ? String(value['#text']).trim() : '';
+
+  // Special handling for <field name="...">...</field>
+  if (Object.prototype.hasOwnProperty.call(value, 'field')) {
+    const fields = normalizeToArray(value.field);
+    for (const f of fields) {
+      if (!f || typeof f !== 'object') continue;
+      const k = f.name != null ? String(f.name) : '';
+      if (!k) continue;
+      const copy = { ...f };
+      delete copy.name;
+      const v = xmlNodeToJs(copy);
+      obj[k] = v;
+    }
+  }
+
+  for (const k of keys) {
+    if (k === '#text' || k === 'field' || k === 'name' || k === 'index') continue;
+    const raw = value[k];
+    if (raw == null) continue;
+
+    if (Array.isArray(raw)) {
+      obj[k] = raw.map((v) => xmlNodeToJs(v));
+    } else {
+      obj[k] = xmlNodeToJs(raw);
+    }
+  }
+
+  // Pure text node
+  if (Object.keys(obj).length === 0 && text) {
+    return inferScalarForParam(text);
+  }
+
+  return obj;
+}
+
+function parseArgsContentToObject(argsContent) {
+  const trimmed = String(argsContent || '').trim();
+  if (!trimmed) return null;
+
+  try {
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch {}
+
+  try {
+    const doc = getXmlParser().parse(`<root>${trimmed}</root>`);
+    const root = doc?.root;
+    if (!root || typeof root !== 'object') return null;
+    const payload = root.args && typeof root.args === 'object' ? root.args : root;
+    const obj = xmlNodeToJs(payload);
+    if (obj && typeof obj === 'object') return obj;
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 // 内部：将 JS 值渲染为参数 <parameter> 的文本
 function paramValueToText(v) {
@@ -42,6 +219,42 @@ export function parseReplyGateDecisionFromSentraTools(text) {
   if (!s || !s.includes('<sentra-tools>')) return null;
 
   let last = null;
+
+  try {
+    const toolsBlocks = extractAllFullXMLTags(s, 'sentra-tools');
+    for (const tb of toolsBlocks) {
+      const doc = getXmlParser().parse(`<root>${tb}</root>`);
+      const tools = doc?.root?.['sentra-tools'];
+      if (!tools) continue;
+      const invokes = normalizeToArray(tools.invoke);
+      for (const invoke of invokes) {
+        const name = String(invoke?.name || '').trim();
+        if (name !== 'reply_gate_decision') continue;
+
+        let enter = null;
+        let reason = '';
+        const params = normalizeToArray(invoke?.parameter);
+        for (const p of params) {
+          const pName = String(p?.name || '').trim();
+          if (!pName) continue;
+          if (pName === 'enter') {
+            const v = pickFirstTypedValue(p);
+            if (typeof v === 'boolean') enter = v;
+            continue;
+          }
+          if (pName === 'reason') {
+            const v = pickFirstTypedValue(p);
+            reason = String(v ?? '').trim();
+          }
+        }
+        if (typeof enter !== 'boolean') continue;
+        last = { enter, reason, invokeName: name };
+      }
+    }
+  } catch {}
+
+  if (last) return last;
+
   try {
     const toolsBlocks = extractAllFullXMLTags(s, 'sentra-tools');
     for (const tb of toolsBlocks) {
@@ -91,6 +304,49 @@ export function parseSendFusionFromSentraTools(text) {
   if (!s || !s.includes('<sentra-tools>')) return null;
 
   let last = null;
+
+  try {
+    const toolsBlocks = extractAllFullXMLTags(s, 'sentra-tools');
+    for (const tb of toolsBlocks) {
+      const doc = getXmlParser().parse(`<root>${tb}</root>`);
+      const tools = doc?.root?.['sentra-tools'];
+      if (!tools) continue;
+      const invokes = normalizeToArray(tools.invoke);
+      for (const invoke of invokes) {
+        const name = String(invoke?.name || '').trim();
+        if (name !== 'send_fusion') continue;
+
+        const textSegments = [];
+        let reason = '';
+        const params = normalizeToArray(invoke?.parameter);
+        for (const p of params) {
+          const pName = String(p?.name || '').trim();
+          if (!pName) continue;
+          const val = String(pickFirstTypedValue(p) ?? '').trim();
+          if (!val) continue;
+          if (pName === 'reason') {
+            reason = val;
+            continue;
+          }
+          const m = pName.match(/^text(\d+)$/i);
+          if (m) {
+            const idx = parseInt(m[1], 10);
+            if (Number.isFinite(idx) && idx > 0) {
+              textSegments.push({ idx, val });
+            }
+          }
+        }
+
+        textSegments.sort((a, b) => a.idx - b.idx);
+        const merged = textSegments.map((x) => x.val);
+        if (merged.length === 0) continue;
+        last = { textSegments: merged, reason, invokeName: name };
+      }
+    }
+  } catch {}
+
+  if (last) return last;
+
   try {
     const toolsBlocks = extractAllFullXMLTags(s, 'sentra-tools');
     for (const tb of toolsBlocks) {
@@ -152,7 +408,7 @@ const SentraResponseSchema = z.object({
   group_id: z.string().optional(),
   user_id: z.string().optional(),
   replyMode: z.enum(['none', 'first', 'always']).optional().default('none'),
-  mentions: z.array(z.union([z.string(), z.number()])).optional().default([])
+  mentionsBySegment: z.record(z.string(), z.array(z.union([z.string(), z.number()]))).optional().default({})
 });
 
 /**
@@ -223,11 +479,18 @@ function buildSingleResultXML(ev) {
   const aiName = ev?.aiName || '';
   const step = Number(ev?.plannedStepIndex ?? ev?.stepIndex ?? 0);
   const reason = Array.isArray(ev?.reason) ? ev.reason.join('; ') : (ev?.reason || '');
-  const success = ev?.result?.success !== false;
+  const success = ev?.result?.success === true;
   const code = ev?.result?.code || '';
   const provider = ev?.result?.provider || ev?.toolMeta?.provider || '';
   const args = ev?.args || {};
   const data = (ev?.result && (ev.result.data !== undefined ? ev.result.data : ev.result)) || null;
+
+  const err = ev?.result?.error;
+  const extra = {};
+  if (ev?.result && typeof ev.result === 'object') {
+    if (ev.result.advice !== undefined) extra.advice = ev.result.advice;
+    if (ev.result.detail !== undefined) extra.detail = ev.result.detail;
+  }
 
   const lines = [`<sentra-result step="${step}" tool="${aiName}" success="${success}">`];
   if (reason) lines.push(`  <reason>${valueToXMLString(reason, 0)}</reason>`);
@@ -255,6 +518,24 @@ function buildSingleResultXML(ev) {
   } catch {
     try { lines.push(`    <data>${valueToXMLString(JSON.stringify(data), 0)}</data>`); } catch {}
   }
+
+  if (err) {
+    try {
+      lines.push('    <error>');
+      lines.push(...jsonToXMLLines(err, 3, 0, 6));
+      lines.push('    </error>');
+    } catch {
+      try { lines.push(`    <error>${valueToXMLString(JSON.stringify(err), 0)}</error>`); } catch {}
+    }
+  }
+
+  try {
+    if (Object.keys(extra).length > 0) {
+      lines.push('    <extra>');
+      lines.push(...jsonToXMLLines(extra, 3, 0, 6));
+      lines.push('    </extra>');
+    }
+  } catch {}
   lines.push('  </result>');
 
   // 附带便于调试的元信息（可选）
@@ -363,6 +644,119 @@ export function buildSentraUserQuestionBlock(msg) {
  */
 export function parseSentraResponse(response) {
   const hasSentraTag = typeof response === 'string' && response.includes('<sentra-response>');
+
+  let parsed = null;
+  try {
+    const full = extractFullXMLTag(response, 'sentra-response');
+    if (full) {
+      const doc = getXmlParser().parse(`<root>${full}</root>`);
+      parsed = doc?.root?.['sentra-response'] || null;
+    }
+  } catch {
+    parsed = null;
+  }
+
+  if (parsed) {
+    let targetGroupId = null;
+    let targetUserId = null;
+    try {
+      const gid = unescapeXml(getTextNode(parsed.group_id).trim());
+      const uid = unescapeXml(getTextNode(parsed.user_id).trim());
+      const gidOk = gid && /^\d+$/.test(gid);
+      const uidOk = uid && /^\d+$/.test(uid);
+      if (gidOk && uidOk) {
+        logger.warn('检测到同时存在 <group_id> 和 <user_id>，将忽略目标并按当前会话发送');
+      } else if (gidOk) {
+        targetGroupId = gid;
+      } else if (uidOk) {
+        targetUserId = uid;
+      }
+    } catch {}
+
+    const textSegments = [];
+    for (let i = 1; i <= 50; i++) {
+      const key = `text${i}`;
+      if (!(key in parsed)) break;
+      const t = unescapeXml(getTextNode(parsed[key]).trim());
+      if (t) textSegments.push(t);
+    }
+
+    let resources = [];
+    try {
+      const rb = parsed.resources;
+      const items = rb && rb.resource ? (Array.isArray(rb.resource) ? rb.resource : [rb.resource]) : [];
+      resources = items.map((it) => {
+        const type = unescapeXml(getTextNode(it?.type).trim());
+        const source = unescapeXml(getTextNode(it?.source).trim());
+        const caption = unescapeXml(getTextNode(it?.caption).trim());
+        if (!type || !source) return null;
+        const r = { type, source };
+        if (caption) r.caption = caption;
+        return ResourceSchema.parse(r);
+      }).filter(Boolean);
+    } catch {}
+
+    let replyMode = 'none';
+    let mentionsBySegment = {};
+    try {
+      const send = parsed.send;
+      const rm = String(getTextNode(send?.reply_mode) || '').trim().toLowerCase();
+      if (rm === 'first' || rm === 'always') replyMode = rm;
+
+      const mbs = send?.mentions_by_segment;
+      const segs = mbs ? normalizeToArray(mbs.segment) : [];
+      if (segs.length > 0) {
+        const map = {};
+        for (const seg of segs) {
+          const idxRaw = seg && seg.index != null ? String(seg.index).trim() : '';
+          if (!idxRaw || !/^\d+$/.test(idxRaw)) continue;
+          const sids = seg?.id;
+          const arr = sids ? (Array.isArray(sids) ? sids : [sids]) : [];
+          const ids2 = arr.map((v) => unescapeXml(getTextNode(v).trim())).filter(Boolean);
+          if (ids2.length > 0) map[idxRaw] = ids2;
+        }
+        mentionsBySegment = sanitizeMentionsBySegment(map, textSegments.length || 0);
+      }
+    } catch {}
+
+    let emoji = null;
+    try {
+      const eb = parsed.emoji;
+      const source = unescapeXml(getTextNode(eb?.source).trim());
+      const caption = unescapeXml(getTextNode(eb?.caption).trim());
+      if (source) {
+        emoji = { source };
+        if (caption) emoji.caption = caption;
+      }
+    } catch {}
+
+    try {
+      const validated = SentraResponseSchema.parse({
+        textSegments,
+        resources,
+        group_id: targetGroupId || undefined,
+        user_id: targetUserId || undefined,
+        replyMode,
+        mentionsBySegment
+      });
+      if (emoji) validated.emoji = emoji;
+
+      const hasText = Array.isArray(validated.textSegments)
+        && validated.textSegments.some((t) => (t || '').trim());
+      const hasResources = Array.isArray(validated.resources) && validated.resources.length > 0;
+      const hasEmoji = !!validated.emoji;
+      if (!hasText && !hasResources && !hasEmoji) {
+        validated.shouldSkip = true;
+      }
+      return validated;
+    } catch {
+      const fallback = { textSegments, resources: [], replyMode, mentionsBySegment };
+      if (emoji) fallback.emoji = emoji;
+      if (textSegments.length === 0) fallback.shouldSkip = true;
+      return fallback;
+    }
+  }
+
   const responseContent = extractXMLTag(response, 'sentra-response');
   if (!responseContent) {
     if (hasSentraTag) {
@@ -454,19 +848,28 @@ export function parseSentraResponse(response) {
   // 提取 <send> 指令（回复/艾特控制）
   const sendBlock = extractXMLTag(responseContent, 'send');
   let replyMode = 'none';
-  let mentions = [];
+  let mentionsBySegment = {};
   try {
     if (sendBlock && sendBlock.trim()) {
       const rm = (extractXMLTag(sendBlock, 'reply_mode') || '').trim().toLowerCase();
       if (rm === 'first' || rm === 'always') replyMode = rm; // 默认为 none
-      const mentionsBlock = extractXMLTag(sendBlock, 'mentions');
-      if (mentionsBlock) {
-        const ids = extractAllXMLTags(mentionsBlock, 'id') || [];
-        mentions = ids.map(v => unescapeXml((v || '').trim())).filter(Boolean);
+      const mbsBlock = extractXMLTag(sendBlock, 'mentions_by_segment');
+      if (mbsBlock) {
+        const segFull = extractAllFullXMLTags(mbsBlock, 'segment') || [];
+        const map = {};
+        for (const sxml of segFull) {
+          const idx = unescapeXml((extractXmlAttrValue(sxml, 'index') || '').trim());
+          if (!idx || !/^\d+$/.test(idx)) continue;
+          const ids2 = extractAllXMLTags(sxml, 'id') || [];
+          const parsedIds = ids2.map(v => unescapeXml((v || '').trim())).filter(Boolean);
+          if (parsedIds.length > 0) map[idx] = parsedIds;
+        }
+        mentionsBySegment = sanitizeMentionsBySegment(map, textSegments.length || 0);
       }
     }
   } catch (e) {
     logger.warn(`<send> 解析失败: ${e.message}`);
+    mentionsBySegment = {};
   }
 
   // 提取 <emoji> 标签（可选，最多一个）
@@ -498,7 +901,7 @@ export function parseSentraResponse(response) {
       group_id: targetGroupId || undefined,
       user_id: targetUserId || undefined,
       replyMode,
-      mentions
+      mentionsBySegment
     });
     //logger.success('协议验证通过');
     //logger.debug(`textSegments: ${validated.textSegments.length} 段`);
@@ -531,10 +934,10 @@ export function parseSentraResponse(response) {
       } else {
         logger.warn('协议验证失败且缺少 <sentra-response>，将跳过发送');
       }
-      fallback = { textSegments: [], resources: [], replyMode, mentions, shouldSkip: true };
+      fallback = { textSegments: [], resources: [], replyMode, mentionsBySegment, shouldSkip: true };
     } else {
       // 保留已提取的文本段落，但不回退为“原文整段发送”
-      fallback = { textSegments, resources: [], replyMode, mentions };
+      fallback = { textSegments, resources: [], replyMode, mentionsBySegment };
     }
 
     if (emoji) fallback.emoji = emoji;  // 即使验证失败也保留 emoji
@@ -600,6 +1003,109 @@ export function convertHistoryToMCPFormat(historyConversations) {
     mcpConversation.push({ role: 'assistant', content: `${toolsXML}\n\n${resultXML}` });
   };
 
+  const addInvocation = (invocations, seen, aiName, argsContent) => {
+    const name = (aiName != null) ? String(aiName).trim() : '';
+    if (!name) return;
+    const args = argsContent != null ? String(argsContent).trim() : '';
+    const key = `${name}|${args}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    invocations.push({ aiName: name, argsContent: args });
+  };
+
+  const extractInvocationsFromResultFullByRegex = (resultFullXml, invocations, seen) => {
+    try {
+      const aiName = extractXMLTag(resultFullXml, 'aiName');
+      const argsJSONText = extractXMLTag(resultFullXml, 'arguments');
+      const argsContent = argsJSONText || extractXMLTag(resultFullXml, 'args');
+      if (aiName && argsContent != null) {
+        addInvocation(invocations, seen, aiName, argsContent);
+      }
+    } catch {}
+  };
+
+  const extractInvocationsAndResultBlocksByParser = (text) => {
+    const invocations = [];
+    const seen = new Set();
+    const groupFullBlocks = extractAllFullXMLTags(text, 'sentra-result-group') || [];
+    const singlesFull = extractAllFullXMLTags(text, 'sentra-result') || [];
+    const resultBlocksFull = groupFullBlocks.length > 0 ? groupFullBlocks : singlesFull;
+
+    try {
+      if (groupFullBlocks.length > 0) {
+        for (const groupFull of groupFullBlocks) {
+          let groupNode = null;
+          try {
+            const doc = getXmlParser().parse(`<root>${groupFull}</root>`);
+            groupNode = doc?.root?.['sentra-result-group'] || null;
+          } catch {
+            groupNode = null;
+          }
+
+          const resultFulls = extractAllFullXMLTags(groupFull, 'sentra-result') || [];
+          const nodes = groupNode ? normalizeToArray(groupNode['sentra-result']) : [];
+          const maxLen = Math.max(nodes.length, resultFulls.length);
+          for (let i = 0; i < maxLen; i++) {
+            const node = nodes[i];
+            const aiName = node ? getTextNode(node.aiName).trim() : '';
+            const argsJSONText = node ? getTextNode(node.arguments).trim() : '';
+            if (aiName && argsJSONText) {
+              addInvocation(invocations, seen, aiName, argsJSONText);
+              continue;
+            }
+
+            if (aiName && node && node.args && typeof node.args === 'object') {
+              try {
+                const obj = xmlNodeToJs(node.args);
+                const jsonText = JSON.stringify(obj || {});
+                addInvocation(invocations, seen, aiName, jsonText);
+                continue;
+              } catch {}
+            }
+
+            const fallbackFull = resultFulls[i];
+            if (fallbackFull) {
+              extractInvocationsFromResultFullByRegex(fallbackFull, invocations, seen);
+            }
+          }
+        }
+        return { invocations, resultBlocksFull };
+      }
+
+      if (singlesFull.length > 0) {
+        for (const full of singlesFull) {
+          let node = null;
+          try {
+            const doc = getXmlParser().parse(`<root>${full}</root>`);
+            node = doc?.root?.['sentra-result'] || null;
+          } catch {
+            node = null;
+          }
+
+          const aiName = node ? getTextNode(node.aiName).trim() : '';
+          const argsJSONText = node ? getTextNode(node.arguments).trim() : '';
+          if (aiName && argsJSONText) {
+            addInvocation(invocations, seen, aiName, argsJSONText);
+            continue;
+          }
+
+          if (aiName && node && node.args && typeof node.args === 'object') {
+            try {
+              const obj = xmlNodeToJs(node.args);
+              const jsonText = JSON.stringify(obj || {});
+              addInvocation(invocations, seen, aiName, jsonText);
+              continue;
+            } catch {}
+          }
+          extractInvocationsFromResultFullByRegex(full, invocations, seen);
+        }
+        return { invocations, resultBlocksFull };
+      }
+    } catch {}
+
+    return { invocations: [], resultBlocksFull };
+  };
+
   for (const msg of historyConversations) {
     if (!msg || typeof msg !== 'object') continue;
     if (msg.role === 'system') {
@@ -623,9 +1129,8 @@ export function convertHistoryToMCPFormat(historyConversations) {
 
     if (msg.role === 'user') {
       // Legacy combined (result embedded in user message)
-      const groupBlocks = extractAllXMLTags(content, 'sentra-result-group') || [];
-      const singleResultContent = extractXMLTag(content, 'sentra-result');
-      if ((groupBlocks.length > 0) || singleResultContent) {
+      const hasLegacyResults = content.includes('<sentra-result') || content.includes('<sentra-result-group');
+      if (hasLegacyResults) {
         const pendingMessages = extractXMLTag(content, 'sentra-pending-messages');
         const userQuestion = extractXMLTag(content, 'sentra-user-question');
 
@@ -638,41 +1143,15 @@ export function convertHistoryToMCPFormat(historyConversations) {
           mcpConversation.push({ role: 'user', content: userContent });
         }
 
-        const invocations = [];
-        const seen = new Set();
+        let invocations = [];
         let resultBlocksFull = [];
-        if (groupBlocks.length > 0) {
-          const groupFullBlocks = extractAllFullXMLTags(content, 'sentra-result-group') || [];
-          resultBlocksFull = groupFullBlocks;
-          for (const gb of groupBlocks) {
-            const items = extractAllXMLTags(gb, 'sentra-result') || [];
-            for (const it of items) {
-              const aiName = extractXMLTag(it, 'aiName');
-              let argsJSONText = extractXMLTag(it, 'arguments');
-              let argsContent = argsJSONText || extractXMLTag(it, 'args');
-              if (aiName && argsContent != null) {
-                const key = `${aiName}|${String(argsJSONText || argsContent).trim()}`;
-                if (seen.has(key)) continue;
-                seen.add(key);
-                invocations.push({ aiName, argsContent });
-              }
-            }
-          }
-        } else if (singleResultContent) {
-          const singlesFull = extractAllFullXMLTags(content, 'sentra-result') || [];
-          resultBlocksFull = singlesFull;
-          const singlesContents = extractAllXMLTags(content, 'sentra-result') || [];
-          for (const it of singlesContents) {
-            const aiName = extractXMLTag(it, 'aiName');
-            let argsJSONText = extractXMLTag(it, 'arguments');
-            let argsContent = argsJSONText || extractXMLTag(it, 'args');
-            if (aiName && argsContent != null) {
-              const key = `${aiName}|${String(argsJSONText || argsContent).trim()}`;
-              if (seen.has(key)) continue;
-              seen.add(key);
-              invocations.push({ aiName, argsContent });
-            }
-          }
+        try {
+          const parsedOut = extractInvocationsAndResultBlocksByParser(content);
+          invocations = parsedOut.invocations || [];
+          resultBlocksFull = parsedOut.resultBlocksFull || [];
+        } catch {
+          invocations = [];
+          resultBlocksFull = [];
         }
 
         let combined = '';
@@ -879,34 +1358,12 @@ function buildSentraToolsFromArgs(aiName, argsContent) {
   const xmlLines = ['<sentra-tools>'];
   xmlLines.push(`  <invoke name="${escapeXmlAttr(String(aiName || ''))}">`);
 
-  // 优先尝试解析为 JSON（来自 <arguments> 或 <args> 中的 JSON）
-  let parsed = null;
-  try {
-    const trimmed = String(argsContent || '').trim();
-    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-      parsed = JSON.parse(trimmed);
-    }
-  } catch {}
-
+  const parsed = parseArgsContentToObject(argsContent);
   if (parsed && typeof parsed === 'object') {
-    const entries = Object.entries(parsed);
-    for (const [key, value] of entries) {
+    for (const [key, value] of Object.entries(parsed)) {
       const paramLines = buildTypedParameterBlock(key, value);
       xmlLines.push(...paramLines);
     }
-  } else {
-    // 简单 XML 解析 <key>value</key> 对
-    try {
-      const re = /<([a-zA-Z0-9_\-]+)>([^<]*)<\/\1>/g;
-      const matches = String(argsContent || '').matchAll(re);
-      for (const m of matches) {
-        const paramName = m[1];
-        const rawValue = m[2];
-        const jsValue = inferScalarForParam(rawValue);
-        const paramLines = buildTypedParameterBlock(paramName, jsValue);
-        xmlLines.push(...paramLines);
-      }
-    } catch {}
   }
 
   xmlLines.push('  </invoke>');
@@ -919,32 +1376,12 @@ function buildSentraToolsBatch(items) {
   const xmlLines = ['<sentra-tools>'];
   for (const { aiName, argsContent } of items) {
     xmlLines.push(`  <invoke name="${escapeXmlAttr(String(aiName || ''))}">`);
-    // 与 buildSentraToolsFromArgs 相同的解析逻辑：优先 JSON，回退 XML
-    let parsed = null;
-    try {
-      const trimmed = String(argsContent || '').trim();
-      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-        parsed = JSON.parse(trimmed);
-      }
-    } catch {}
+    const parsed = parseArgsContentToObject(argsContent);
     if (parsed && typeof parsed === 'object') {
-      const entries = Object.entries(parsed);
-      for (const [key, value] of entries) {
+      for (const [key, value] of Object.entries(parsed)) {
         const paramLines = buildTypedParameterBlock(key, value);
         xmlLines.push(...paramLines);
       }
-    } else {
-      try {
-        const re = /<([a-zA-Z0-9_\-]+)>([^<]*)<\/\1>/g;
-        const matches = String(argsContent || '').matchAll(re);
-        for (const m of matches) {
-          const paramName = m[1];
-          const rawValue = m[2];
-          const jsValue = inferScalarForParam(rawValue);
-          const paramLines = buildTypedParameterBlock(paramName, jsValue);
-          xmlLines.push(...paramLines);
-        }
-      } catch {}
     }
     xmlLines.push('  </invoke>');
   }

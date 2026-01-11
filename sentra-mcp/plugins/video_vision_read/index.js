@@ -5,6 +5,7 @@ import { config } from '../../src/config/index.js';
 import mime from 'mime-types';
 import { httpRequest } from '../../src/utils/http.js';
 import { toAbsoluteLocalPath } from '../../src/utils/path.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -190,7 +191,7 @@ async function readVideoAsBase64WithMime(src, { timeoutMs }) {
   return { uri: dataUri, mime: type, size: buf.length, base64: buf.toString('base64') };
 }
 
-export default async function handler(args = {}, options = {}) {
+async function legacyHandler(args = {}, options = {}) {
   const videos = Array.isArray(args.videos) ? args.videos : [];
   const prompt = String(args.prompt || '').trim();
   if (!videos.length) return { success: false, code: 'INVALID', error: 'videos is required (array of urls or absolute paths)', advice: buildAdvice('INVALID', { tool: 'video_vision_read' }) };
@@ -311,4 +312,18 @@ export default async function handler(args = {}, options = {}) {
     const isTimeout = isTimeoutError(e);
     return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'video_vision_read', videos_count: videos.length }) };
   }
+}
+
+export default async function handler(args = {}, options = {}) {
+  const out = await legacyHandler(args, options);
+  if (out && typeof out === 'object' && typeof out.success === 'boolean') {
+    if (out.success === true) {
+      return ok(out.data ?? null, out.code || 'OK', { ...('advice' in out ? { advice: out.advice } : {}) });
+    }
+    const extra = { ...('advice' in out ? { advice: out.advice } : {}) };
+    if ('details' in out && out.details != null) extra.detail = out.details;
+    if ('data' in out && out.data != null) extra.detail = extra.detail ? { ...(typeof extra.detail === 'object' ? extra.detail : { value: extra.detail }), data: out.data } : { data: out.data };
+    return fail(('error' in out) ? out.error : 'Tool failed', out.code || 'ERR', extra);
+  }
+  return ok(out);
 }

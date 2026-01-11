@@ -1,9 +1,10 @@
 import logger from '../../src/logger/index.js';
 import { config } from '../../src/config/index.js';
-import fs from 'node:fs/promises';
 import path from 'node:path';
-import { abs as toAbs, toPosix } from '../../src/utils/path.js';
-import OpenAI from 'openai';
+import os from 'node:os';
+import { abs as toAbs } from '../../src/utils/path.js';
+import { httpRequest } from '../../src/utils/http.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 let _JSDOM;
 let _Readability;
@@ -724,16 +725,13 @@ async function tryPuppeteer(url, cfg) {
 
 export default async function webParserHandler(args, options = {}) {
   const url = processUrl(args?.url);
-  if (!url) return { success: false, code: 'INVALID_URL', error: 'URL格式无效', advice: buildAdvice('INVALID_URL') };
+  if (!url) return fail('URL格式无效', 'INVALID_URL', { advice: buildAdvice('INVALID_URL') });
 
   const prompt = String(args?.prompt || '').trim();
   if (!prompt) {
-    return {
-      success: false,
-      code: 'MISSING_PROMPT',
-      error: 'prompt 为必填参数：请说明你希望从该网页获取什么/解决什么问题',
+    return fail('prompt 为必填参数：请说明你希望从该网页获取什么/解决什么问题', 'MISSING_PROMPT', {
       advice: buildAdvice('ERR', { url })
-    };
+    });
   }
 
   const penv = options.pluginEnv || {};
@@ -764,12 +762,9 @@ export default async function webParserHandler(args, options = {}) {
     const isTimeout = isTimeoutError(err);
     const msg = String(err?.message || err);
     const blocked = /403|forbidden|denied|captcha|cloudflare/i.test(msg);
-    return {
-      success: false,
-      code: isTimeout ? 'TIMEOUT' : (blocked ? 'BLOCKED' : 'FETCH_FAILED'),
-      error: msg,
+    return fail(err, isTimeout ? 'TIMEOUT' : (blocked ? 'BLOCKED' : 'FETCH_FAILED'), {
       advice: buildAdvice(isTimeout ? 'TIMEOUT' : (blocked ? 'BLOCKED' : 'ERR'), { url }),
-    };
+    });
   }
 
   // Truncate text by maxBytes (char-based)
@@ -834,5 +829,5 @@ export default async function webParserHandler(args, options = {}) {
     puppeteerError: errorPuppeteer ? String(errorPuppeteer.message || errorPuppeteer) : undefined,
   };
 
-  return { success: true, data };
+  return ok(data);
 }

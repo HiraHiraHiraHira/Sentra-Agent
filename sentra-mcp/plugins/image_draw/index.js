@@ -6,6 +6,7 @@ import { config } from '../../src/config/index.js';
 import OpenAI from 'openai';
 import mime from 'mime-types';
 import { httpRequest } from '../../src/utils/http.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 // 模型简化：仅使用环境变量 DRAW_MODEL（未配置则回退全局模型）
 
@@ -308,7 +309,7 @@ async function downloadImagesAndRewrite(md, prefix = 'draw') {
 
 export default async function handler(args = {}, options = {}) {
   const prompt = String(args.prompt || '').trim();
-  if (!prompt) return { success: false, code: 'INVALID', error: 'prompt is required', advice: buildAdvice('INVALID', { tool: 'image_draw' }) };
+  if (!prompt) return fail('prompt is required', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'image_draw' }) });
 
   const penv = options?.pluginEnv || {};
   const apiKey = penv.DRAW_API_KEY || process.env.DRAW_API_KEY || config.llm.apiKey;
@@ -336,7 +337,10 @@ export default async function handler(args = {}, options = {}) {
       const first = Array.isArray(res?.data) ? res.data[0] : null;
       const b64 = first?.b64_json;
       if (!b64) {
-        return { success: false, code: 'NO_IMAGE', error: 'images API returned no image data', data: { prompt }, advice: buildAdvice('NO_IMAGE', { tool: 'image_draw', prompt }) };
+        return fail('images API returned no image data', 'NO_IMAGE', {
+          advice: buildAdvice('NO_IMAGE', { tool: 'image_draw', prompt }),
+          detail: { prompt },
+        });
       }
 
       const buf = Buffer.from(String(b64), 'base64');
@@ -346,11 +350,11 @@ export default async function handler(args = {}, options = {}) {
       const absMd = String(abs).replace(/\\/g, '/');
       const content = formatLocalMarkdownImage(absMd);
 
-      return { success: true, data: { prompt, content } };
+      return ok({ prompt, content });
     } catch (e) {
       logger.warn?.('image_draw:images_request_failed', { label: 'PLUGIN', error: String(e?.message || e) });
       const isTimeout = isTimeoutError(e);
-      return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'image_draw', prompt }) };
+      return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'image_draw', prompt }) });
     }
   }
 
@@ -375,17 +379,23 @@ export default async function handler(args = {}, options = {}) {
     }
 
     if (!hasMarkdownImage(content)) {
-      return { success: false, code: 'NO_MD_IMAGE', error: 'response has no markdown image', data: { prompt }, advice: buildAdvice('NO_MD_IMAGE', { tool: 'image_draw', prompt }) };
+      return fail('response has no markdown image', 'NO_MD_IMAGE', {
+        advice: buildAdvice('NO_MD_IMAGE', { tool: 'image_draw', prompt }),
+        detail: { prompt }
+      });
     }
     const rewritten = await downloadImagesAndRewrite(content, 'draw');
     const localMarkdown = await collectVerifiedLocalMarkdownImages(rewritten);
     if (!localMarkdown) {
-      return { success: false, code: 'NO_LOCAL_IMAGE', error: 'unable to download image to local markdown', data: { prompt }, advice: buildAdvice('NO_LOCAL_IMAGE', { tool: 'image_draw', prompt }) };
+      return fail('unable to download image to local markdown', 'NO_LOCAL_IMAGE', {
+        advice: buildAdvice('NO_LOCAL_IMAGE', { tool: 'image_draw', prompt }),
+        detail: { prompt }
+      });
     }
-    return { success: true, data: { prompt, content: localMarkdown } };
+    return ok({ prompt, content: localMarkdown });
   } catch (e) {
     logger.warn?.('image_draw:request_failed', { label: 'PLUGIN', error: String(e?.message || e) });
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'image_draw', prompt }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'image_draw', prompt }) });
   }
 }

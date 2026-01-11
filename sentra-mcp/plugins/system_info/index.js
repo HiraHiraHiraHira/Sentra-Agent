@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import logger from '../../src/logger/index.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 // 内存缓存: Map<key, { expireAt: number, data: any }>
 const memCache = new Map();
@@ -882,7 +883,7 @@ export default async function handler(args = {}) {
       cachedData = getFromMem(cacheKey);
       if (cachedData) {
         logger.debug?.('system_info:cache_hit', { label: 'PLUGIN', source: 'memory', cacheKey });
-        return { success: true, data: cachedData, cached: true, source: 'memory' };
+        return ok(cachedData, 'OK', { cached: true, source: 'memory' });
       }
     }
 
@@ -895,7 +896,7 @@ export default async function handler(args = {}) {
           setToMem(cacheKey, cachedData, cacheTTL);
         }
         logger.debug?.('system_info:cache_hit', { label: 'PLUGIN', source: 'file', cacheKey });
-        return { success: true, data: cachedData, cached: true, source: 'file' };
+        return ok(cachedData, 'OK', { cached: true, source: 'file' });
       }
     }
   }
@@ -973,9 +974,9 @@ export default async function handler(args = {}) {
       logger.debug?.('system_info:cache_written', { label: 'PLUGIN', cacheKey, ttl: cacheTTL });
     }
 
-    return { success: true, data, cached: false };
+    return ok(data, 'OK', { cached: false });
   } catch (e) {
     logger.error('system_info handler error', { label: 'PLUGIN', error: String(e?.message || e) });
-    return { success: false, code: 'ERR', error: String(e?.message || e) };
+    return fail(e, 'ERR');
   }
 }

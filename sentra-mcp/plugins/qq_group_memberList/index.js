@@ -1,4 +1,5 @@
 import wsCall from '../../src/utils/ws_rpc.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -53,12 +54,12 @@ export default async function handler(args = {}, options = {}) {
   const path = 'group.memberList';
   const requestId = String(args.requestId || `${path}-${Date.now()}`);
   const group_id = Number(args.group_id);
-  if (!Number.isFinite(group_id)) return { success: false, code: 'INVALID', error: 'group_id 不能为空', advice: buildAdvice('INVALID', { tool: 'qq_group_memberList' }) };
+  if (!Number.isFinite(group_id)) return fail('group_id 不能为空', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_group_memberList' }) });
   try {
     const resp = await wsCall({ url, path, args: [group_id], requestId, timeoutMs });
-    return { success: true, data: { request: { type: 'sdk', path, args: [group_id], requestId }, response: resp } };
+    return ok({ request: { type: 'sdk', path, args: [group_id], requestId }, response: resp });
   } catch (e) {
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_group_memberList', group_id }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_group_memberList', group_id }) });
   }
 }

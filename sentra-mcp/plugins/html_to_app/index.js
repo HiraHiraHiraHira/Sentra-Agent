@@ -11,6 +11,7 @@ import { config } from '../../src/config/index.js';
 import { chatCompletion } from '../../src/openai/client.js';
 import { abs as toAbs, toPosix } from '../../src/utils/path.js';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
+import { ok, fail } from '../../src/utils/result.js';
 
 // 支持的框架列表
 const FRAMEWORKS = new Set(['electron-vanilla', 'electron-react', 'electron-vue', 'vanilla', 'react', 'vue']);
@@ -698,20 +699,20 @@ export default async function handler(args = {}, options = {}) {
     const details = String(args.details || '').trim();
 
     if (!description) {
-      return { success: false, code: 'INVALID', error: 'description 参数必填', advice: buildAdvice('INVALID', { field: 'description' }) };
+      return fail('description 参数必填', 'INVALID', { advice: buildAdvice('INVALID', { field: 'description' }) });
     }
 
     if (!appName) {
-      return { success: false, code: 'INVALID', error: 'app_name 参数必填', advice: buildAdvice('INVALID', { field: 'app_name' }) };
+      return fail('app_name 参数必填', 'INVALID', { advice: buildAdvice('INVALID', { field: 'app_name' }) });
     }
 
     if (!details) {
-      return { success: false, code: 'INVALID', error: 'details 参数必填，请提供具体的 UI/UX 细节要求', advice: buildAdvice('INVALID', { field: 'details' }) };
+      return fail('details 参数必填，请提供具体的 UI/UX 细节要求', 'INVALID', { advice: buildAdvice('INVALID', { field: 'details' }) });
     }
 
     // 验证应用名称格式（只允许字母、数字、连字符、下划线）
     if (!/^[a-zA-Z0-9_-]+$/.test(appName)) {
-      return { success: false, code: 'INVALID', error: 'app_name 只能包含字母、数字、连字符和下划线', advice: buildAdvice('INVALID', { field: 'app_name' }) };
+      return fail('app_name 只能包含字母、数字、连字符和下划线', 'INVALID', { advice: buildAdvice('INVALID', { field: 'app_name' }) });
     }
 
     const htmlContent = String(args.html_content || '').trim();
@@ -725,12 +726,7 @@ export default async function handler(args = {}, options = {}) {
     // 检查项目是否已存在
     try {
       await fs.access(projectPath);
-      return {
-        success: false,
-        code: 'PROJECT_EXISTS',
-        error: `项目已存在：${projectPath}。请使用不同的 app_name 或删除现有项目。`,
-        advice: buildAdvice('PROJECT_EXISTS', { projectPath })
-      };
+      return fail(`项目已存在：${projectPath}。请使用不同的 app_name 或删除现有项目。`, 'PROJECT_EXISTS', { advice: buildAdvice('PROJECT_EXISTS', { projectPath }) });
     } catch {
       // 项目不存在，可以继续
     }
@@ -921,27 +917,24 @@ export default async function handler(args = {}, options = {}) {
     const instructions = generateInstructions(projectPath, appName, automated);
     
     // === 7. 返回结果 ===
-    const result = {
-      success: true,
-      data: {
-        action: 'html_to_app',
-        project_path: projectPath,
-        app_name: appName,
-        framework,
-        files_count: writtenFiles.length,
-        files: writtenFiles,
-        instructions,
-        generation_info: {
-          model: resp.model,
-          created: resp.created,
-          baseURL: penv.HTML_TO_APP_BASE_URL || process.env.HTML_TO_APP_BASE_URL || config.llm.baseURL,
-        },
+    const data = {
+      action: 'html_to_app',
+      project_path: projectPath,
+      app_name: appName,
+      framework,
+      files_count: writtenFiles.length,
+      files: writtenFiles,
+      instructions,
+      generation_info: {
+        model: resp.model,
+        created: resp.created,
+        baseURL: penv.HTML_TO_APP_BASE_URL || process.env.HTML_TO_APP_BASE_URL || config.llm.baseURL,
       },
     };
 
     // 添加自动化流程结果
     if (autoInstall || autoBuild || autoZip) {
-      result.data.automation = {
+      data.automation = {
         install: installResult ? { success: installResult.success, packageManager } : null,
         build: buildResult ? { success: buildResult.success, files: buildFiles } : null,
         zip: zipResult
@@ -954,15 +947,10 @@ export default async function handler(args = {}, options = {}) {
       };
     }
 
-    return result;
+    return ok(data);
   } catch (e) {
     logger.error?.('html_to_app: 生成失败', { label: 'PLUGIN', error: String(e?.message || e), stack: e?.stack });
     const isTimeout = isTimeoutError(e);
-    return {
-      success: false,
-      code: isTimeout ? 'TIMEOUT' : 'GENERATION_ERROR',
-      error: String(e?.message || e),
-      advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { stage: 'handler' }),
-    };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'GENERATION_ERROR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { stage: 'handler' }) });
   }
 }

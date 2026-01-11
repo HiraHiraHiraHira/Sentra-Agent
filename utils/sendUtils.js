@@ -267,8 +267,26 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
   const protocolResources = parsed.resources || [];
   const emoji = parsed.emoji || null;
   const replyMode = parsed.replyMode || 'none';
-  const mentions = Array.isArray(parsed.mentions) ? parsed.mentions : [];
+  const mentionsBySegment = (parsed && typeof parsed.mentionsBySegment === 'object' && parsed.mentionsBySegment) ? parsed.mentionsBySegment : {};
   const hasSendDirective = typeof response === 'string' && response.includes('<send>');
+
+  const normalizeMentionIds = (ids) => {
+    if (!Array.isArray(ids)) return [];
+    const out = [];
+    const seen = new Set();
+    for (const mid of ids) {
+      const raw = String(mid ?? '').trim();
+      if (!raw) continue;
+      const lowered = raw.toLowerCase ? raw.toLowerCase() : raw;
+      const normalized = (lowered === '@all') ? 'all' : raw;
+      if (normalized !== 'all' && !/^\d+$/.test(normalized)) continue;
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      out.push(normalized);
+      if (out.length >= 20) break;
+    }
+    return out;
+  };
 
   const defaultRoute = (parsed && parsed.group_id)
     ? { kind: 'group', id: String(parsed.group_id) }
@@ -377,15 +395,13 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
   const selfId = msg?.self_id;
   const userAtSelf = isGroupChat && Array.isArray(msg?.at_users) && typeof selfId === 'number' && msg.at_users.includes(selfId);
   const finalReplyMode = hasSendDirective ? replyMode : 'none';
-  const mentionsToUse = hasSendDirective ? mentions : [];
   
   // 获取要引用的消息ID（仅当允许引用时）
   const replyMessageId = allowReply ? await getReplyableMessageId(msg) : null;
   let usedReply = false;
   
-  logger.debug(`发送策略: 段落=${segments.length}, replyMode=${finalReplyMode}(${hasSendDirective ? 'by_send' : 'fallback'}), mentions=[${mentionsToUse.join(',')}], allowReply=${allowReply}, replyId=${replyMessageId}`);
+  logger.debug(`发送策略: 段落=${segments.length}, replyMode=${finalReplyMode}(${hasSendDirective ? 'by_send' : 'fallback'}), allowReply=${allowReply}, replyId=${replyMessageId}`);
 
-  let usedMentions = false;
   let skippedCrossRouteCount = 0;
   let crossOps = 0;
   
@@ -423,19 +439,20 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       const isPrivateTarget = routeTarget.kind === 'private';
 
       // 仅在“当前会话”中允许 mentions（避免跨群误 @）
-      if (!usedMentions && routeTarget.isCurrent && isGroupTarget && mentionsToUse.length > 0) {
-        const atParts = mentionsToUse.map(mid => {
-          const raw = String(mid).trim();
-          const qq = (raw.toLowerCase && (raw.toLowerCase() === 'all' || raw.toLowerCase() === '@all')) ? 'all' : raw;
-        
-          return { type: 'at', data: { qq } };
-        });
+      const segMentions = (() => {
+        if (!hasSendDirective) return [];
+        if (!routeTarget.isCurrent || !isGroupTarget) return [];
+        const bySeg = mentionsBySegment && typeof mentionsBySegment === 'object' ? mentionsBySegment[String(i + 1)] : null;
+        return normalizeMentionIds(bySeg);
+      })();
+
+      if (segMentions.length > 0) {
+        const atParts = segMentions.map(qq => ({ type: 'at', data: { qq } }));
         messageParts = [
           ...atParts,
           { type: 'text', data: { text: ' ' } },
           ...messageParts
         ];
-        usedMentions = true;
       }
       
       let sentMessageId = null;
@@ -551,13 +568,13 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
 
       if (mediaMessageParts.length === 0) continue;
 
-      if (segments.length === 0 && rt.isCurrent && rt.kind === 'group' && mentionsToUse.length > 0) {
-        const atParts = mentionsToUse.map(mid => {
-          const raw = String(mid).trim();
-          const qq = (raw.toLowerCase && (raw.toLowerCase() === 'all' || raw.toLowerCase() === '@all')) ? 'all' : raw;
-          return { type: 'at', data: { qq } };
-        });
-        mediaMessageParts.unshift(...atParts);
+      if (segments.length === 0 && hasSendDirective && rt.isCurrent && rt.kind === 'group') {
+        const ids = mentionsBySegment && typeof mentionsBySegment === 'object' ? mentionsBySegment['1'] : null;
+        const segMentions = normalizeMentionIds(ids);
+        if (segMentions.length > 0) {
+          const atParts = segMentions.map(qq => ({ type: 'at', data: { qq } }));
+          mediaMessageParts.unshift(...atParts);
+        }
       }
 
       const replyForMedia = rt.isCurrent && replyMessageId && allowReply && (

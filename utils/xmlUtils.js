@@ -41,10 +41,9 @@ export function unescapeXml(str) {
 export function stripTypedValueWrapper(text) {
   const s = String(text || '').trim();
   if (!s) return '';
-  const m = s.match(/^<(string|number|boolean|null)>[\s\S]*?<\/(string|number|boolean|null)>$/i);
+  const m = s.match(/^<(string|number|boolean|null)>([\s\S]*?)<\/\1>$/i);
   if (!m) return s;
-  const inner = s.replace(/^<[^>]+>/, '').replace(/<\/[^>]+>$/i, '');
-  return String(inner || '').trim();
+  return String(m[2] || '').trim();
 }
 
 export function extractXmlAttrValue(tagXml, attrName) {

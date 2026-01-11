@@ -8,6 +8,7 @@ import { abs as toAbs } from '../../src/utils/path.js';
 import os from 'node:os';
 import wsCall from '../../src/utils/ws_rpc.js';
 import { getIdsWithCache } from '../../src/utils/message_cache_helper.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function toMarkdownPath(abs) {
   const label = path.basename(abs);
@@ -726,7 +727,7 @@ export default async function handler(args = {}, options = {}) {
     .filter((k) => !!k);
 
   if (!keywords.length) {
-    return { success: false, code: 'INVALID', error: 'keywords 为必填参数，请提供至少一个搜索关键词数组，如：["鬼灭之刃 MAD", "进击的巨人 AMV"]', advice: buildAdvice('INVALID', { tool: 'bilibili_search' }) };
+    return fail('keywords 为必填参数，请提供至少一个搜索关键词数组，如：["鬼灭之刃 MAD", "进击的巨人 AMV"]', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'bilibili_search' }) });
   }
 
   const delayMinMs = Number(process.env.BILI_SEARCH_DELAY_MIN_MS || 800);
@@ -752,21 +753,11 @@ export default async function handler(args = {}, options = {}) {
 
   const anyOk = results.some((r) => r.success);
   if (anyOk) {
-    return {
-      success: true,
-      data: {
-        results
-      }
-    };
+    return ok({ results });
   }
 
-  return {
-    success: false,
-    code: 'BILIBILI_SEARCH_FAILED',
-    error: '所有关键词的视频搜索或处理均失败',
-    data: {
-      results
-    },
-    advice: buildAdvice('NO_RESULT', { tool: 'bilibili_search', keywords })
-  };
+  return fail('所有关键词的视频搜索或处理均失败', 'BILIBILI_SEARCH_FAILED', {
+    advice: buildAdvice('NO_RESULT', { tool: 'bilibili_search', keywords }),
+    detail: { results },
+  });
 }

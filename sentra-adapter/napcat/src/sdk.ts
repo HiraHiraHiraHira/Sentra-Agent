@@ -279,6 +279,7 @@ export function createSDK(init?: SDKInit): SdkInvoke {
         messageStream.updateRuntimeOptions({
           includeRaw: next.streamIncludeRaw,
           skipAnimatedEmoji: next.streamSkipAnimatedEmoji,
+          skipVoice: next.streamSkipVoice,
           rpcRetryEnabled: next.streamRpcRetryEnabled,
           rpcRetryIntervalMs: next.streamRpcRetryIntervalMs,
           rpcRetryMaxAttempts: next.streamRpcRetryMaxAttempts,
@@ -1034,6 +1035,7 @@ export function createSDK(init?: SDKInit): SdkInvoke {
       port: cfg.streamPort,
       includeRaw: cfg.streamIncludeRaw,
       skipAnimatedEmoji: cfg.streamSkipAnimatedEmoji,
+      skipVoice: cfg.streamSkipVoice,
       rpcRetryEnabled: cfg.streamRpcRetryEnabled,
       rpcRetryIntervalMs: cfg.streamRpcRetryIntervalMs,
       rpcRetryMaxAttempts: cfg.streamRpcRetryMaxAttempts,

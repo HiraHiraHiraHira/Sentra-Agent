@@ -1,4 +1,5 @@
 import wsCall from '../../src/utils/ws_rpc.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -80,7 +81,7 @@ export default async function handler(args = {}, options = {}) {
   const maxRetries = Math.max(0, Number(penv.POKE_MAX_RETRIES || 1));
   
   const user_id = args.user_id;
-  if (!user_id) return { success: false, code: 'INVALID', error: 'user_id 不能为空', advice: buildAdvice('INVALID', { tool: 'qq_user_sendPoke' }) };
+  if (!user_id) return fail('user_id 不能为空', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_user_sendPoke' }) });
   
   // 戳一戳次数（1-5次）
   let times = Number(args.times);
@@ -170,18 +171,15 @@ export default async function handler(args = {}, options = {}) {
 
   // 只要至少一次成功，就视为整体成功（保持原有语义）
   if (successCount > 0) {
-    return { success: true, data };
+    return ok(data, successCount === times ? 'OK' : 'PARTIAL_SUCCESS');
   }
 
   // 所有轮次都失败，整体视为失败
   const failed = results.filter(r => !r.success);
   const timeoutLike = failed.some(r => isTimeoutError(r?.error));
   const errDetail = failed.map(r => `第${r.round}轮: ${r.error}`).join('；') || '未知原因';
-  return {
-    success: false,
-    code: timeoutLike ? 'TIMEOUT' : 'ALL_FAILED',
-    error: `所有戳一戳请求都失败：${errDetail}`,
+  return fail(`所有戳一戳请求都失败：${errDetail}`, timeoutLike ? 'TIMEOUT' : 'ALL_FAILED', {
     advice: buildAdvice(timeoutLike ? 'TIMEOUT' : 'ALL_FAILED', { tool: 'qq_user_sendPoke', user_id, times }),
-    data,
-  };
+    detail: data,
+  });
 }

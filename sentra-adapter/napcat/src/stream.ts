@@ -136,6 +136,7 @@ export class MessageStream {
   private port: number;
   private includeRaw: boolean;
   private skipAnimatedEmoji: boolean;
+  private skipVoice: boolean;
   private getGroupNameFn?: (groupId: number) => Promise<string | undefined>;
   private invoker?: SdkInvoke;
   private rpcRetryEnabled: boolean;
@@ -153,6 +154,8 @@ export class MessageStream {
     includeRaw?: boolean;
     /** 是否跳过动画表情图片消息 */
     skipAnimatedEmoji?: boolean;
+    /** 是否跳过非引用语音消息（默认 true；仅语音且无引用、无文本、无其他段时跳过） */
+    skipVoice?: boolean;
     /** 当通过消息流调用 NapCat SDK 失败时，是否启用重试 */
     rpcRetryEnabled?: boolean;
     /** 重试间隔（毫秒），默认 10000ms */
@@ -169,6 +172,7 @@ export class MessageStream {
     this.port = options.port;
     this.includeRaw = options.includeRaw ?? false;
     this.skipAnimatedEmoji = options.skipAnimatedEmoji ?? false;
+    this.skipVoice = options.skipVoice ?? true;
     this.rpcRetryEnabled = options.rpcRetryEnabled ?? true;
     this.rpcRetryIntervalMs = options.rpcRetryIntervalMs ?? 10000;
     this.rpcRetryMaxAttempts = options.rpcRetryMaxAttempts ?? 60;
@@ -444,6 +448,7 @@ export class MessageStream {
   updateRuntimeOptions(options: {
     includeRaw?: boolean;
     skipAnimatedEmoji?: boolean;
+    skipVoice?: boolean;
     rpcRetryEnabled?: boolean;
     rpcRetryIntervalMs?: number;
     rpcRetryMaxAttempts?: number;
@@ -456,6 +461,9 @@ export class MessageStream {
     }
     if (options.skipAnimatedEmoji !== undefined) {
       this.skipAnimatedEmoji = options.skipAnimatedEmoji;
+    }
+    if (options.skipVoice !== undefined) {
+      this.skipVoice = options.skipVoice;
     }
     if (options.rpcRetryEnabled !== undefined) {
       this.rpcRetryEnabled = options.rpcRetryEnabled;
@@ -695,6 +703,29 @@ export class MessageStream {
           return;
         }
       }
+
+      // 过滤：非引用语音消息
+      if (this.skipVoice) {
+        const hasReply = !!replyContext?.reply;
+        if (!hasReply && Array.isArray((ev as any).message)) {
+          const segs: any[] = (ev as any).message;
+          const hasRecord = segs.some((s) => s?.type === 'record');
+          if (hasRecord) {
+            const hasText = segs.some((s) => s?.type === 'text' && String(s?.data?.text ?? '').trim());
+            // 只在“纯语音”时跳过：没有文本、没有 @、没有其他多媒体段
+            const hasOther = segs.some((s) => {
+              const t = String(s?.type || '');
+              if (!t) return false;
+              return !['record', 'text'].includes(t);
+            });
+            if (!hasText && !hasOther) {
+              log.debug({ message_id: (ev as any).message_id, sender_id: (ev as any).user_id }, '跳过非引用语音消息');
+              return;
+            }
+          }
+        }
+      }
+
       const formatted = await this.formatMessage(ev, replyContext);
       
       // 检查是否需要跳过动画表情

@@ -53,6 +53,9 @@ importers:
       extract-path:
         specifier: ^2.0.0
         version: 2.0.0
+      fast-xml-parser:
+        specifier: ^4.3.2
+        version: 4.5.3
       fastest-levenshtein:
         specifier: ^1.0.16
         version: 1.0.16
@@ -76,7 +79,7 @@ importers:
         version: 2.2.3
       langchain:
         specifier: ^0.2.0
-        version: 0.2.20(encoding@0.1.13)(ioredis@5.8.2)(mongodb@6.20.0(socks@2.8.7))(openai@4.104.0(encoding@0.1.13)(ws@8.18.3)(zod@3.25.76))(redis@4.7.1)(ws@8.18.3)
+        version: 0.2.20(encoding@0.1.13)(fast-xml-parser@4.5.3)(ioredis@5.8.2)(mongodb@6.20.0(socks@2.8.7))(openai@4.104.0(encoding@0.1.13)(ws@8.18.3)(zod@3.25.76))(redis@4.7.1)(ws@8.18.3)
       leven:
         specifier: ^4.0.0
         version: 4.1.0
@@ -549,6 +552,10 @@ packages:
   extract-path@2.0.0:
     resolution: {integrity: sha512-EQrwJL8rfZti2iCL7NvXrK3AN6jh7SjgCfDfQyCeuL6nEzsbDEVfxMQzhZeTPjStLcoWzLbyddulJ01YaZjk4g==}
     engines: {node: '>=10'}
+
+  fast-xml-parser@4.5.3:
+    resolution: {integrity: sha512-RKihhV+SHsIUGXObeVy9AXiBbFwkVk7Syp8XgwN5U3JV416+Gwp/GO9i0JYKmikykgz/UHRrrV4ROuZEo/T0ig==}
+    hasBin: true
 
   fastest-levenshtein@1.0.16:
     resolution: {integrity: sha512-eRnCtTTtGZFpQCwhJiUOuxPQWRXVKYDn0b2PeHfXL6/Zi53SLAzAHfVhVWK2AryC/WH05kGfxhFIPvTF0SXQzg==}
@@ -1438,6 +1445,9 @@ packages:
     resolution: {integrity: sha512-gmBGslpoQJtgnMAvOVqGZpEz9dyoKTCzy2nfz/n8aIFhN/jCE/rCmcxabB6jOOHV+0WNnylOxaxBQPSvcWklhA==}
     engines: {node: '>=12'}
 
+  strnum@1.1.2:
+    resolution: {integrity: sha512-vrN+B7DBIoTTZjnPNewwhx6cBA/H+IS7rfW68n7XxC1y7uoiGQBxaKzqucGUgavX15dJgiGztLJ8vxuEzwqBdA==}
+
   suffix-thumb@5.0.2:
     resolution: {integrity: sha512-I5PWXAFKx3FYnI9a+dQMWNqTxoRt6vdBdb0O+BJ1sxXCWtSoQCusc13E58f+9p4MYx/qCnEMkD5jac6K2j3dgA==}
 
@@ -2057,6 +2067,10 @@ snapshots:
     dependencies:
       untildify: 4.0.0
 
+  fast-xml-parser@4.5.3:
+    dependencies:
+      strnum: 1.1.2
+
   fastest-levenshtein@1.0.16: {}
 
   fastscan@1.0.6: {}
@@ -2276,7 +2290,7 @@ snapshots:
 
   kareem@2.6.3: {}
 
-  langchain@0.2.20(encoding@0.1.13)(ioredis@5.8.2)(mongodb@6.20.0(socks@2.8.7))(openai@4.104.0(encoding@0.1.13)(ws@8.18.3)(zod@3.25.76))(redis@4.7.1)(ws@8.18.3):
+  langchain@0.2.20(encoding@0.1.13)(fast-xml-parser@4.5.3)(ioredis@5.8.2)(mongodb@6.20.0(socks@2.8.7))(openai@4.104.0(encoding@0.1.13)(ws@8.18.3)(zod@3.25.76))(redis@4.7.1)(ws@8.18.3):
     dependencies:
       '@langchain/core': 0.2.36(openai@4.104.0(encoding@0.1.13)(ws@8.18.3)(zod@3.25.76))
       '@langchain/openai': 0.2.11(encoding@0.1.13)(ws@8.18.3)
@@ -2293,6 +2307,7 @@ snapshots:
       zod: 3.25.76
       zod-to-json-schema: 3.25.0(zod@3.25.76)
     optionalDependencies:
+      fast-xml-parser: 4.5.3
       ioredis: 5.8.2
       mongodb: 6.20.0(socks@2.8.7)
       redis: 4.7.1
@@ -2783,6 +2798,8 @@ snapshots:
   strip-ansi@7.1.2:
     dependencies:
       ansi-regex: 6.2.2
+
+  strnum@1.1.2: {}
 
   suffix-thumb@5.0.2: {}
 

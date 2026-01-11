@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import logger from '../../src/logger/index.js';
 import { httpGet } from '../../src/utils/http.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -115,14 +116,19 @@ async function downloadToArtifacts(userId) {
 export default async function handler(args = {}, options = {}) {
   const userIdRaw = args.user_id;
   const userId = String(userIdRaw ?? '').trim();
-  if (!userId) return { success: false, code: 'INVALID', error: 'user_id is required', advice: buildAdvice('INVALID', { tool: 'qq_avatar_get' }) };
+  if (!userId) return fail('user_id is required', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_avatar_get' }) });
   const useCache = args.useCache !== false; // default true
 
   // Try memory cache
   if (useCache) {
     const cached = getFromMem(userId);
     if (cached && cached.path_absolute) {
-      return { success: true, cached: true, data: { user_id: userId, content: `![avatar](${cached.path_absolute})`, path_markdown: `![avatar](${cached.path_absolute})` } };
+      return ok({
+        user_id: userId,
+        path_absolute: cached.path_absolute,
+        content: `![avatar](${cached.path_absolute})`,
+        path_markdown: `![avatar](${cached.path_absolute})`
+      }, 'OK', { cached: true, cache: 'memory' });
     }
   }
 
@@ -132,7 +138,12 @@ export default async function handler(args = {}, options = {}) {
     if (cached && cached.path_absolute) {
       // backfill memory cache
       setToMem(userId, cached, TTL_SEC);
-      return { success: true, cached: true, data: { user_id: userId, content: `![avatar](${cached.path_absolute})`, path_markdown: `![avatar](${cached.path_absolute})` } };
+      return ok({
+        user_id: userId,
+        path_absolute: cached.path_absolute,
+        content: `![avatar](${cached.path_absolute})`,
+        path_markdown: `![avatar](${cached.path_absolute})`
+      }, 'OK', { cached: true, cache: 'file' });
     }
   }
 
@@ -144,10 +155,15 @@ export default async function handler(args = {}, options = {}) {
       setToMem(userId, data, TTL_SEC);
       await writeFileCache(userId, data, TTL_SEC);
     }
-    return { success: true, data: { user_id: userId, content: `![avatar](${abs})`, path_markdown: `![avatar](${abs})` } };
+    return ok({
+      user_id: userId,
+      path_absolute: abs,
+      content: `![avatar](${abs})`,
+      path_markdown: `![avatar](${abs})`
+    }, 'OK', { cached: false });
   } catch (e) {
     logger.warn?.('qq_avatar_get:download_failed', { label: 'PLUGIN', error: String(e?.message || e) });
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_avatar_get', user_id: userId }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_avatar_get', user_id: userId }) });
   }
 }

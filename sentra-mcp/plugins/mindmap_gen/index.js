@@ -5,6 +5,7 @@ import { config } from '../../src/config/index.js';
 import { chatCompletion } from '../../src/openai/client.js';
 import { toPosix, abs as toAbs } from '../../src/utils/path.js';
 import { fileURLToPath } from 'node:url';
+import { ok, fail } from '../../src/utils/result.js';
 
 const STYLES = new Set(['default','colorful','dark','minimal','anime','cyberpunk','nature','business','code','academic','creative','retro']);
 
@@ -403,7 +404,7 @@ async function renderImage({ markdown, outputFile, width, height, style, waitTim
 
 export default async function handler(args = {}, options = {}) {
   const prompt = String(args.prompt || '').trim();
-  if (!prompt) return { success: false, code: 'INVALID', error: 'prompt is required', advice: buildAdvice('INVALID', { tool: 'mindmap_gen' }) };
+  if (!prompt) return fail('prompt is required', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'mindmap_gen' }) });
 
   try {
     const penv = options?.pluginEnv || {};
@@ -413,8 +414,8 @@ export default async function handler(args = {}, options = {}) {
     const waitTime = Math.max(1000, Number(args.waitTime ?? penv.MINDMAP_WAIT_TIME ?? 8000));
     const baseDir = 'artifacts';
     const rawName = String(args.filename || '').trim();
-    if (!rawName) return { success: false, code: 'INVALID', error: 'filename is required (filename only, no directories)', advice: buildAdvice('INVALID', { tool: 'mindmap_gen' }) };
-    if (/[\\\/]/.test(rawName)) return { success: false, code: 'INVALID', error: 'filename must not contain path separators', advice: buildAdvice('INVALID', { tool: 'mindmap_gen', filename: rawName }) };
+    if (!rawName) return fail('filename is required (filename only, no directories)', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'mindmap_gen' }) });
+    if (/[\\\/]/.test(rawName)) return fail('filename must not contain path separators', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'mindmap_gen', filename: rawName }) });
     let outputFile = path.join(baseDir, rawName);
     if (!outputFile.toLowerCase().endsWith('.png')) outputFile += '.png';
     const render = args.render !== false;
@@ -434,7 +435,10 @@ export default async function handler(args = {}, options = {}) {
     });
     const content = resp.choices?.[0]?.message?.content?.trim() || '';
     if (!validateMarkdown(content)) {
-      return { success: false, code: 'MARKDOWN_INVALID', error: '生成的Markdown内容无效', advice: buildAdvice('MARKDOWN_INVALID', { tool: 'mindmap_gen', prompt }), data: { prompt, markdown_content: content } };
+      return fail('生成的Markdown内容无效', 'MARKDOWN_INVALID', {
+        advice: buildAdvice('MARKDOWN_INVALID', { tool: 'mindmap_gen', prompt }),
+        detail: { prompt, markdown_content: content },
+      });
     }
 
   // 2) Optionally render PNG with Puppeteer
@@ -452,19 +456,16 @@ export default async function handler(args = {}, options = {}) {
   }
 
   if (render && !image?.abs) {
-    return {
-      success: false,
-      code: 'RENDER_FAILED',
-      error: renderError || 'failed to render mindmap image',
+    return fail(renderError || 'failed to render mindmap image', 'RENDER_FAILED', {
       advice: buildAdvice('RENDER_FAILED', { tool: 'mindmap_gen', prompt }),
-      data: {
+      detail: {
         prompt,
         markdown_content: content,
         width,
         height,
         style,
       }
-    };
+    });
   }
 
   logger.info?.('mindmap_gen: preparing response', { label: 'PLUGIN' });
@@ -482,10 +483,10 @@ export default async function handler(args = {}, options = {}) {
     }
   };
   logger.info?.('mindmap_gen: handler returning success', { label: 'PLUGIN', hasImage: !!image });
-  return { success: true, data };
+  return ok(data);
   } catch (e) {
     const rawErr = String(e?.message || e);
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: rawErr, advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'mindmap_gen', prompt }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'mindmap_gen', prompt }) });
   }
 }

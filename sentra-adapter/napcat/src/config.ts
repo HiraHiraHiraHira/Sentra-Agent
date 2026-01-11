@@ -38,6 +38,7 @@ export interface AdapterConfig {
   streamPort: number;
   streamIncludeRaw: boolean;
   streamSkipAnimatedEmoji: boolean;
+  streamSkipVoice: boolean;
   // message stream RPC retry
   streamRpcRetryEnabled: boolean;
   streamRpcRetryIntervalMs: number;
@@ -78,6 +79,7 @@ export function loadConfig(): AdapterConfig {
     streamPort: toInt(process.env.STREAM_PORT, 6702),
     streamIncludeRaw: envBool(process.env.STREAM_INCLUDE_RAW, false),
     streamSkipAnimatedEmoji: envBool(process.env.STREAM_SKIP_ANIMATED_EMOJI, false),
+    streamSkipVoice: envBool(process.env.STREAM_SKIP_VOICE, true),
     streamRpcRetryEnabled: envBool(process.env.STREAM_RPC_RETRY_ENABLED, true),
     streamRpcRetryIntervalMs: toInt(process.env.STREAM_RPC_RETRY_INTERVAL_MS, 10000),
     streamRpcRetryMaxAttempts: toInt(process.env.STREAM_RPC_RETRY_MAX_ATTEMPTS, 60),

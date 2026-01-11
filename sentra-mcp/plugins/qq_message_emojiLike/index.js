@@ -2,6 +2,7 @@ import wsCall from '../../src/utils/ws_rpc.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ok, fail } from '../../src/utils/result.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -102,38 +103,38 @@ export default async function handler(args = {}, options = {}) {
   
   // 参数校验
   if (!message_id) {
-    return { success: false, code: 'INVALID', error: 'message_id 不能为空', advice: buildAdvice('INVALID', { tool: 'qq_message_emojiLike' }) };
+    return fail('message_id 不能为空', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_message_emojiLike' }) });
   }
   // message_id 必须是纯数字字符串（如 "7379279827384728374"）
   if (!/^[0-9]+$/.test(String(message_id))) {
-    return { 
-      success: false, 
-      code: 'INVALID_MESSAGE_ID', 
-      error: `message_id 必须是纯数字字符串（如 "7379279827384728374"），当前值: "${message_id}"`,
-      advice: buildAdvice('INVALID_MESSAGE_ID', { tool: 'qq_message_emojiLike', message_id })
-    };
+    return fail(
+      `message_id 必须是纯数字字符串（如 "7379279827384728374"），当前值: "${message_id}"`,
+      'INVALID_MESSAGE_ID',
+      { advice: buildAdvice('INVALID_MESSAGE_ID', { tool: 'qq_message_emojiLike', message_id }) }
+    );
   }
   const messageIdNum = Number(message_id);
   if (!Number.isFinite(messageIdNum) || messageIdNum <= 0) {
-    return { 
-      success: false, 
-      code: 'INVALID_MESSAGE_ID', 
-      error: `message_id 无法转换为有效的正数: "${message_id}"`,
-      advice: buildAdvice('INVALID_MESSAGE_ID', { tool: 'qq_message_emojiLike', message_id })
-    };
+    return fail(
+      `message_id 无法转换为有效的正数: "${message_id}"`,
+      'INVALID_MESSAGE_ID',
+      { advice: buildAdvice('INVALID_MESSAGE_ID', { tool: 'qq_message_emojiLike', message_id }) }
+    );
   }
   
   // 规范化 emoji_ids 为数组（支持单个数字或数组）
   const emoji_ids = Array.isArray(emoji_ids_raw) ? emoji_ids_raw : [emoji_ids_raw];
   
   if (!emoji_ids.length) {
-    return { success: false, code: 'INVALID', error: 'emoji_ids 不能为空', advice: buildAdvice('INVALID', { tool: 'qq_message_emojiLike', message_id }) };
+    return fail('emoji_ids 不能为空', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_message_emojiLike', message_id }) });
   }
   
   // 验证所有表情ID
   for (const id of emoji_ids) {
     if (!Number.isFinite(Number(id))) {
-      return { success: false, code: 'INVALID', error: `emoji_id "${id}" 必须是有效的数字`, advice: buildAdvice('INVALID_EMOJI_ID', { tool: 'qq_message_emojiLike', message_id, emoji_id: id }) };
+      return fail(`emoji_id "${id}" 必须是有效的数字`, 'INVALID', {
+        advice: buildAdvice('INVALID_EMOJI_ID', { tool: 'qq_message_emojiLike', message_id, emoji_id: id })
+      });
     }
   }
   
@@ -172,41 +173,20 @@ export default async function handler(args = {}, options = {}) {
   if (successCount === totalCount) {
     // 全部成功
     const emojiNames = successList.map(e => `[${e.emoji_name}]`).join(' + ');
-    return {
-      success: true,
-      message: `已给消息贴上 ${successCount} 个表情：${emojiNames}`,
-      data: {
-        summary: `实际行为：已成功给消息 ${message_id} 贴上 ${successCount} 个表情：${successList.map(e => `[${e.emoji_name}]（ID: ${e.emoji_id}，类型: ${e.emoji_type}）`).join('、')}`,
-        message_id: String(message_id),
-        total: totalCount,
-        success_count: successCount,
-        emojis: successList,
-        sdk_calls: results
-      },
+    return ok({
+      summary: `实际行为：已成功给消息 ${message_id} 贴上 ${successCount} 个表情：${successList.map(e => `[${e.emoji_name}]（ID: ${e.emoji_id}，类型: ${e.emoji_type}）`).join('、')}`,
       message_id: String(message_id),
       total: totalCount,
       success_count: successCount,
       emojis: successList,
       sdk_calls: results
-    };
+    }, 'OK', { detail: { message: `已给消息贴上 ${successCount} 个表情：${emojiNames}` } });
   } else if (successCount > 0) {
     // 部分成功
     const successNames = successList.map(e => `[${e.emoji_name}]`).join(' + ');
     const failedNames = failedList.map(e => `[${e.emoji_name}]`).join(' + ');
-    return {
-      success: true,
-      code: 'PARTIAL_SUCCESS',
-      message: `部分成功：已贴上 ${successCount} 个表情（${successNames}），${failedCount} 个失败（${failedNames}）`,
-      data: {
-        summary: `实际行为：给消息 ${message_id} 贴表情部分成功。成功 ${successCount} 个：${successList.map(e => `[${e.emoji_name}]（ID: ${e.emoji_id}）`).join('、')}；失败 ${failedCount} 个：${failedList.map(e => `[${e.emoji_name}]（原因: ${e.error}）`).join('、')}`,
-        message_id: String(message_id),
-        total: totalCount,
-        success_count: successCount,
-        failed_count: failedCount,
-        emojis_success: successList,
-        emojis_failed: failedList,
-        sdk_calls: results
-      },
+    return ok({
+      summary: `实际行为：给消息 ${message_id} 贴表情部分成功。成功 ${successCount} 个：${successList.map(e => `[${e.emoji_name}]（ID: ${e.emoji_id}）`).join('、')}；失败 ${failedCount} 个：${failedList.map(e => `[${e.emoji_name}]（原因: ${e.error}）`).join('、')}`,
       message_id: String(message_id),
       total: totalCount,
       success_count: successCount,
@@ -214,30 +194,26 @@ export default async function handler(args = {}, options = {}) {
       emojis_success: successList,
       emojis_failed: failedList,
       sdk_calls: results
-    };
+    }, 'PARTIAL_SUCCESS', { detail: { message: `部分成功：已贴上 ${successCount} 个表情（${successNames}），${failedCount} 个失败（${failedNames}）` } });
   } else {
     // 全部失败
     const failedNames = failedList.map(e => `[${e.emoji_name}]`).join(' + ');
     const timeoutLike = failedList.some((x) => isTimeoutError(x?.error));
-    return {
-      success: false,
-      code: timeoutLike ? 'TIMEOUT' : 'ALL_FAILED',
-      message: `全部失败：无法给消息贴上表情（${failedNames}）`,
-      error: `所有表情贴加失败：${failedList.map(e => `[${e.emoji_name}]: ${e.error}`).join('；')}`,
-      advice: buildAdvice(timeoutLike ? 'TIMEOUT' : 'ALL_FAILED', { tool: 'qq_message_emojiLike', message_id, failed_count: failedCount }),
-      data: {
-        summary: `实际行为：给消息 ${message_id} 贴表情失败。失败 ${failedCount} 个：${failedList.map(e => `[${e.emoji_name}]（原因: ${e.error}）`).join('、')}`,
-        message_id: String(message_id),
-        total: totalCount,
-        failed_count: failedCount,
-        emojis_failed: failedList,
-        sdk_calls: results
-      },
-      message_id: String(message_id),
-      total: totalCount,
-      failed_count: failedCount,
-      emojis_failed: failedList,
-      sdk_calls: results
-    };
+    return fail(
+      `所有表情贴加失败：${failedList.map(e => `[${e.emoji_name}]: ${e.error}`).join('；')}`,
+      timeoutLike ? 'TIMEOUT' : 'ALL_FAILED',
+      {
+        advice: buildAdvice(timeoutLike ? 'TIMEOUT' : 'ALL_FAILED', { tool: 'qq_message_emojiLike', message_id, failed_count: failedCount }),
+        detail: {
+          message: `全部失败：无法给消息贴上表情（${failedNames}）`,
+          summary: `实际行为：给消息 ${message_id} 贴表情失败。失败 ${failedCount} 个：${failedList.map(e => `[${e.emoji_name}]（原因: ${e.error}）`).join('、')}`,
+          message_id: String(message_id),
+          total: totalCount,
+          failed_count: failedCount,
+          emojis_failed: failedList,
+          sdk_calls: results
+        }
+      }
+    );
   }
 }

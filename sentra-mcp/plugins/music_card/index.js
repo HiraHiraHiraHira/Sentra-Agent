@@ -2,6 +2,43 @@ import logger from '../../src/logger/index.js';
 import wsCall from '../../src/utils/ws_rpc.js';
 import { getIdsWithCache } from '../../src/utils/message_cache_helper.js';
 import { httpRequest } from '../../src/utils/http.js';
+import { ok, fail } from '../../src/utils/result.js';
+
+function buildAdvice(kind, ctx = {}) {
+  const personaHint = '请结合你当前的预设/人设继续作答：当发送音乐卡片失败时，要说明原因（关键词/平台/发送权限/网络），给替代方案（换关键词/换歌/回退发送音频/稍后重试），并引导用户补充必要信息。';
+  if (kind === 'INVALID') {
+    return {
+      suggested_reply: '我需要你提供要搜索的歌曲关键词（keywords/keyword），当前缺失所以没法发送音乐卡片。你把歌名+歌手发我一下，我就继续。\n\n（请结合你当前的预设/人设继续作答）',
+      next_steps: [
+        '提供 keywords（数组）或 keyword（单条）',
+        '可选提供 provider=163、limit、random、pick',
+      ],
+      persona_hint: personaHint,
+      context: ctx,
+    };
+  }
+  if (kind === 'SEND_FAILED') {
+    return {
+      suggested_reply: '我找到歌曲了，但通过 WS 发送音乐卡片失败了（可能是 WS 地址/权限/接口路径不对）。如果你愿意，我可以尝试回退发送音频直链，或者你把 WS_SDK_URL / 发送路径确认一下我们再重试。\n\n（请结合你当前的预设/人设继续作答）',
+      next_steps: [
+        '确认 WS_SDK_URL 可用（默认 ws://localhost:6702）',
+        '确认 WS_SDK_SEND_PATH(_PRIVATE/_GROUP) 与实际 OneBot/NapCat 路径一致',
+        '可开启 fallback_to_record=true 回退发送音频直链',
+      ],
+      persona_hint: personaHint,
+      context: ctx,
+    };
+  }
+  return {
+    suggested_reply: '我尝试发送音乐卡片，但这次失败了。你可以换一个关键词/指定歌手/或让我回退发送音频直链；也可以稍后重试。\n\n（请结合你当前的预设/人设继续作答）',
+    next_steps: [
+      '换关键词（歌名 + 歌手）再试',
+      '或开启 fallback_to_record=true',
+    ],
+    persona_hint: personaHint,
+    context: ctx,
+  };
+}
 
 function toInt(v) {
   const n = Number(v);
@@ -155,7 +192,7 @@ export default async function handler(args = {}, options = {}) {
     .filter((k) => !!k);
 
   if (!keywords.length) {
-    return { success: false, code: 'INVALID', error: 'keywords 为必填参数，请提供至少一个关键词数组，如：["稻香 周杰伦", "夜曲 周杰伦"]' };
+    return fail('keywords 为必填参数，请提供至少一个关键词数组，如：["稻香 周杰伦", "夜曲 周杰伦"]', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'music_card' }) });
   }
 
   const results = [];
@@ -170,20 +207,11 @@ export default async function handler(args = {}, options = {}) {
 
   const anyOk = results.some((r) => r.success);
   if (anyOk) {
-    return {
-      success: true,
-      data: {
-        results
-      }
-    };
+    return ok({ results });
   }
 
-  return {
-    success: false,
-    code: 'MUSIC_CARD_FAILED',
-    error: '所有关键词的音乐搜索或发送均失败',
-    data: {
-      results
-    }
-  };
+  return fail('所有关键词的音乐搜索或发送均失败', 'MUSIC_CARD_FAILED', {
+    advice: buildAdvice('SEND_FAILED', { tool: 'music_card', keywords }),
+    detail: { results },
+  });
 }

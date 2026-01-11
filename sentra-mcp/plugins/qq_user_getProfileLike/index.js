@@ -1,4 +1,5 @@
 import wsCall from '../../src/utils/ws_rpc.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 export default async function handler(args = {}, options = {}) {
   const penv = options?.pluginEnv || {};
@@ -6,6 +7,10 @@ export default async function handler(args = {}, options = {}) {
   const timeoutMs = Math.max(1000, Number(penv.WS_SDK_TIMEOUT_MS || 15000));
   const path = 'user.getProfileLike';
   const requestId = String(args.requestId || `${path}-${Date.now()}`);
-  const resp = await wsCall({ url, path, args: [], requestId, timeoutMs });
-  return { success: true, data: { request: { type: 'sdk', path, args: [], requestId }, response: resp } };
+  try {
+    const resp = await wsCall({ url, path, args: [], requestId, timeoutMs });
+    return ok({ request: { type: 'sdk', path, args: [], requestId }, response: resp });
+  } catch (e) {
+    return fail(e, 'ERR');
+  }
 }

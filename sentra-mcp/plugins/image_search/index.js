@@ -9,6 +9,7 @@ import archiver from 'archiver';
 import logger from '../../src/logger/index.js';
 import { abs as toAbs } from '../../src/utils/path.js';
 import { httpRequest } from '../../src/utils/http.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function buildAdvice(kind, ctx = {}) {
   const personaHint = '请结合你当前的预设/人设继续作答：当搜索失败时，要解释原因、给替代方案（换关键词/缩小范围/给示例），并主动给用户下一步选择。';
@@ -1446,5 +1447,15 @@ async function singleImageSearchHandler(args = {}, options = {}) {
 }
 
 export default async function handler(args = {}, options = {}) {
-  return singleImageSearchHandler(args, options);
+  const out = await singleImageSearchHandler(args, options);
+  if (out && typeof out === 'object' && typeof out.success === 'boolean') {
+    if (out.success === true) {
+      return ok(out.data ?? null, out.code || 'OK', { ...('advice' in out ? { advice: out.advice } : {}), ...('details' in out ? { detail: out.details } : {}) });
+    }
+    const err = ('error' in out) ? out.error : 'Tool failed';
+    const extra = { ...('advice' in out ? { advice: out.advice } : {}), ...('details' in out ? { detail: out.details } : {}) };
+    if ('data' in out && out.data != null) extra.detail = extra.detail ? { ...(typeof extra.detail === 'object' ? extra.detail : { value: extra.detail }), data: out.data } : { data: out.data };
+    return fail(err, out.code || 'ERR', extra);
+  }
+  return ok(out);
 }

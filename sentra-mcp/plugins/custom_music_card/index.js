@@ -1,6 +1,7 @@
 import logger from '../../src/logger/index.js';
 import wsCall from '../../src/utils/ws_rpc.js';
 import { getIdsWithCache } from '../../src/utils/message_cache_helper.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 /**
  * 构建自定义音乐卡片 segments
@@ -89,7 +90,7 @@ async function sendMusicCardViaWS({ wsUrl, timeoutMs, pathList, argStyle }, targ
  * @param {Object} options - 插件选项
  * @returns {Promise<Object>} 执行结果
  */
-export default async function handler(args = {}, options = {}) {
+async function legacyHandler(args = {}, options = {}) {
   const penv = options?.pluginEnv || {};
   
   const media_url = String(args.media_url || '').trim();
@@ -231,4 +232,19 @@ export default async function handler(args = {}, options = {}) {
       error: String(e?.message || e) 
     };
   }
+}
+
+export default async function handler(args = {}, options = {}) {
+  const out = await legacyHandler(args, options);
+  if (out && typeof out === 'object' && typeof out.success === 'boolean') {
+    if (out.success === true) {
+      return ok(out.data ?? null, out.code || 'OK');
+    }
+
+    const extra = {};
+    if ('details' in out && out.details != null) extra.detail = out.details;
+    if ('data' in out && out.data != null) extra.detail = extra.detail ? { ...(typeof extra.detail === 'object' ? extra.detail : { value: extra.detail }), data: out.data } : { data: out.data };
+    return fail(('error' in out) ? out.error : 'Tool failed', out.code || 'ERR', extra);
+  }
+  return ok(out);
 }

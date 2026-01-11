@@ -6,6 +6,7 @@ import OpenAI from 'openai';
 import mime from 'mime-types';
 import { httpRequest } from '../../src/utils/http.js';
 import { toAbsoluteLocalPath } from '../../src/utils/path.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -114,8 +115,8 @@ async function readImageAsBase64WithMime(src, convertGif = false) {
 export default async function handler(args = {}, options = {}) {
   const images = Array.isArray(args.images) ? args.images : [];
   const prompt = String(args.prompt || '').trim();
-  if (!images.length) return { success: false, code: 'INVALID', error: 'images is required (array of urls or absolute paths)', advice: buildAdvice('INVALID', { tool: 'image_vision_read' }) };
-  if (!prompt) return { success: false, code: 'INVALID', error: 'prompt is required', advice: buildAdvice('INVALID', { tool: 'image_vision_read', images_count: images.length }) };
+  if (!images.length) return fail('images is required (array of urls or absolute paths)', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'image_vision_read' }) });
+  if (!prompt) return fail('prompt is required', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'image_vision_read', images_count: images.length }) });
 
   // plugin-level env
   const penv = options?.pluginEnv || {};
@@ -143,7 +144,7 @@ export default async function handler(args = {}, options = {}) {
     const invalidPath = lower.includes('must be absolute');
     const code = isTimeout ? 'TIMEOUT' : (invalidPath ? 'INVALID_PATH' : 'IMAGE_READ_ERR');
     const adviceKind = isTimeout ? 'TIMEOUT' : (invalidPath ? 'INVALID_PATH' : 'ERR');
-    return { success: false, code, error: msg, advice: buildAdvice(adviceKind, { tool: 'image_vision_read', images_count: images.length }) };
+    return fail(e, code, { advice: buildAdvice(adviceKind, { tool: 'image_vision_read', images_count: images.length }) });
   }
   for (const it of prepared) items.push({ type: 'image_url', image_url: { url: it.uri } });
 
@@ -158,10 +159,10 @@ export default async function handler(args = {}, options = {}) {
     logger.info?.('image_vision_read:api_success', { label: 'PLUGIN', responseLength: content?.length || 0 });
     // 仅返回所需字段：prompt、图片描述与摘要统计
     const formats = Array.from(new Set((prepared || []).map((x) => x.mime))).filter(Boolean);
-    return { success: true, data: { prompt, description: content, image_count: images.length, formats } };
+    return ok({ prompt, description: content, image_count: images.length, formats });
   } catch (e) {
     logger.warn?.('image_vision_read:request_failed', { label: 'PLUGIN', error: String(e?.message || e), stack: e?.stack });
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'image_vision_read', images_count: images.length }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'image_vision_read', images_count: images.length }) });
   }
 }

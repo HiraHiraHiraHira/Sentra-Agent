@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import logger from '../../src/logger/index.js';
 import { config } from '../../src/config/index.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -97,12 +98,7 @@ export default async function handler(args = {}, options = {}) {
   const exclude = arrifyCsv(args.exclude_domains);
 
   if (!raw && !q) {
-    return {
-      success: false,
-      code: 'INVALID',
-      error: 'query is required (or provide rawRequest)',
-      advice: buildAdvice('INVALID', { tool: 'realtime_search' })
-    };
+    return fail('query is required (or provide rawRequest)', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'realtime_search' }) });
   }
 
   const client = new OpenAI({ apiKey, baseURL });
@@ -130,12 +126,9 @@ export default async function handler(args = {}, options = {}) {
     const msg = String(e?.message || e);
     logger.error('realtime_search: chat.completions.create failed', { label: 'PLUGIN', error: msg });
     const isTimeout = isTimeoutError(e);
-    return {
-      success: false,
-      code: isTimeout ? 'TIMEOUT' : 'ERR',
-      error: msg,
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', {
       advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'realtime_search', query: q || null })
-    };
+    });
   }
 
   const text = extractTextFromChatCompletion(res);
@@ -150,5 +143,5 @@ export default async function handler(args = {}, options = {}) {
     completion_id: res?.id || null,
     usage: res?.usage || null,
   };
-  return { success: true, data };
+  return ok(data);
 }

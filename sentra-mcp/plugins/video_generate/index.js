@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
-import path from 'node:path';
+import OpenAI from 'openai';
 import logger from '../../src/logger/index.js';
 import { config } from '../../src/config/index.js';
-import OpenAI from 'openai';
+import { ok, fail } from '../../src/utils/result.js';
 import mime from 'mime-types';
 import { httpRequest } from '../../src/utils/http.js';
 
@@ -262,7 +262,7 @@ async function downloadVideosAndRewrite(md, prefix = 'video') {
 
 export default async function handler(args = {}, options = {}) {
   const prompt = String(args.prompt || '').trim();
-  if (!prompt) return { success: false, code: 'INVALID', error: 'prompt is required', advice: buildAdvice('INVALID', { tool: 'video_generate' }) };
+  if (!prompt) return fail('prompt is required', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'video_generate' }) });
 
   const penv = options?.pluginEnv || {};
   const apiKey = penv.VIDEO_API_KEY || process.env.VIDEO_API_KEY || config.llm.apiKey;
@@ -290,17 +290,23 @@ export default async function handler(args = {}, options = {}) {
       }
     }
     if (!hasVideoLink(content)) {
-      return { success: false, code: 'NO_VIDEO_LINK', error: 'response has no usable video link', data: { prompt, content }, advice: buildAdvice('NO_VIDEO_LINK', { tool: 'video_generate', prompt }) };
+      return fail('response has no usable video link', 'NO_VIDEO_LINK', {
+        advice: buildAdvice('NO_VIDEO_LINK', { tool: 'video_generate', prompt }),
+        detail: { prompt, content },
+      });
     }
     const rewritten = await downloadVideosAndRewrite(content, 'video');
     const localMarkdown = await collectVerifiedLocalMarkdownVideos(rewritten);
     if (!localMarkdown) {
-      return { success: false, code: 'NO_LOCAL_VIDEO', error: 'unable to download video to local markdown', data: { prompt, content: rewritten }, advice: buildAdvice('NO_LOCAL_VIDEO', { tool: 'video_generate', prompt }) };
+      return fail('unable to download video to local markdown', 'NO_LOCAL_VIDEO', {
+        advice: buildAdvice('NO_LOCAL_VIDEO', { tool: 'video_generate', prompt }),
+        detail: { prompt, content: rewritten },
+      });
     }
-    return { success: true, data: { prompt, content: localMarkdown } };
+    return ok({ prompt, content: localMarkdown });
   } catch (e) {
     logger.warn?.('video_generate:request_failed', { label: 'PLUGIN', error: String(e?.message || e) });
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'video_generate', prompt }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'video_generate', prompt }) });
   }
 }

@@ -1,4 +1,5 @@
 import wsCall from '../../src/utils/ws_rpc.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -56,14 +57,14 @@ export default async function handler(args = {}, options = {}) {
   const path = 'group.wholeBan';
   const requestId = String(args.requestId || `${path}-${Date.now()}`);
   const group_id = Number(args.group_id);
-  if (!Number.isFinite(group_id)) return { success: false, code: 'INVALID', error: 'group_id 不能为空', advice: buildAdvice('INVALID', { tool: 'qq_group_wholeBan' }) };
+  if (!Number.isFinite(group_id)) return fail('group_id 不能为空', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_group_wholeBan' }) });
   const on = (typeof args.on === 'boolean') ? args.on : (typeof args.enable === 'boolean' ? args.enable : undefined);
-  if (typeof on !== 'boolean') return { success: false, code: 'INVALID', error: 'on/enable 不能为空', advice: buildAdvice('INVALID', { tool: 'qq_group_wholeBan', group_id }) };
+  if (typeof on !== 'boolean') return fail('on/enable 不能为空', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_group_wholeBan', group_id }) });
   try {
     const resp = await wsCall({ url, path, args: [group_id, on], requestId, timeoutMs });
-    return { success: true, data: { request: { type: 'sdk', path, args: [group_id, on], requestId }, response: resp } };
+    return ok({ request: { type: 'sdk', path, args: [group_id, on], requestId }, response: resp });
   } catch (e) {
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_group_wholeBan', group_id, on }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_group_wholeBan', group_id, on }) });
   }
 }

@@ -6,6 +6,7 @@ import OpenAI from 'openai';
 import mime from 'mime-types';
 import { httpRequest } from '../../src/utils/http.js';
 import { toAbsoluteLocalPath } from '../../src/utils/path.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -191,9 +192,9 @@ async function downloadImagesAndRewrite(md) {
 export default async function handler(args = {}, options = {}) {
   const images = Array.isArray(args.images) ? args.images : [];
   const prompt = String(args.prompt || '').trim();
-  if (!images.length) return { success: false, code: 'INVALID', error: 'images is required (array of urls or absolute paths)', advice: buildAdvice('INVALID', { tool: 'image_vision_edit' }) };
-  if (!prompt) return { success: false, code: 'INVALID', error: 'prompt is required', advice: buildAdvice('INVALID', { tool: 'image_vision_edit', images_count: images.length }) };
-  if (!isEnglishPrompt(prompt)) return { success: false, code: 'PROMPT_NOT_ENGLISH', error: 'prompt must be English only', advice: buildAdvice('PROMPT_NOT_ENGLISH', { tool: 'image_vision_edit' }) };
+  if (!images.length) return fail('images is required (array of urls or absolute paths)', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'image_vision_edit' }) });
+  if (!prompt) return fail('prompt is required', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'image_vision_edit', images_count: images.length }) });
+  if (!isEnglishPrompt(prompt)) return fail('prompt must be English only', 'PROMPT_NOT_ENGLISH', { advice: buildAdvice('PROMPT_NOT_ENGLISH', { tool: 'image_vision_edit' }) });
 
   const penv = options?.pluginEnv || {};
   const apiKey = penv.VISION_API_KEY || process.env.VISION_API_KEY || config.llm.apiKey;
@@ -216,7 +217,7 @@ export default async function handler(args = {}, options = {}) {
     const invalidPath = lower.includes('must be absolute');
     const code = isTimeout ? 'TIMEOUT' : (invalidPath ? 'INVALID_PATH' : 'IMAGE_READ_ERR');
     const adviceKind = isTimeout ? 'TIMEOUT' : (invalidPath ? 'INVALID_PATH' : 'ERR');
-    return { success: false, code, error: msg, advice: buildAdvice(adviceKind, { tool: 'image_vision_edit', images_count: images.length }) };
+    return fail(e, code, { advice: buildAdvice(adviceKind, { tool: 'image_vision_edit', images_count: images.length }) });
   }
   for (const it of prepared) items.push({ type: 'image_url', image_url: { url: it.uri } });
 
@@ -227,15 +228,18 @@ export default async function handler(args = {}, options = {}) {
   try {
     const res = await oai.chat.completions.create({ model, messages });
     const content = res?.choices?.[0]?.message?.content || '';
-    const ok = hasMarkdownImage(content);
-    if (ok) {
+    const okFlag = hasMarkdownImage(content);
+    if (okFlag) {
       const rewritten = await downloadImagesAndRewrite(content);
-      return { success: true, data: { prompt, content: rewritten } };
+      return ok({ prompt, content: rewritten });
     }
-    return { success: false, code: 'NO_MD_IMAGE', error: 'response has no markdown image', data: { prompt, content }, advice: buildAdvice('NO_MD_IMAGE', { tool: 'image_vision_edit', prompt }) };
+    return fail('response has no markdown image', 'NO_MD_IMAGE', {
+      advice: buildAdvice('NO_MD_IMAGE', { tool: 'image_vision_edit', prompt }),
+      detail: { prompt, content },
+    });
   } catch (e) {
     logger.warn?.('image_vision_edit:request_failed', { label: 'PLUGIN', error: String(e?.message || e) });
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'image_vision_edit', prompt }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'image_vision_edit', prompt }) });
   }
 }

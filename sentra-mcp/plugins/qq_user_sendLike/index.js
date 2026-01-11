@@ -1,4 +1,5 @@
 import wsCall from '../../src/utils/ws_rpc.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -55,14 +56,14 @@ export default async function handler(args = {}, options = {}) {
   const path = 'user.sendLike';
   const requestId = String(args.requestId || `${path}-${Date.now()}`);
   const user_id = Number(args.user_id);
-  if (!Number.isFinite(user_id)) return { success: false, code: 'INVALID', error: 'user_id 不能为空', advice: buildAdvice('INVALID', { tool: 'qq_user_sendLike' }) };
+  if (!Number.isFinite(user_id)) return fail('user_id 不能为空', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_user_sendLike' }) });
   const times = Number(args.times);
-  if (!Number.isFinite(times)) return { success: false, code: 'INVALID', error: 'times 不能为空', advice: buildAdvice('INVALID', { tool: 'qq_user_sendLike', user_id }) };
+  if (!Number.isFinite(times)) return fail('times 不能为空', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_user_sendLike', user_id }) });
   try {
     const resp = await wsCall({ url, path, args: [user_id, times], requestId, timeoutMs });
-    return { success: true, data: { request: { type: 'sdk', path, args: [user_id, times], requestId }, response: resp } };
+    return ok({ request: { type: 'sdk', path, args: [user_id, times], requestId }, response: resp });
   } catch (e) {
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_user_sendLike', user_id, times }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_user_sendLike', user_id, times }) });
   }
 }

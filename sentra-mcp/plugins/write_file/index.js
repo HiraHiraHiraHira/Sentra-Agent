@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import logger from '../../src/logger/index.js';
 import { abs as toAbs, toPosix } from '../../src/utils/path.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function buildAdvice(kind, ctx = {}) {
   const personaHint = '请结合你当前的预设/人设继续作答：当写文件失败时，要说明原因（路径/权限/内容格式），给替代方案（换路径/改 overwrite/改 fileType），并引导用户补充必要参数。';
@@ -513,11 +514,11 @@ export default async function handler(args = {}, options = {}) {
   const rawPath = args.path;
   
   if (!rawPath || typeof rawPath !== 'string') {
-    return { success: false, code: 'INVALID', error: 'path 是必须的字符串参数', advice: buildAdvice('INVALID', { tool: 'write_file' }) };
+    return fail('path 是必须的字符串参数', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'write_file' }) });
   }
   
   if (args.content === undefined) {
-    return { success: false, code: 'INVALID', error: 'content 不能为空', advice: buildAdvice('INVALID', { tool: 'write_file', path: rawPath }) };
+    return fail('content 不能为空', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'write_file', path: rawPath }) });
   }
   
   try {
@@ -539,24 +540,15 @@ export default async function handler(args = {}, options = {}) {
     
     logger.info?.('write_file', `文件写入成功: ${abs}, 大小: ${size} 字节, 类型: ${type}`, { label: 'PLUGIN' });
     
-    return {
-      success: true,
-      data: {
-        action: 'write_file',
-        path_markdown: toMarkdownPath(abs),
-        size,
-        fileType: type,
-        timestamp: new Date().toISOString(),
-      },
-    };
+    return ok({
+      action: 'write_file',
+      path_markdown: toMarkdownPath(abs),
+      size,
+      fileType: type,
+      timestamp: new Date().toISOString(),
+    });
   } catch (e) {
     logger.error?.('write_file error', { label: 'PLUGIN', error: String(e?.message || e) });
-    return { 
-      success: false, 
-      code: 'ERR', 
-      error: String(e?.message || e),
-      stack: e?.stack,
-      advice: buildAdvice('ERR', { tool: 'write_file', path: rawPath })
-    };
+    return fail(e, 'ERR', { advice: buildAdvice('ERR', { tool: 'write_file', path: rawPath }) });
   }
 }

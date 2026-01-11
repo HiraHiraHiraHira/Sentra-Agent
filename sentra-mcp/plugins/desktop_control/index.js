@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import { ok, fail } from '../../src/utils/result.js';
 
 const execAsync = promisify(exec);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -367,18 +368,9 @@ export async function handler(params) {
       throw new Error(`Unknown action: ${action}`);
     }
     
-    return {
-      success: true,
-      code: 'OK',
-      data: result
-    };
+    return ok(result, 'OK');
     
   } catch (error) {
-    return {
-      success: false,
-      code: 'ERROR',
-      error: error.message,
-      data: null
-    };
+    return fail(error, 'ERROR');
   }
 }

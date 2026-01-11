@@ -7,6 +7,7 @@ import logger from '../../src/logger/index.js';
 import { config } from '../../src/config/index.js';
 import { chatCompletion } from '../../src/openai/client.js';
 import { abs as toAbs } from '../../src/utils/path.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 const md = new MarkdownIt({ html: true, linkify: true, typographer: true });
 
@@ -1132,7 +1133,7 @@ async function generateSlidesByAI({ subject, outline, pageCount, penv }) {
   };
 }
 
-export default async function handler(args = {}, options = {}) {
+async function legacyHandler(args = {}, options = {}) {
   try {
     const penv = options?.pluginEnv || {};
     const subject = String(args.subject || '').trim();
@@ -1186,22 +1187,35 @@ export default async function handler(args = {}, options = {}) {
 
   logger.info?.('ppt_gen: pptx written', { label: 'PLUGIN', path: absPath, slides: slides.length, theme });
 
-  return {
-    success: true,
-    data: {
-      subject: subject || null,
-      outline: outline || designInfo?.outline || null,
-      mode,
-      theme,
-      page_count: slides.length,
-      path_abs: absPath,
-      rel_path: relPath,
-      design: designInfo
-    }
-  };
+    return {
+      success: true,
+      data: {
+        subject: subject || null,
+        outline: outline || designInfo?.outline || null,
+        mode,
+        theme,
+        page_count: slides.length,
+        path_abs: absPath,
+        rel_path: relPath,
+        design: designInfo
+      }
+    };
   } catch (e) {
     const rawErr = String(e?.message || e);
     const isTimeout = isTimeoutError(e);
     return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: rawErr, advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'ppt_gen' }) };
   }
+}
+
+export default async function handler(args = {}, options = {}) {
+  const out = await legacyHandler(args, options);
+  if (out && typeof out === 'object' && typeof out.success === 'boolean') {
+    if (out.success === true) {
+      return ok(out.data ?? null, out.code || 'OK', { ...('advice' in out ? { advice: out.advice } : {}) });
+    }
+    const extra = { ...('advice' in out ? { advice: out.advice } : {}) };
+    if ('data' in out && out.data != null) extra.detail = { data: out.data };
+    return fail(('error' in out) ? out.error : 'Tool failed', out.code || 'ERR', extra);
+  }
+  return ok(out);
 }

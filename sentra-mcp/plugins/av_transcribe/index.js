@@ -6,6 +6,7 @@ import logger from '../../src/logger/index.js';
 import { httpClient } from '../../src/utils/http.js';
 import mime from 'mime-types';
 import { toAbsoluteLocalPath } from '../../src/utils/path.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function normalizeBaseUrl(raw) {
   const v = String(raw || '').trim();
@@ -61,18 +62,51 @@ function normalizeWhisperMode(raw) {
   return 'whisper';
 }
 
+function normalizeMimeType(raw) {
+  return String(raw || '').split(';')[0].trim().toLowerCase();
+}
+
+function isAudioOrVideoMime(m) {
+  const mt = normalizeMimeType(m);
+  return !!mt && (mt.startsWith('audio/') || mt.startsWith('video/'));
+}
+
+function readFileHead(p, bytes = 4096) {
+  const filePath = String(p || '');
+  const fd = fssync.openSync(filePath, 'r');
+  try {
+    const size = Math.max(0, Number(bytes) || 0);
+    const buf = Buffer.allocUnsafe(size);
+    const n = fssync.readSync(fd, buf, 0, size, 0);
+    return buf.slice(0, Math.max(0, n || 0));
+  } finally {
+    try { fssync.closeSync(fd); } catch {}
+  }
+}
+
+function inferAudioFormat({ mimeType, ext, magic }) {
+  const mt = normalizeMimeType(mimeType);
+  const e = String(ext || '').toLowerCase().replace(/^\./, '');
+  const mg = String(magic || '').toUpperCase();
+  if (mg === 'WAV' || mt === 'audio/wav' || e === 'wav') return 'wav';
+  if (mg === 'MP3' || mg === 'MP3_ID3' || mt === 'audio/mpeg' || e === 'mp3' || e === 'mpeg' || e === 'mpga') return 'mp3';
+  if (mg === 'MP4' || mt === 'video/mp4' || mt === 'audio/mp4' || e === 'm4a' || e === 'mp4') return 'm4a';
+  if (mt === 'audio/ogg' || e === 'ogg') return 'ogg';
+  if (mt === 'audio/flac' || e === 'flac') return 'flac';
+  if (mt === 'video/webm' || e === 'webm') return 'webm';
+  if (mt === 'audio/amr' || e === 'amr') return 'amr';
+  return e || 'mp3';
+}
+
 function guessAudioMimeByPath(p) {
-  const m = String(mime.lookup(String(p || '')) || '').trim();
-  if (m && (m.startsWith('audio/') || m.startsWith('video/'))) return m;
-  return 'audio/mpeg';
+  const m = normalizeMimeType(mime.lookup(String(p || '')) || '');
+  if (isAudioOrVideoMime(m)) return m;
+  return '';
 }
 
 function guessInputAudioFormatByPath(p) {
   const ext = String(path.extname(String(p || '')) || '').toLowerCase().replace(/^\./, '');
-  if (!ext) return 'mp3';
-  if (ext === 'mpeg' || ext === 'mpga') return 'mp3';
-  if (ext === 'mp4') return 'm4a';
-  return ext;
+  return inferAudioFormat({ mimeType: guessAudioMimeByPath(p), ext, magic: '' });
 }
 
 function buildGeminiGenerateContentUrl(baseUrl, model, apiKey) {
@@ -109,15 +143,85 @@ function sniffAudioMagic(buf) {
     if (s.startsWith('#!AMR-WB')) return 'AMR-WB';
     if (s.startsWith('#!AMR')) return 'AMR';
     if (s.startsWith('#!SILK_V3')) return 'SILK_V3';
-    if (b.length >= 4 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46) return 'RIFF';
+    if (b.length >= 4 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46) {
+      const riffType = b.length >= 12 ? b.slice(8, 12).toString('ascii') : '';
+      if (riffType === 'WAVE') return 'WAV';
+      if (riffType === 'AVI ') return 'AVI';
+      return 'RIFF';
+    }
     if (b.length >= 4 && b[0] === 0x4f && b[1] === 0x67 && b[2] === 0x67 && b[3] === 0x53) return 'OGG';
     if (b.length >= 4 && b[0] === 0x66 && b[1] === 0x4c && b[2] === 0x61 && b[3] === 0x43) return 'FLAC';
     if (b.length >= 3 && b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) return 'MP3_ID3';
     if (b.length >= 2 && b[0] === 0xff && (b[1] & 0xe0) === 0xe0) return 'MP3';
     if (b.length >= 8 && b.slice(4, 8).toString('utf8') === 'ftyp') return 'MP4';
+    if (b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return 'WEBM';
     return '';
   } catch {
     return '';
+  }
+}
+
+function detectMediaFromMagic(buf, nameHint = '') {
+  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || []);
+  const hint = String(nameHint || '');
+  const hintExt = String(path.extname(hint) || '').toLowerCase();
+  const magic = sniffAudioMagic(b);
+  if (!magic) return { mimeType: '', ext: '', kind: '', magic: '' };
+
+  if (magic === 'AMR' || magic === 'AMR-WB') return { mimeType: 'audio/amr', ext: 'amr', kind: 'audio', magic };
+  if (magic === 'SILK_V3') return { mimeType: 'audio/silk', ext: 'silk', kind: 'audio', magic };
+  if (magic === 'WAV') return { mimeType: 'audio/wav', ext: 'wav', kind: 'audio', magic };
+  if (magic === 'OGG') return { mimeType: 'audio/ogg', ext: 'ogg', kind: 'audio', magic };
+  if (magic === 'FLAC') return { mimeType: 'audio/flac', ext: 'flac', kind: 'audio', magic };
+  if (magic === 'MP3' || magic === 'MP3_ID3') return { mimeType: 'audio/mpeg', ext: 'mp3', kind: 'audio', magic };
+  if (magic === 'WEBM') return { mimeType: 'video/webm', ext: 'webm', kind: 'video', magic };
+  if (magic === 'AVI') return { mimeType: 'video/x-msvideo', ext: 'avi', kind: 'video', magic };
+  if (magic === 'MP4') {
+    let brand = '';
+    try { brand = b.length >= 12 ? b.slice(8, 12).toString('ascii').trim().toLowerCase() : ''; } catch {}
+    const isM4A = hintExt === '.m4a' || brand === 'm4a' || brand === 'm4a ';
+    return {
+      mimeType: isM4A ? 'audio/mp4' : 'video/mp4',
+      ext: isM4A ? 'm4a' : 'mp4',
+      kind: isM4A ? 'audio' : 'video',
+      magic,
+    };
+  }
+  return { mimeType: '', ext: '', kind: '', magic };
+}
+
+function detectUploadMediaHintLocalFile(localPath) {
+  const p = String(localPath || '');
+  const head = readFileHead(p, 4096);
+  const magicInfo = detectMediaFromMagic(head, p);
+  const extMime = guessAudioMimeByPath(p);
+  const chosen = isAudioOrVideoMime(magicInfo.mimeType)
+    ? magicInfo.mimeType
+    : (isAudioOrVideoMime(extMime) ? extMime : '');
+  const mimeType = chosen || 'application/octet-stream';
+  const ext = magicInfo.ext || String(path.extname(p) || '').toLowerCase().replace(/^\./, '') || (mime.extension(mimeType) || '');
+  return { mimeType, ext, magic: magicInfo.magic || '', kind: (magicInfo.kind || (isAudioOrVideoMime(mimeType) ? (mimeType.startsWith('audio/') ? 'audio' : 'video') : '')) };
+}
+
+async function sniffRemoteMagic(url, timeoutMs, headers) {
+  try {
+    const res = await httpClient.get(String(url), {
+      responseType: 'arraybuffer',
+      timeout: Math.min(timeoutMs || 30000, 30000),
+      maxBodyLength: 512 * 1024,
+      maxContentLength: 512 * 1024,
+      headers: { Range: 'bytes=0-4095', ...(headers || {}) },
+      validateStatus: () => true,
+    });
+    const status = Number(res?.status);
+    if (!Number.isFinite(status) || status < 200 || status >= 300) return null;
+    const buf = Buffer.from(res.data);
+    const hintPath = (() => { try { return new URL(String(url)).pathname; } catch { return String(url || ''); } })();
+    const magicInfo = detectMediaFromMagic(buf, hintPath);
+    if (!magicInfo || !isAudioOrVideoMime(magicInfo.mimeType)) return null;
+    return { ...magicInfo, size: buf.length };
+  } catch {
+    return null;
   }
 }
 
@@ -212,8 +316,8 @@ async function readAudioAsDataUri(src, { timeoutMs, headers }) {
       throw new Error(`fetch audio failed: HTTP ${Number.isFinite(status) ? status : 'unknown'}`);
     }
     buf = Buffer.from(res.data);
-    const ct = (res.headers?.['content-type'] || '').split(';')[0].trim();
-    if (ct && (ct.startsWith('audio/') || ct.startsWith('video/'))) type = ct;
+    const ct = normalizeMimeType(res.headers?.['content-type'] || '');
+    if (isAudioOrVideoMime(ct)) type = ct;
     if (!type) {
       try { const u = new URL(String(src)); type = guessAudioMimeByPath(u.pathname); } catch {}
     }
@@ -229,10 +333,32 @@ async function readAudioAsDataUri(src, { timeoutMs, headers }) {
   }
 
   if (!buf || !buf.length) throw new Error('empty audio file');
-  magic = sniffAudioMagic(buf);
+  const nameHint = (() => {
+    try {
+      if (isHttpUrl(src)) return new URL(String(src)).pathname;
+      return String(src || '');
+    } catch {
+      return String(src || '');
+    }
+  })();
 
-  const dataUri = `data:${type};base64,${buf.toString('base64')}`;
-  return { uri: dataUri, mime: type, size: buf.length, base64: buf.toString('base64'), format, magic };
+  const magicInfo = detectMediaFromMagic(buf, nameHint);
+  magic = magicInfo.magic || sniffAudioMagic(buf);
+
+  const headerOrPathMime = type;
+  const extMime = guessAudioMimeByPath(nameHint);
+  const chosenMime = isAudioOrVideoMime(magicInfo.mimeType)
+    ? magicInfo.mimeType
+    : (isAudioOrVideoMime(headerOrPathMime) ? headerOrPathMime : (isAudioOrVideoMime(extMime) ? extMime : ''));
+  if (!chosenMime) {
+    throw new Error(`unsupported media type: content-type=${headerOrPathMime || 'none'} magic=${magic || 'unknown'} name=${String(nameHint || '')}`);
+  }
+
+  const chosenExt = magicInfo.ext || String(path.extname(nameHint) || '').toLowerCase().replace(/^\./, '') || (mime.extension(chosenMime) || '');
+  format = inferAudioFormat({ mimeType: chosenMime, ext: chosenExt, magic });
+
+  const dataUri = `data:${chosenMime};base64,${buf.toString('base64')}`;
+  return { uri: dataUri, mime: chosenMime, size: buf.length, base64: buf.toString('base64'), format, magic };
 }
 
 function isTimeoutError(e) {
@@ -421,12 +547,15 @@ function buildChunks(fileSize, chunkSize, overlapBytes) {
 
 async function headRemote(url, timeoutMs, headers) {
   try {
-    const res = await httpClient.head(url, { timeout: Math.min(timeoutMs, 15000), headers });
+    const res = await httpClient.head(url, { timeout: Math.min(timeoutMs, 15000), headers, validateStatus: () => true });
+    const status = Number(res?.status);
+    if (!Number.isFinite(status) || status < 200 || status >= 400) return { size: null, acceptRanges: '', contentType: '' };
     const len = Number(res.headers['content-length']);
     const acceptRanges = String(res.headers['accept-ranges'] || '').toLowerCase();
-    return { size: Number.isFinite(len) ? len : null, acceptRanges };
+    const contentType = normalizeMimeType(res.headers['content-type'] || '');
+    return { size: Number.isFinite(len) ? len : null, acceptRanges, contentType };
   } catch {
-    return { size: null, acceptRanges: '' };
+    return { size: null, acceptRanges: '', contentType: '' };
   }
 }
 
@@ -621,7 +750,7 @@ async function postWithRetry(url, formData, timeoutMs, retries, retryBaseMs, ext
   }
 }
 
-export default async function handler(args = {}, options = {}) {
+async function legacyHandler(args = {}, options = {}) {
   const fileInput = String(args.file || '').trim();
   const language = args.language || null;
   const prompt = args.prompt || null;
@@ -854,11 +983,12 @@ export default async function handler(args = {}, options = {}) {
     }
 
     // 获取大小与是否支持 Range（URL 优先 HEAD；不支持则回落为本地临时文件以启用切片）
-    let fileSize = null; let acceptRanges = '';
+    let fileSize = null; let acceptRanges = ''; let remoteContentType = '';
     let localPath = filePath; let usingTemp = false;
     const fetchHeaders = buildFetchHeaders(penv, args);
     if (isUrl) {
       const info = await headRemote(filePath, timeoutMs, fetchHeaders);
+      remoteContentType = String(info?.contentType || '');
       if (!Number.isFinite(info.size) || !String(info.acceptRanges || '').includes('bytes')) {
         logger.info?.('av_transcribe:fallback_download', { label: 'PLUGIN', reason: 'no-range-or-size', url: filePath });
         localPath = await downloadToTempFile(filePath, timeoutMs, fetchHeaders, baseTmpDir);
@@ -869,6 +999,29 @@ export default async function handler(args = {}, options = {}) {
       }
     } else {
       try { fileSize = fssync.statSync(filePath).size; } catch {}
+    }
+
+    const uploadHint = (!isUrl || usingTemp)
+      ? detectUploadMediaHintLocalFile(localPath)
+      : {
+          mimeType: (isAudioOrVideoMime(remoteContentType)
+            ? remoteContentType
+            : (() => {
+                try { return guessAudioMimeByPath(new URL(String(filePath)).pathname) || ''; } catch { return ''; }
+              })() || 'application/octet-stream'),
+          ext: (() => { try { return String(path.extname(new URL(String(filePath)).pathname) || '').toLowerCase().replace(/^\./, ''); } catch { return ''; } })(),
+          magic: '',
+          kind: '',
+        };
+
+    if (isUrl && !usingTemp && (!isAudioOrVideoMime(uploadHint.mimeType) || uploadHint.mimeType === 'application/octet-stream')) {
+      const sniffed = await sniffRemoteMagic(filePath, timeoutMs, fetchHeaders);
+      if (sniffed?.mimeType) {
+        uploadHint.mimeType = sniffed.mimeType;
+        uploadHint.ext = sniffed.ext || uploadHint.ext;
+        uploadHint.magic = sniffed.magic || uploadHint.magic;
+        uploadHint.kind = sniffed.kind || uploadHint.kind;
+      }
     }
 
     const canChunk = chunkEnabled && Number.isFinite(fileSize) && fileSize > maxChunkThreshold && (!isUrl || usingTemp || (acceptRanges && acceptRanges.includes('bytes')));
@@ -883,11 +1036,12 @@ export default async function handler(args = {}, options = {}) {
       if (isUrl && !usingTemp) {
         const remote = await httpClient.get(filePath, { responseType: 'stream', timeout: timeoutMs, maxBodyLength: Infinity, headers: fetchHeaders });
         const guessedName = (() => { try { return path.basename(new URL(filePath).pathname) || 'audio'; } catch { return 'audio'; }})();
-        const contentType = remote.headers?.['content-type'] || 'application/octet-stream';
+        const remoteCT = normalizeMimeType(remote.headers?.['content-type'] || '');
+        const contentType = (isAudioOrVideoMime(remoteCT) ? remoteCT : (uploadHint.mimeType || 'application/octet-stream'));
         formData.append('file', remote.data, { filename: guessedName, contentType });
       } else {
         const fileStream = fssync.createReadStream(localPath);
-        formData.append('file', fileStream, { filename: path.basename(localPath), contentType: 'application/octet-stream' });
+        formData.append('file', fileStream, { filename: path.basename(localPath), contentType: uploadHint.mimeType || 'application/octet-stream' });
       }
       formData.append('model', model);
       if (language) formData.append('language', language);
@@ -918,13 +1072,14 @@ export default async function handler(args = {}, options = {}) {
       const FormData = (await import('form-data')).default;
       const formData = new FormData();
       let filename = 'audio_chunk_' + (c.index + 1);
-      let contentType = 'application/octet-stream';
+      let contentType = uploadHint.mimeType || 'application/octet-stream';
 
       if (isUrl && !usingTemp) {
         const rangeHeader = { Range: `bytes=${c.start}-${c.end - 1}`, ...fetchHeaders };
         const resp = await httpClient.get(filePath, { responseType: 'stream', headers: rangeHeader, timeout: timeoutMs, maxBodyLength: Infinity });
         try { filename = path.basename(new URL(filePath).pathname) || filename; } catch {}
-        contentType = resp.headers?.['content-type'] || contentType;
+        const rangedCT = normalizeMimeType(resp.headers?.['content-type'] || '');
+        if (isAudioOrVideoMime(rangedCT)) contentType = rangedCT;
         formData.append('file', resp.data, { filename, contentType });
       } else {
         try { filename = path.basename(localPath).replace(/(\.[^./\\]+)?$/, `_chunk_${c.index + 1}$1`); } catch {}
@@ -994,4 +1149,18 @@ export default async function handler(args = {}, options = {}) {
     const isUrl = String(filePath || '').startsWith('http://') || String(filePath || '').startsWith('https://');
     return { success: false, code, error: String(e?.message || e), advice: buildAdvice(kind, { tool: 'av_transcribe', file: filePath, source: isUrl ? 'url' : 'file' }) };
   }
+}
+
+export default async function handler(args = {}, options = {}) {
+  const out = await legacyHandler(args, options);
+  if (out && typeof out === 'object' && typeof out.success === 'boolean') {
+    if (out.success === true) {
+      return ok(out.data ?? null, out.code || 'OK', { ...('advice' in out ? { advice: out.advice } : {}) });
+    }
+
+    const extra = { ...('advice' in out ? { advice: out.advice } : {}) };
+    if ('data' in out && out.data != null) extra.detail = { data: out.data };
+    return fail(('error' in out) ? out.error : 'Tool failed', out.code || 'ERR', extra);
+  }
+  return ok(out);
 }

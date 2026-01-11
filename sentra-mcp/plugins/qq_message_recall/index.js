@@ -1,4 +1,5 @@
 import wsCall from '../../src/utils/ws_rpc.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -54,12 +55,12 @@ export default async function handler(args = {}, options = {}) {
   const path = 'message.recall';
   const requestId = String(args.requestId || `${path}-${Date.now()}`);
   const message_id = Number(args.message_id);
-  if (!Number.isFinite(message_id)) return { success: false, code: 'INVALID', error: 'message_id 不能为空', advice: buildAdvice('INVALID', { tool: 'qq_message_recall' }) };
+  if (!Number.isFinite(message_id)) return fail('message_id 不能为空', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_message_recall' }) });
   try {
     const resp = await wsCall({ url, path, args: [message_id], requestId, timeoutMs });
-    return { success: true, data: { request: { type: 'sdk', path, args: [message_id], requestId }, response: resp } };
+    return ok({ request: { type: 'sdk', path, args: [message_id], requestId }, response: resp });
   } catch (e) {
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_message_recall', message_id }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_message_recall', message_id }) });
   }
 }

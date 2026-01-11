@@ -1,4 +1,5 @@
 import wsCall from '../../src/utils/ws_rpc.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 function isTimeoutError(e) {
   const msg = String(e?.message || e || '').toLowerCase();
@@ -56,7 +57,7 @@ export default async function handler(args = {}, options = {}) {
   const payload = {};
   // face_id: required, number|string
   const hasFaceId = Object.prototype.hasOwnProperty.call(args, 'face_id');
-  if (!hasFaceId) return { success: false, code: 'INVALID', error: 'face_id 为必填', advice: buildAdvice('INVALID', { tool: 'qq_system_setDiyOnlineStatus' }) };
+  if (!hasFaceId) return fail('face_id 为必填', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'qq_system_setDiyOnlineStatus' }) });
   const fidRaw = args.face_id;
   const fidNum = Number(fidRaw);
   payload.face_id = Number.isFinite(fidNum) ? fidNum : String(fidRaw);
@@ -72,9 +73,9 @@ export default async function handler(args = {}, options = {}) {
   }
   try {
     const resp = await wsCall({ url, path, args: [payload], requestId, timeoutMs });
-    return { success: true, data: { request: { type: 'sdk', path, args: [payload], requestId }, response: resp } };
+    return ok({ request: { type: 'sdk', path, args: [payload], requestId }, response: resp });
   } catch (e) {
     const isTimeout = isTimeoutError(e);
-    return { success: false, code: isTimeout ? 'TIMEOUT' : 'ERR', error: String(e?.message || e), advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_system_setDiyOnlineStatus', payload }) };
+    return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'qq_system_setDiyOnlineStatus', payload }) });
   }
 }

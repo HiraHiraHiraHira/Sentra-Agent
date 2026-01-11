@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import logger from '../../src/logger/index.js';
 import { httpGet } from '../../src/utils/http.js';
+import { ok, fail } from '../../src/utils/result.js';
 
 // 缓存目录路径
 const CACHE_DIR = path.resolve(process.cwd(), 'cache', 'weather');
@@ -591,7 +592,7 @@ export default async function handler(args = {}, options = {}) {
     : [];
 
   if (!cities.length) {
-    return { success: false, code: 'INVALID', error: 'cities 为必填参数，请提供至少一个城市名称数组，如：["北京", "上海"]', advice: buildAdvice('INVALID', { tool: 'weather' }) };
+    return fail('cities 为必填参数，请提供至少一个城市名称数组，如：["北京", "上海"]', 'INVALID', { advice: buildAdvice('INVALID', { tool: 'weather' }) });
   }
 
   const queryType = (args.queryType || 'all').toLowerCase();
@@ -599,13 +600,13 @@ export default async function handler(args = {}, options = {}) {
   const weatherUrl = penv.WEATHER_API_HOST || penv.WEATHER_HOST || process.env.WEATHER_API_HOST || process.env.WEATHER_HOST || 'devapi.qweather.com';
   
   if (!weatherKey) {
-    return { success: false, code: 'NO_API_KEY', error: 'WEATHER_API_KEY 未配置，请在 .env 文件中配置', advice: buildAdvice('NO_API_KEY', { tool: 'weather' }) };
+    return fail('WEATHER_API_KEY 未配置，请在 .env 文件中配置', 'NO_API_KEY', { advice: buildAdvice('NO_API_KEY', { tool: 'weather' }) });
   }
 
   // 验证查询类型
   const validTypes = ['current', 'forecast', 'hourly', 'warning', 'all'];
   if (!validTypes.includes(queryType)) {
-    return { success: false, code: 'INVALID', error: `无效的查询类型: ${queryType}。支持的类型: ${validTypes.join(', ')}`, advice: buildAdvice('INVALID', { tool: 'weather', queryType }) };
+    return fail(`无效的查询类型: ${queryType}。支持的类型: ${validTypes.join(', ')}`, 'INVALID', { advice: buildAdvice('INVALID', { tool: 'weather', queryType }) });
   }
 
   const results = [];
@@ -642,24 +643,12 @@ export default async function handler(args = {}, options = {}) {
   const anyOk = results.some((r) => r.success);
 
   if (anyOk) {
-    return {
-      success: true,
-      data: {
-        queryType,
-        results
-      }
-    };
+    return ok({ queryType, results });
   }
 
   // 所有城市都失败时，顶层也标记为失败，但仍返回详细 results 便于上层展示
-  return {
-    success: false,
-    code: 'WEATHER_API_FAILED',
-    error: '所有城市的天气查询均失败',
-    data: {
-      queryType,
-      results
-    },
-    advice: buildAdvice('WEATHER_API_FAILED', { tool: 'weather', cities, queryType })
-  };
+  return fail('所有城市的天气查询均失败', 'WEATHER_API_FAILED', {
+    advice: buildAdvice('WEATHER_API_FAILED', { tool: 'weather', cities, queryType }),
+    detail: { queryType, results },
+  });
 }
