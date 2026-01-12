@@ -1,6 +1,6 @@
 {
   "name": "qq_avatar_get",
-  "description": "根据 QQ 用户 ID 获取头像，下载至本地并返回 Markdown 链接（绝对路径）。内置 30 分钟缓存。",
+  "description": "下载一个或多个 QQ 号的头像，并返回本地图片路径。",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -56,8 +56,8 @@
   },
   "timeoutMs": 60000,
   "meta": {
-    "realWorldAction": "获取 QQ 头像",
-    "responseStyle": "纯文本（Markdown）",
-    "responseExample": "![avatar](E:/sentra-agent/sentra-mcp/artifacts/qq_avatar_1234567890.jpg)"
+    "realWorldAction": "获取 QQ 头像并保存到本地",
+    "responseStyle": "自然语言，附上图片路径",
+    "responseExample": "头像我已经下载好了，路径在本地图片里。"
   }
 }

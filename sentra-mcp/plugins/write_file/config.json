@@ -20,7 +20,7 @@
       "baseDir": {
         "type": "string",
         "default": "artifacts",
-        "description": "基础输出目录（默认 artifacts）。相对路径将基于此目录解析，绝对路径将直接写入。也可通过插件 .env 的 WRITE_FILE_BASE_DIR 覆盖。"
+        "description": "基础输出目录（默认 artifacts）。相对路径将基于此目录解析，绝对路径将直接写入。"
       },
       "encoding": {
         "type": "string",

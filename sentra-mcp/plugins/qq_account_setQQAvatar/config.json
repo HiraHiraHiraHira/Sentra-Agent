@@ -1,6 +1,6 @@
 {
   "name": "qq_account_setQQAvatar",
-  "description": "QQ 平台：设置当前认证账号的头像（仅能修改自己的头像）",
+  "description": "把当前 QQ 账号的头像换成你提供的图片。",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -49,8 +49,8 @@
   },
   "timeoutMs": 20000,
   "meta": {
-    "realWorldAction": "设置当前账号头像（仅修改自己的头像）",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已设置头像"
+    "realWorldAction": "修改当前 QQ 的头像",
+    "responseStyle": "自然语言，简短确认已设置",
+    "responseExample": "头像已经帮你换好了。"
   }
 }

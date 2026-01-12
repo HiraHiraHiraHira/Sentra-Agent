@@ -1,6 +1,6 @@
 {
   "name": "qq_account_setSelfLongnick",
-  "description": "QQ平台：设置个性签名",
+  "description": "修改当前 QQ 账号的个性签名。",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -45,8 +45,8 @@
   },
   "timeoutMs": 20000,
   "meta": {
-    "realWorldAction": "设置个性签名",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已设置个性签名"
+    "realWorldAction": "修改当前 QQ 的个性签名",
+    "responseStyle": "自然语言，简短确认已设置",
+    "responseExample": "个性签名已经更新好了。"
   }
 }

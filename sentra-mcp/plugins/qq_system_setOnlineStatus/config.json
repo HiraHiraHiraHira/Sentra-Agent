@@ -1,6 +1,6 @@
 {
   "name": "qq_system_setOnlineStatus",
-  "description": "QQ 平台：设置当前账号的在线状态（仅修改自己的状态）。status/ext_status/battery_status 三项均需提供，可参考常见映射组合。",
+  "description": "设置当前 QQ 账号的在线状态，比如在线、离开、隐身等。",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -53,8 +53,8 @@
   },
   "timeoutMs": 20000,
   "meta": {
-    "realWorldAction": "设置在线状态（仅修改当前账号）",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已设置在线状态"
+    "realWorldAction": "把当前 QQ 的在线状态改成你指定的状态",
+    "responseStyle": "自然语言，简短确认已设置",
+    "responseExample": "我已经把在线状态设置好了。"
   }
 }

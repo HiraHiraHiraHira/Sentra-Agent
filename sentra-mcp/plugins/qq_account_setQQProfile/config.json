@@ -1,6 +1,6 @@
 {
   "name": "qq_account_setQQProfile",
-  "description": "QQ 平台：设置当前认证账号的个人资料（仅能修改自己的资料），支持更新昵称、个性签名与性别。",
+  "description": "修改当前 QQ 账号的个人资料，比如昵称、签名或性别。",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -59,8 +59,8 @@
   },
   "timeoutMs": 20000,
   "meta": {
-    "realWorldAction": "设置当前账号个人资料（仅修改自己的资料）",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已更新资料（昵称/个性签名/性别）"
+    "realWorldAction": "修改当前 QQ 的个人资料",
+    "responseStyle": "自然语言，简短确认已更新",
+    "responseExample": "资料已经更新好了。"
   }
 }

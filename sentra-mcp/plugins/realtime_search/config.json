@@ -59,7 +59,7 @@
       },
       "rawRequest": {
         "type": "object",
-        "description": "Direct chat completions payload (standard OpenAI format with model and messages); model is enforced from plugin .env."
+        "description": "Direct chat completions payload (standard OpenAI format with model and messages)."
       },
       "schedule": {
         "type": "object",

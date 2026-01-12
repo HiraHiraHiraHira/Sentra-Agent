@@ -1,6 +1,6 @@
 {
   "name": "qq_system_getModelShow",
-  "description": "QQ平台：获取设备展示",
+  "description": "查看当前 QQ 账号的设备展示信息。",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -39,8 +39,8 @@
   },
   "timeoutMs": 20000,
   "meta": {
-    "realWorldAction": "获取设备展示",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已返回机型信息"
+    "realWorldAction": "查看当前 QQ 的设备展示",
+    "responseStyle": "自然语言，简短说明当前设置",
+    "responseExample": "我已经查到当前设备展示信息了。"
   }
 }

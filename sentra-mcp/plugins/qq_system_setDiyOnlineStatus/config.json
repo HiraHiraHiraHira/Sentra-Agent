@@ -1,6 +1,6 @@
 {
   "name": "qq_system_setDiyOnlineStatus",
-  "description": "QQ 平台：设置当前账号的自定义在线状态（仅修改自己的状态），支持 face_id、face_type、wording。",
+  "description": "设置当前 QQ 账号的自定义在线状态，包括表情和文案。",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -65,8 +65,8 @@
   },
   "timeoutMs": 20000,
   "meta": {
-    "realWorldAction": "设置自定义在线状态（仅修改当前账号）",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已设置自定义在线状态"
+    "realWorldAction": "设置当前 QQ 的自定义在线状态",
+    "responseStyle": "自然语言，简短确认已设置",
+    "responseExample": "自定义在线状态已经设置好了。"
   }
 }

@@ -10,6 +10,81 @@ const logger = createLogger('PresetTeachingTrigger');
 // 预设教导更新队列：串行执行，避免并发覆盖同一份预设
 let presetTeachingQueue = Promise.resolve();
 
+// 预设教导批处理缓冲：按会话累计若干轮，再触发一次 LLM 教导检查
+// key -> { items: string[], chars: number, firstAt: number, lastAt: number }
+const teachingBatchBuffer = new Map();
+
+function sanitizePositiveInt(value, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  const intVal = Math.floor(num);
+  if (intVal <= 0) return fallback;
+  return intVal;
+}
+
+function sanitizeNonNegativeInt(value, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  const intVal = Math.floor(num);
+  if (intVal < 0) return fallback;
+  return intVal;
+}
+
+function getTeachingBatchConfig() {
+  // 默认 8；非法值（<=0/NaN）回退 1
+  const batchSize = sanitizePositiveInt(getEnvInt('AGENT_PRESET_TEACHING_BATCH_SIZE', 8), 1);
+  const maxChars = sanitizeNonNegativeInt(getEnvInt('AGENT_PRESET_TEACHING_BATCH_MAX_CHARS', 0), 0);
+  const maxItems = sanitizePositiveInt(getEnvInt('AGENT_PRESET_TEACHING_BATCH_MAX_ITEMS', 50), 1);
+  const ttlMs = sanitizeNonNegativeInt(getEnvInt('AGENT_PRESET_TEACHING_BATCH_TTL_MS', 0), 0);
+  return { batchSize, maxChars, maxItems, ttlMs };
+}
+
+function buildBatchKey({ groupId, chatType, userId, presetSourceFileName }) {
+  const gid = groupId ? String(groupId) : '';
+  const uid = userId ? String(userId) : '';
+  const ct = chatType ? String(chatType) : '';
+  const preset = presetSourceFileName ? String(presetSourceFileName) : '';
+  return `${ct}|${gid}|${uid}|${preset}`;
+}
+
+function pushTeachingBatchItem(key, text, cfg) {
+  if (!key) return { shouldFlush: false, batchText: '' };
+  const now = Date.now();
+  const safeText = typeof text === 'string' ? text : '';
+  const itemChars = safeText.length;
+
+  let buf = teachingBatchBuffer.get(key);
+  if (!buf) {
+    buf = { items: [], chars: 0, firstAt: now, lastAt: now };
+    teachingBatchBuffer.set(key, buf);
+  }
+
+  buf.items.push(safeText);
+  buf.chars += itemChars;
+  buf.lastAt = now;
+
+  const sizeReached = buf.items.length >= cfg.batchSize;
+  const maxCharsReached = cfg.maxChars > 0 && buf.chars >= cfg.maxChars;
+  const maxItemsReached = buf.items.length >= cfg.maxItems;
+  const ttlReached = cfg.ttlMs > 0 && now - buf.firstAt >= cfg.ttlMs;
+
+  const shouldFlush = sizeReached || maxCharsReached || maxItemsReached || ttlReached;
+  if (!shouldFlush) {
+    return { shouldFlush: false, batchText: '' };
+  }
+
+  // 取出并清空缓冲，避免后续并发触发重复 flush
+  teachingBatchBuffer.delete(key);
+
+  const parts = [];
+  const total = buf.items.length;
+  for (let i = 0; i < total; i++) {
+    parts.push(`--- BATCH_ITEM ${i + 1}/${total} ---`);
+    parts.push(buf.items[i] || '(empty)');
+  }
+  return { shouldFlush: true, batchText: parts.join('\n') };
+}
+
 function enqueuePresetTeachingTask(taskFn) {
   const nextTask = presetTeachingQueue.then(() => taskFn());
   // 确保队列链本身不会因为单个任务失败而中断
@@ -99,7 +174,25 @@ export async function triggerPresetTeachingIfNeededCore(options = {}) {
 
   const conversationText = conversationParts.join('\n');
 
+  const cfg = getTeachingBatchConfig();
+  const batchKey = buildBatchKey({
+    groupId,
+    chatType,
+    userId,
+    presetSourceFileName: initialState?.sourceFileName || ''
+  });
+  const pushed = pushTeachingBatchItem(batchKey, conversationText, cfg);
+  if (!pushed.shouldFlush) {
+    logger.debug('PresetTeachingTrigger: batched teaching context (skip this round)', {
+      groupId,
+      userId,
+      batchSize: cfg.batchSize
+    });
+    return null;
+  }
+
   // 将实际教导与预设写回逻辑排入串行队列中执行，避免高并发下互相覆盖
+  const flushedConversationText = pushed.batchText;
   return enqueuePresetTeachingTask(async () => {
     const state = typeof getPresetSnapshot === 'function' ? getPresetSnapshot() : null;
     const presetSnapshot = state && state.json;
@@ -115,7 +208,7 @@ export async function triggerPresetTeachingIfNeededCore(options = {}) {
         groupId,
         chatType,
         presetJson: presetSnapshot,
-        conversationText,
+        conversationText: flushedConversationText,
         presetSourceFileName: state?.sourceFileName || ''
       });
 

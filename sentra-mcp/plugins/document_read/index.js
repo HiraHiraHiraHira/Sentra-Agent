@@ -10,6 +10,7 @@ import iconv from 'iconv-lite';
 import { httpRequest } from '../../src/utils/http.js';
 import { toAbsoluteLocalPath } from '../../src/utils/path.js';
 import { ok, fail } from '../../src/utils/result.js';
+import { countTokens, fitToTokenLimit } from '../../src/utils/tokenizer.js';
 
 function isHttpUrl(s) {
   try { const u = new URL(String(s)); return u.protocol === 'http:' || u.protocol === 'https:'; } catch { return false; }
@@ -152,10 +153,12 @@ export default async function handler(args = {}, options = {}) {
   // 从环境变量读取文件大小限制
   const penv = options?.pluginEnv || {};
   const maxFileSizeMB = Number(penv.DOC_MAX_FILE_SIZE_MB || process.env.DOC_MAX_FILE_SIZE_MB || 10);
+  const maxOutputTokensRaw = penv.DOC_MAX_OUTPUT_TOKENS ?? process.env.DOC_MAX_OUTPUT_TOKENS;
+  const maxOutputTokens = Number(maxOutputTokensRaw);
   
   if (!files.length) return fail('file/files is required (a url/absolute path string or an array of urls/absolute paths)', 'INVALID');
   
-  logger.info?.('document_read:start', { label: 'PLUGIN', fileCount: files.length, encoding, maxFileSizeMB });
+  logger.info?.('document_read:start', { label: 'PLUGIN', fileCount: files.length, encoding, maxFileSizeMB, maxOutputTokens });
   const results = [];
   
   for (const file of files) {
@@ -166,7 +169,23 @@ export default async function handler(args = {}, options = {}) {
       
       logger.info?.('document_read:file_loaded', { label: 'PLUGIN', file, mimeType, ext, sizeMB: sizeMB.toFixed(2) });
       const fileType = mimeType || ext;
-      const content = await parseDocument(buffer, fileType, { encoding });
+      let content = await parseDocument(buffer, fileType, { encoding });
+
+      if (typeof content === 'string' && content && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
+        const before = countTokens(content);
+        if (before > maxOutputTokens) {
+          const fitted = fitToTokenLimit(content, { maxTokens: maxOutputTokens });
+          content = fitted.text;
+          logger.info?.('document_read:content_truncated', {
+            label: 'PLUGIN',
+            file,
+            maxOutputTokens,
+            beforeTokens: before,
+            afterTokens: fitted.tokens,
+            truncated: fitted.truncated,
+          });
+        }
+      }
       
       results.push({ file, type: fileType, size_mb: sizeMB.toFixed(2), content, length: content.length });
       logger.info?.('document_read:parsed', { label: 'PLUGIN', file, type: fileType, contentLength: content.length });

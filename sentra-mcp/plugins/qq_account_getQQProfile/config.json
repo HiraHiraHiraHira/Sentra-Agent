@@ -1,6 +1,6 @@
 {
   "name": "qq_account_getQQProfile",
-  "description": "QQ平台：获取个人资料",
+  "description": "查询一个或多个 QQ 号的个人资料信息。",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -57,8 +57,8 @@
   },
   "timeoutMs": 20000,
   "meta": {
-    "realWorldAction": "获取个人资料",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已返回用户资料"
+    "realWorldAction": "查询 QQ 个人资料",
+    "responseStyle": "自然语言，简短返回资料要点",
+    "responseExample": "我已经查到对方的个人资料了。"
   }
 }

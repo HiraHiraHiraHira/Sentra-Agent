@@ -1,6 +1,6 @@
 {
   "name": "qq_system_setModelShow",
-  "description": "QQ平台：设置设备展示",
+  "description": "设置当前 QQ 账号的设备展示信息。",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -49,8 +49,8 @@
   },
   "timeoutMs": 20000,
   "meta": {
-    "realWorldAction": "QQ修改当前账号的设备/机型展示",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "我已经把QQ设备展示改好了。"
+    "realWorldAction": "修改当前 QQ 的设备展示",
+    "responseStyle": "自然语言，简短确认已设置",
+    "responseExample": "我已经把 QQ 设备展示改好了。"
   }
 }

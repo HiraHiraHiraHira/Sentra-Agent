@@ -12,6 +12,7 @@ import { chatCompletion } from '../../src/openai/client.js';
 import { abs as toAbs, toPosix } from '../../src/utils/path.js';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { ok, fail } from '../../src/utils/result.js';
+import { countTokens, fitToTokenLimit } from '../../src/utils/tokenizer.js';
 
 // 支持的框架列表
 const FRAMEWORKS = new Set(['electron-vanilla', 'electron-react', 'electron-vue', 'vanilla', 'react', 'vue']);
@@ -684,6 +685,7 @@ function generateInstructions(projectPath, appName, automated = false) {
 - Linux: dist/${appName}.AppImage
 
 💡 提示：
+
 - 首次运行需要下载 Electron，可能需要几分钟
 - 打包需要较长时间，请耐心等待
 - 修改代码后，重启应用即可看到效果`;
@@ -715,7 +717,26 @@ export default async function handler(args = {}, options = {}) {
       return fail('app_name 只能包含字母、数字、连字符和下划线', 'INVALID', { advice: buildAdvice('INVALID', { field: 'app_name' }) });
     }
 
-    const htmlContent = String(args.html_content || '').trim();
+    let htmlContent = String(args.html_content || '').trim();
+    const tokenizerModelRaw = penv.HTML_TO_APP_TOKENIZER_MODEL || process.env.HTML_TO_APP_TOKENIZER_MODEL;
+    const tokenizerModel = String(tokenizerModelRaw || '').trim() || undefined;
+    const maxInputTokensRaw = penv.HTML_TO_APP_MAX_INPUT_TOKENS ?? process.env.HTML_TO_APP_MAX_INPUT_TOKENS;
+    const maxInputTokens = Number(maxInputTokensRaw);
+    if (htmlContent && Number.isFinite(maxInputTokens) && maxInputTokens > 0) {
+      const before = countTokens(htmlContent, { model: tokenizerModel });
+      if (before > maxInputTokens) {
+        const fitted = fitToTokenLimit(htmlContent, { model: tokenizerModel, maxTokens: maxInputTokens });
+        htmlContent = fitted.text;
+        logger.info?.('html_to_app: html_content truncated by token limit', {
+          label: 'PLUGIN',
+          tokenizerModel,
+          beforeTokens: before,
+          afterTokens: fitted.tokens,
+          maxInputTokens,
+          truncated: fitted.truncated,
+        });
+      }
+    }
     const framework = normalizeFramework(args.framework || penv.HTML_TO_APP_DEFAULT_FRAMEWORK);
     const features = Array.isArray(args.features) ? args.features : [];
 
