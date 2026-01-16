@@ -74,9 +74,9 @@ function sliceRawSpan(documentText, startChar, endChar) {
   return text.slice(ss, ee).trim();
 }
 
-async function embedTexts(openai, texts) {
-  const model = getEnv('OPENAI_EMBEDDING_MODEL', { defaultValue: 'text-embedding-3-small' });
-  const resp = await openai.embeddings.create({ model, input: texts });
+async function embedTexts(embeddingOpenai, texts) {
+  const model = getEnv('EMBEDDING_MODEL', { defaultValue: 'text-embedding-3-small' });
+  const resp = await embeddingOpenai.embeddings.create({ model, input: texts });
   const data = resp?.data;
   if (!Array.isArray(data) || data.length !== texts.length) {
     throw new Error('Embedding response size mismatch');
@@ -126,7 +126,7 @@ function fallbackSegmentsFromText(documentText) {
   return { parents, children };
 }
 
-export async function ingestContractToNeo4j(neo4j, openai, contract, { docId, title, source } = {}) {
+export async function ingestContractToNeo4j(neo4j, embeddingOpenai, contract, { docId, title, source } = {}) {
   const documentText = contract?.normalized_input?.document_text || '';
   let parents = contract?.segments?.parent || [];
   let children = contract?.segments?.child || [];
@@ -300,7 +300,7 @@ export async function ingestContractToNeo4j(neo4j, openai, contract, { docId, ti
   for (let i = 0; i < childRows.length; i += batchSize) {
     const batch = childRows.slice(i, i + batchSize);
     const texts = batch.map((r) => r.text);
-    const embeddings = await embedTexts(openai, texts);
+    const embeddings = await embedTexts(embeddingOpenai, texts);
 
     for (let j = 0; j < batch.length; j++) {
       await neo4j.run(

@@ -14,7 +14,7 @@ import {
   retrieveVector,
 } from '../neo4j/retrieval.js';
 import { ensureNeo4jSchema } from '../neo4j/schema.js';
-import { createOpenAIClient } from '../openai/client.js';
+import { createChatOpenAIClient, createEmbeddingOpenAIClient } from '../openai/client.js';
 import { requestContractXml, requestContractXmlRepair } from '../openai/contract_call.js';
 import { ingestContractToNeo4j } from '../pipelines/ingest.js';
 import { queryWithNeo4j } from '../pipelines/query.js';
@@ -50,8 +50,8 @@ function mergeByTextWithSources(items) {
   return out;
 }
 
-async function requestAndParseContract(openai, policy, { task, queryText, contextText, documentText, lang }) {
-  const xml = await requestContractXml(openai, policy, {
+async function requestAndParseContract(chatOpenai, policy, { task, queryText, contextText, documentText, lang }) {
+  const xml = await requestContractXml(chatOpenai, policy, {
     task,
     queryText,
     contextText,
@@ -61,7 +61,7 @@ async function requestAndParseContract(openai, policy, { task, queryText, contex
 
   let parsed = parseSentraContractXml(xml, { defaultTask: task });
   if (!parsed.ok) {
-    const repaired = await requestContractXmlRepair(openai, policy, {
+    const repaired = await requestContractXmlRepair(chatOpenai, policy, {
       badXml: xml,
       errorReport: parsed.error,
       lang,
@@ -90,7 +90,8 @@ export async function createRagSdk({ lang, watchEnv } = {}) {
   const policy = await loadContractPolicy();
   const effectiveLang = lang || policy.lang || 'zh';
 
-  const openai = createOpenAIClient();
+  const chatOpenai = createChatOpenAIClient();
+  const embeddingOpenai = createEmbeddingOpenAIClient();
   const neo4j = createNeo4jClient();
 
   let schemaEnsured = false;
@@ -109,7 +110,7 @@ export async function createRagSdk({ lang, watchEnv } = {}) {
       hybridKFulltext: getEnvNumber('RETRIEVE_HYBRID_K_FULLTEXT', { defaultValue: 8 }),
       expandParent: getEnvBoolean('RETRIEVE_EXPAND_PARENT', { defaultValue: true }),
       budgetChars: getEnvNumber('RETRIEVE_BUDGET_CHARS', { defaultValue: 12000 }),
-      rerankEnable: getEnvBoolean('RETRIEVE_RERANK_ENABLE', { defaultValue: true }),
+      rerankEnable: getEnvBoolean('RETRIEVE_RERANK_ENABLE', { defaultValue: false }),
       rerankCandidateK: getEnvNumber('RETRIEVE_RERANK_CANDIDATE_K', { defaultValue: 40 }),
       rerankTopN: getEnvNumber('RETRIEVE_RERANK_TOP_N', { defaultValue: 20 }),
       debug: getEnvBoolean('RETRIEVE_DEBUG', { defaultValue: false }),
@@ -117,8 +118,8 @@ export async function createRagSdk({ lang, watchEnv } = {}) {
   }
 
   async function embedQuery(text) {
-    const embeddingModel = getEnv('OPENAI_EMBEDDING_MODEL', { defaultValue: 'text-embedding-3-small' });
-    const emb = await openai.embeddings.create({ model: embeddingModel, input: String(text ?? '') });
+    const embeddingModel = getEnv('EMBEDDING_MODEL', { defaultValue: 'text-embedding-3-small' });
+    const emb = await embeddingOpenai.embeddings.create({ model: embeddingModel, input: String(text ?? '') });
     const v = emb.data?.[0]?.embedding;
     if (!Array.isArray(v)) throw new Error('Embedding failed');
     return { embedding: v, embeddingModel };
@@ -144,17 +145,19 @@ export async function createRagSdk({ lang, watchEnv } = {}) {
     const requestedTopN = Number(topN);
     const finalTopN = !Number.isFinite(requestedTopN) || requestedTopN <= 0 ? docTexts.length : Math.max(1, Math.min(requestedTopN, docTexts.length));
 
-    const embeddingModel = getEnv('OPENAI_EMBEDDING_MODEL', { defaultValue: 'text-embedding-3-small' });
+    const timeoutMs = getEnvNumber('RERANK_TIMEOUT_MS', { defaultValue: 12000 });
+    const baseURL = getEnv('RERANK_BASE_URL', { required: true });
+    const apiKey = getEnv('RERANK_API_KEY', { required: true });
+    const model = getEnv('RERANK_MODEL', { required: true });
     const ranked = await rerankDocuments({
       query,
       documents: docTexts,
-      openai,
-      embeddingModel,
+      enableOnline: true,
       topN: finalTopN,
-      timeoutMs: Number(getEnv('RERANK_TIMEOUT_MS', { defaultValue: 12000 })),
-      baseURL: getEnv('RERANK_BASE_URL', { defaultValue: undefined }),
-      apiKey: getEnv('RERANK_API_KEY', { defaultValue: '' }),
-      model: getEnv('RERANK_MODEL', { defaultValue: undefined }),
+      timeoutMs,
+      baseURL,
+      apiKey,
+      model,
     });
 
     const idx = (ranked.indices || []).filter((x) => Number.isInteger(x) && x >= 0 && x < topPairs.length);
@@ -186,7 +189,7 @@ export async function createRagSdk({ lang, watchEnv } = {}) {
      * 入库：给定纯文本，调用合约(ingest)→解析→确保 schema→写入 Neo4j（含 embedding）。
      */
     async ingestText(text, { docId, title, source, contextText } = {}) {
-      const contract = await requestAndParseContract(openai, policy, {
+      const contract = await requestAndParseContract(chatOpenai, policy, {
         task: 'ingest',
         queryText: '',
         contextText: String(contextText ?? ''),
@@ -195,7 +198,7 @@ export async function createRagSdk({ lang, watchEnv } = {}) {
       });
 
       await ensureSchemaIfNeeded(contract.neo4j_schema);
-      return ingestContractToNeo4j(neo4j, openai, contract, { docId, title, source });
+      return ingestContractToNeo4j(neo4j, embeddingOpenai, contract, { docId, title, source });
     },
 
     /**
@@ -507,7 +510,7 @@ export async function createRagSdk({ lang, watchEnv } = {}) {
      */
     async queryText(queryText, { contextText = '', lang } = {}) {
       const qLang = lang || effectiveLang;
-      const contract = await requestAndParseContract(openai, policy, {
+      const contract = await requestAndParseContract(chatOpenai, policy, {
         task: 'query',
         queryText: String(queryText ?? ''),
         contextText: String(contextText ?? ''),
@@ -516,7 +519,7 @@ export async function createRagSdk({ lang, watchEnv } = {}) {
       });
 
       await ensureSchemaIfNeeded(contract.neo4j_schema);
-      return queryWithNeo4j(neo4j, openai, policy, contract, {
+      return queryWithNeo4j(neo4j, chatOpenai, embeddingOpenai, policy, contract, {
         queryText: String(queryText ?? ''),
         contextText: String(contextText ?? ''),
         lang: qLang,
@@ -535,7 +538,8 @@ export async function createRagSdk({ lang, watchEnv } = {}) {
      */
     clients: {
       neo4j,
-      openai,
+      chatOpenai,
+      embeddingOpenai,
     },
 
     policy,

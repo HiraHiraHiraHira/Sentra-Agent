@@ -1,6 +1,7 @@
 export interface EnvVariable {
   key: string;
   value: string;
+  displayName?: string;
   comment?: string;
 }
 

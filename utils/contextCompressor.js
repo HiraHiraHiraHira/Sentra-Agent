@@ -181,6 +181,8 @@ export function buildContextSummaryMessages(options = {}) {
  * @param {number} [params.maxSummarySentences=1]
  * @param {string} [params.model] - 可选，压缩用模型名称，未提供时由 Agent 默认模型决定
  * @param {string} [params.presetText] - 可选，Agent 预设提示词，用于保持概括时的人设一致
+ * @param {string} [params.apiBaseUrl] - 可选，API 基础 URL
+ * @param {string} [params.apiKey] - 可选，API 密钥
  *
  * @returns {Promise<{ summary: string, messages: Array, model?: string }>}
  */
@@ -195,7 +197,9 @@ export async function compressContext(params = {}) {
     timeEnd,
     maxSummarySentences = 1,
     model,
-    presetText
+    presetText,
+    apiBaseUrl,
+    apiKey
   } = params;
 
   if (!agent || typeof agent.chat !== 'function') {
@@ -218,7 +222,11 @@ export async function compressContext(params = {}) {
     presetText
   });
 
-  const options = model ? { model } : {};
+  const options = {
+    ...(model ? { model } : {}),
+    ...(apiBaseUrl ? { apiBaseUrl } : {}),
+    ...(apiKey ? { apiKey } : {})
+  };
 
   logger.debug(
     `compressContext: chatType=${chatType} groupId=${groupId || ''} userId=${userId || ''} ` +

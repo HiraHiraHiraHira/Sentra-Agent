@@ -221,6 +221,7 @@ export function buildDesktopIcons(
     handleOpenFileManager: () => void,
     handleOpenDevCenter: () => void,
     handleOpenPresetImporter: () => void,
+    handleOpenModelProvidersManager?: () => void,
     handleOpenRedisAdmin?: () => void,
 ): DesktopIcon[] {
     const iconSize = 56;
@@ -229,6 +230,17 @@ export function buildDesktopIcons(
     const startY = 80;
 
     return [
+        {
+            id: 'desktop-model-providers-manager',
+            name: '模型供应商',
+            icon: getIconForType('model-providers-manager', 'module'),
+            position: { x: startX + gap * 5, y: startY },
+            onClick: () => {
+                recordUsage('app:model-providers-manager');
+                if (handleOpenModelProvidersManager) handleOpenModelProvidersManager();
+                else handleOpenDevCenter();
+            }
+        },
         {
             id: 'desktop-redis-admin',
             name: 'Redis 管理器',

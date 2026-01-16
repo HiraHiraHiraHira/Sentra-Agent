@@ -32,6 +32,7 @@ import {
   IoFolderOpen
 } from 'react-icons/io5';
 import { BsRobot } from 'react-icons/bs';
+import { OpenAI } from '@lobehub/icons';
 
 // Helper to wrap icon in a macOS style app shape
 export const AppIconWrapper = ({
@@ -65,6 +66,7 @@ export const getDisplayName = (name: string): string => {
   const n = name.toLowerCase();
   const mapping: Record<string, string> = {
     '.': '对话配置',
+    'mcp-plugins': '本地插件',
     'sentra-config-ui': 'WebUI配置',
     'dev-center': '开发中心',
     'utils/emoji-stickers': '表情包配置',
@@ -73,6 +75,7 @@ export const getDisplayName = (name: string): string => {
     'preset-importer': '预设导入',
     'file-manager': '文件管理',
     'redis-admin': 'Redis 管理器',
+    'model-providers-manager': '模型供应商',
     'av_transcribe': '音频转录',
     'mindmap_gen': '思维导图',
     'custom_music_card': '自定义音卡',
@@ -81,6 +84,7 @@ export const getDisplayName = (name: string): string => {
     'html_to_app': '应用制作',
     'image_vision_read': '读图',
     'music_card': '发送音卡',
+    'ppt_gen': 'PPT生成',
     'qq_account_getqqprofile': 'QQ资料获取',
     'qq_account_setqqavatar': 'QQ设置头像',
     'qq_account_setqqprofile': 'QQ资料设置',
@@ -97,6 +101,7 @@ export const getDisplayName = (name: string): string => {
     'github_repo_info': 'GitHub项目鉴别',
     'image_search': '以文搜图',
     'web': '网页浏览',
+    'image_to_video': '图生视频',
     'image_draw': '图像生成',
     'image_vision_edit': '图像编辑',
     'music_gen': '音乐生成',
@@ -126,6 +131,8 @@ export const getDisplayName = (name: string): string => {
     'qq_user_sendlike': 'QQ点赞',
     'qq_user_sendpoke': 'QQ戳一戳',
     'realtime_search': '实时搜索',
+    'send_group_message': '发送群消息',
+    'send_private_message': '发送私聊消息',
     'suno_music_generate': 'Suno作曲',
     'system_info': '系统状态',
     'video_generate': '视频生成',
@@ -135,17 +142,70 @@ export const getDisplayName = (name: string): string => {
     'web_render_image': '前端渲染',
     'write_file': '文件写入'
   };
-  return mapping[n] || name;
+
+  const direct = mapping[n];
+  if (direct) return direct;
+
+  const parts = n.split(/[\/_\-]+/).filter(Boolean);
+  if (!parts.length || parts.length === 1) return name;
+
+  const dict: Record<string, string> = {
+    mcp: 'MCP',
+    qq: 'QQ',
+    api: 'API',
+    openai: 'OpenAI',
+    web: '网页',
+    html: 'HTML',
+    image: '图像',
+    video: '视频',
+    audio: '音频',
+    doc: '文档',
+    document: '文档',
+    search: '搜索',
+    realtime: '实时',
+    parser: '解析',
+    render: '渲染',
+    read: '读取',
+    vision: '视觉',
+    transcribe: '转录',
+    music: '音乐',
+    card: '卡片',
+    gen: '生成',
+    generate: '生成',
+    draw: '绘制',
+    edit: '编辑',
+    control: '控制',
+    desktop: '桌面',
+    system: '系统',
+    info: '信息',
+    weather: '天气',
+    mindmap: '思维导图',
+    ppt: 'PPT'
+  };
+
+  let changed = false;
+  const pretty = parts.map((p) => {
+    const t = dict[p];
+    if (t) {
+      changed = true;
+      return t;
+    }
+    return p;
+  });
+  return changed ? pretty.join('') : name;
 };
 
 export const getIconForType = (name: string, type: 'module' | 'plugin'): React.ReactNode => {
   const n = name.toLowerCase();
+
+  const LLMIcon = OpenAI as any;
 
   // Built-in apps
   if (n.includes('file-manager')) return <AppIconWrapper bg="linear-gradient(135deg, #f6d365 0%, #fda085 100%)"><IoFolderOpen color="white" /></AppIconWrapper>;
   if (n.includes('preset-importer')) return <AppIconWrapper bg="linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)"><IoCloudDownload color="white" /></AppIconWrapper>;
   if (n.includes('agent-presets') || n.includes('presets-editor')) return <AppIconWrapper bg="linear-gradient(135deg, #00b09b 0%, #96c93d 100%)"><IoDocumentText color="white" /></AppIconWrapper>;
   if (n.includes('redis-admin')) return <AppIconWrapper bg="linear-gradient(135deg, #7c3aed 0%, #2563eb 100%)"><IoServer color="white" /></AppIconWrapper>;
+  if (n.includes('model-providers-manager')) return <AppIconWrapper bg="linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%)"><LLMIcon width={34} height={34} /></AppIconWrapper>;
 
   // Core Modules - Distinct colors for each
   if (n.includes('sentra-prompts')) return <AppIconWrapper bg="linear-gradient(135deg, #667eea 0%, #764ba2 100%)"><BsRobot color="white" /></AppIconWrapper>;

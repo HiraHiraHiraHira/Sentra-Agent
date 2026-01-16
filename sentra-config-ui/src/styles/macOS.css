@@ -5,9 +5,14 @@
     --mac-bg: #f5f5f7;
     --mac-window-bg: #ffffff;
     --mac-title-bar-height: 28px;
-    --mac-shadow: 0 14px 40px rgba(15, 23, 42, 0.24);
+    --mac-shadow: 0 12px 34px rgba(15, 23, 42, 0.18);
     --mac-border-radius: 12px;
-    --mac-window-shadow: 0 18px 40px rgba(15, 23, 42, 0.28);
+    --mac-window-shadow: var(--mac-elev-1);
+    --mac-window-shadow-active: var(--mac-elev-2);
+
+    --mac-elev-1: 0 1px 0 rgba(15, 23, 42, 0.06), 0 10px 22px rgba(15, 23, 42, 0.10);
+    --mac-elev-2: 0 1px 0 rgba(15, 23, 42, 0.08), 0 18px 40px rgba(15, 23, 42, 0.14);
+    --mac-elev-3: 0 1px 0 rgba(15, 23, 42, 0.10), 0 26px 70px rgba(15, 23, 42, 0.18);
 
     --dock-height: 68px;
     --dock-bg: linear-gradient(135deg,
@@ -41,6 +46,12 @@
     --side-handle-border: rgba(148, 163, 184, 0.18);
     --side-handle-fg: rgba(226, 232, 240, 0.88);
     --side-handle-accent: rgba(148, 163, 184, 0.30);
+
+    --mac-window-shadow-active: var(--mac-elev-2);
+
+    --mac-elev-1: 0 1px 0 rgba(0, 0, 0, 0.16), 0 10px 22px rgba(0, 0, 0, 0.22);
+    --mac-elev-2: 0 1px 0 rgba(0, 0, 0, 0.20), 0 18px 44px rgba(0, 0, 0, 0.28);
+    --mac-elev-3: 0 1px 0 rgba(0, 0, 0, 0.24), 0 26px 70px rgba(0, 0, 0, 0.34);
 }
 
 body {
@@ -165,4 +176,12 @@ body, body * {
     -webkit-backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: white;
+}
+
+body[data-performance='1'],
+body[data-performance='1'] * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+    transition: none !important;
 }

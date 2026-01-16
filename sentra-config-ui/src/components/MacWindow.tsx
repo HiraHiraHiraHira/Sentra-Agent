@@ -46,6 +46,8 @@ export const MacWindow: React.FC<MacWindowProps> = ({
   const [size, setSize] = useState(initialSize);
   const nodeRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const onMaximizeRef = useRef(onMaximize);
+  const didNotifyInitialMaximizedRef = useRef(false);
   const dragRafRef = useRef<number | null>(null);
   const resizeRafRef = useRef<number | null>(null);
   const lastResizeRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -77,10 +79,17 @@ export const MacWindow: React.FC<MacWindowProps> = ({
   }, []);
 
   useEffect(() => {
+    onMaximizeRef.current = onMaximize;
+  }, [onMaximize]);
+
+  useEffect(() => {
     if (initialMaximized) {
-      onMaximize(true);
+      if (!didNotifyInitialMaximizedRef.current) {
+        didNotifyInitialMaximizedRef.current = true;
+        onMaximizeRef.current(true);
+      }
     }
-  }, [initialMaximized, onMaximize]);
+  }, [initialMaximized]);
 
   useEffect(() => {
     if (!pos) return;
@@ -327,28 +336,25 @@ export const MacWindow: React.FC<MacWindowProps> = ({
     window.addEventListener('touchend', onResizeEnd);
   };
 
-  const windowContent = (
-    <motion.div
-      ref={nodeRef}
-      className={`${styles.window} ${isActive ? styles.active : ''} ${isMaximized ? styles.maximized : ''} ${performanceMode ? styles.performance : ''} ${isDragging ? styles.dragging : ''}`}
-      style={{
-        width: isMaximized ? `calc(100vw - ${safeLeft + safeRight}px)` : size.width,
-        height: isMaximized ? `calc(100vh - ${safeTop + safeBottom}px)` : size.height,
-        zIndex: Math.min(zIndex, 9949),
-        position: isMaximized ? 'fixed' : 'absolute',
-        top: isMaximized ? safeTop : 0,
-        left: isMaximized ? safeLeft : 0,
-        transform: isMaximized ? 'none' : `translate3d(${(pos || defaultPos).x}px, ${(pos || defaultPos).y}px, 0)`,
-        borderRadius: isMaximized ? 0 : 8,
-        resize: 'none',
-      }}
-      onPointerDownCapture={onFocus}
-      initial="hidden"
-      animate="visible"
-      exit="exit"
-      variants={variants}
-      transition={{ duration: performanceMode ? 0 : 0.12 }}
-    >
+  const commonProps = {
+    ref: nodeRef,
+    className: `${styles.window} ${isActive ? styles.active : ''} ${isMaximized ? styles.maximized : ''} ${performanceMode ? styles.performance : ''} ${isDragging ? styles.dragging : ''}`,
+    style: {
+      width: isMaximized ? `calc(100vw - ${safeLeft + safeRight}px)` : size.width,
+      height: isMaximized ? `calc(100vh - ${safeTop + safeBottom}px)` : size.height,
+      zIndex: Math.min(zIndex, 9949),
+      position: isMaximized ? 'fixed' : 'absolute',
+      top: isMaximized ? safeTop : 0,
+      left: isMaximized ? safeLeft : 0,
+      transform: isMaximized ? 'none' : `translate3d(${(pos || defaultPos).x}px, ${(pos || defaultPos).y}px, 0)`,
+      borderRadius: isMaximized ? 0 : 8,
+      resize: 'none',
+    } as React.CSSProperties,
+    onPointerDownCapture: onFocus,
+  };
+
+  const inner = (
+    <>
       <div
         className={`${styles.titleBar} window-drag-handle`}
         onDoubleClick={handleMaximizeToggle}
@@ -374,7 +380,6 @@ export const MacWindow: React.FC<MacWindowProps> = ({
         {children}
       </div>
 
-      {/* Resize Handles */}
       {!isMaximized && (
         <>
           <div className={`${styles.resizeHandle} ${styles.n}`} onMouseDown={(e) => startResize('n', e)} onTouchStart={(e) => startResize('n', e)} />
@@ -387,12 +392,23 @@ export const MacWindow: React.FC<MacWindowProps> = ({
           <div className={`${styles.resizeHandle} ${styles.sw}`} onMouseDown={(e) => startResize('sw', e)} onTouchStart={(e) => startResize('sw', e)} />
         </>
       )}
-    </motion.div>
+    </>
   );
 
   if (isMinimized) return null;
 
-  return windowContent;
+  return (
+    <motion.div
+      {...(commonProps as any)}
+      initial={performanceMode ? false : 'hidden'}
+      animate={performanceMode ? undefined : 'visible'}
+      exit={performanceMode ? undefined : 'exit'}
+      variants={performanceMode ? undefined : (variants as any)}
+      transition={performanceMode ? undefined : { duration: 0.12 }}
+    >
+      {inner}
+    </motion.div>
+  );
 };
 
 // Resizing logic

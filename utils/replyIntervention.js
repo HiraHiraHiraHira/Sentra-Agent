@@ -1,6 +1,6 @@
 import { Agent } from '../agent.js';
 import { createLogger } from './logger.js';
-import { getEnv, getEnvInt, getEnvBool } from './envHotReloader.js';
+import { getEnv, getEnvInt, getEnvBool, onEnvReload } from './envHotReloader.js';
 import { initAgentPresetCore } from '../components/AgentPresetInitializer.js';
 import { loadPrompt } from '../prompts/loader.js';
 import { chatWithRetry as chatWithRetryCore } from '../components/ChatWithRetry.js';
@@ -204,6 +204,14 @@ function getDecisionConfig() {
 
 let sharedAgent = null;
 
+function getReplyDecisionBaseUrl() {
+  return getEnv('REPLY_DECISION_BASE_URL', getEnv('API_BASE_URL', 'https://yuanplus.chat/v1'));
+}
+
+function getReplyDecisionApiKey() {
+  return getEnv('REPLY_DECISION_API_KEY', getEnv('API_KEY'));
+}
+
 function getAgent() {
   if (!isReplyInterventionEnabled()) {
     return null;
@@ -215,8 +223,8 @@ function getAgent() {
     const { model, maxTokens, maxRetries, timeout } = getDecisionConfig();
     sharedAgent = new Agent({
       // 复用主站点配置，避免单独维护一套 API_KEY/API_BASE_URL
-      apiKey: getEnv('API_KEY'),
-      apiBaseUrl: getEnv('API_BASE_URL', 'https://yuanplus.chat/v1'),
+      apiKey: getReplyDecisionApiKey(),
+      apiBaseUrl: getReplyDecisionBaseUrl(),
       defaultModel: model,
       temperature: 0,
       maxTokens,
@@ -233,6 +241,24 @@ function getAgent() {
   }
   return sharedAgent;
 }
+
+onEnvReload(() => {
+  try {
+    if (!sharedAgent || !sharedAgent.config) return;
+
+    const nextBaseUrl = getReplyDecisionBaseUrl();
+    if (nextBaseUrl && nextBaseUrl !== sharedAgent.config.apiBaseUrl) {
+      sharedAgent.config.apiBaseUrl = nextBaseUrl;
+      logger.info('ReplyIntervention LLM 配置热更新: baseURL 已更新', { baseURL: nextBaseUrl });
+    }
+
+    const nextApiKey = getReplyDecisionApiKey();
+    if (nextApiKey && nextApiKey !== sharedAgent.config.apiKey) {
+      sharedAgent.config.apiKey = nextApiKey;
+      logger.info('ReplyIntervention LLM 配置热更新: apiKey 已更新');
+    }
+  } catch {}
+});
 
 async function getReplyDecisionSystemPrompt() {
   try {

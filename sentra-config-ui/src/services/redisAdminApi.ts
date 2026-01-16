@@ -5,6 +5,17 @@ export type RedisAdminHealth = {
   sentraRoot: string;
 };
 
+export type RedisAdminInfo = {
+  success: boolean;
+  profile?: 'main' | 'mcp';
+  envPath?: string;
+  host: string | null;
+  port: number | null;
+  db: number | null;
+  hasPassword: boolean;
+  prefixes?: Record<string, string>;
+};
+
 async function readJsonOrThrow(res: Response) {
   const text = await res.text();
   if (!res.ok) {
@@ -22,21 +33,39 @@ export async function fetchRedisAdminHealth(): Promise<RedisAdminHealth> {
   return readJsonOrThrow(res);
 }
 
-export async function fetchRedisAdminGroups(): Promise<{ groups: Record<string, string> }> {
-  const res = await fetch('/api/redis-admin/groups', { headers: getAuthHeaders() });
+export async function fetchRedisAdminInfo(): Promise<RedisAdminInfo> {
+  const res = await fetch('/api/redis-admin/info', { headers: getAuthHeaders() });
   return readJsonOrThrow(res);
 }
 
-export async function fetchRedisAdminOverview(params?: { count?: number }): Promise<any> {
+export async function fetchRedisAdminInfoByProfile(profile?: 'main' | 'mcp'): Promise<RedisAdminInfo> {
   const qs = new URLSearchParams();
+  if (profile) qs.set('profile', profile);
+  const url = qs.toString() ? `/api/redis-admin/info?${qs.toString()}` : '/api/redis-admin/info';
+  const res = await fetch(url, { headers: getAuthHeaders() });
+  return readJsonOrThrow(res);
+}
+
+export async function fetchRedisAdminGroups(params?: { profile?: 'main' | 'mcp' }): Promise<{ groups: Record<string, string> }> {
+  const qs = new URLSearchParams();
+  if (params?.profile) qs.set('profile', params.profile);
+  const url = qs.toString() ? `/api/redis-admin/groups?${qs.toString()}` : '/api/redis-admin/groups';
+  const res = await fetch(url, { headers: getAuthHeaders() });
+  return readJsonOrThrow(res);
+}
+
+export async function fetchRedisAdminOverview(params?: { profile?: 'main' | 'mcp'; count?: number }): Promise<any> {
+  const qs = new URLSearchParams();
+  if (params?.profile) qs.set('profile', params.profile);
   if (params?.count != null) qs.set('count', String(params.count));
   const url = qs.toString() ? `/api/redis-admin/overview?${qs.toString()}` : '/api/redis-admin/overview';
   const res = await fetch(url, { headers: getAuthHeaders() });
   return readJsonOrThrow(res);
 }
 
-export async function fetchRedisAdminStats(params: { pattern: string; count?: number; limit?: number }): Promise<any> {
+export async function fetchRedisAdminStats(params: { profile?: 'main' | 'mcp'; pattern: string; count?: number; limit?: number }): Promise<any> {
   const qs = new URLSearchParams();
+  if (params.profile) qs.set('profile', params.profile);
   qs.set('pattern', params.pattern);
   if (params.count != null) qs.set('count', String(params.count));
   if (params.limit != null) qs.set('limit', String(params.limit));
@@ -44,8 +73,9 @@ export async function fetchRedisAdminStats(params: { pattern: string; count?: nu
   return readJsonOrThrow(res);
 }
 
-export async function fetchRedisAdminList(params: { pattern: string; count?: number; withMeta?: boolean }): Promise<any> {
+export async function fetchRedisAdminList(params: { profile?: 'main' | 'mcp'; pattern: string; count?: number; withMeta?: boolean }): Promise<any> {
   const qs = new URLSearchParams();
+  if (params.profile) qs.set('profile', params.profile);
   qs.set('pattern', params.pattern);
   if (params.count != null) qs.set('count', String(params.count));
   if (params.withMeta) qs.set('withMeta', '1');
@@ -54,6 +84,7 @@ export async function fetchRedisAdminList(params: { pattern: string; count?: num
 }
 
 export async function fetchRedisAdminInspect(params: {
+  profile?: 'main' | 'mcp';
   key: string;
   preview?: number;
   head?: number;
@@ -62,6 +93,7 @@ export async function fetchRedisAdminInspect(params: {
   top?: number;
 }): Promise<any> {
   const qs = new URLSearchParams();
+  if (params.profile) qs.set('profile', params.profile);
   qs.set('key', params.key);
   if (params.preview != null) qs.set('preview', String(params.preview));
   if (params.head != null) qs.set('head', String(params.head));
@@ -72,8 +104,9 @@ export async function fetchRedisAdminInspect(params: {
   return readJsonOrThrow(res);
 }
 
-export async function fetchRedisAdminRelated(params: { groupId?: string; userId?: string; count?: number; withMeta?: boolean }): Promise<any> {
+export async function fetchRedisAdminRelated(params: { profile?: 'main' | 'mcp'; groupId?: string; userId?: string; count?: number; withMeta?: boolean }): Promise<any> {
   const qs = new URLSearchParams();
+  if (params.profile) qs.set('profile', params.profile);
   if (params.groupId) qs.set('groupId', params.groupId);
   if (params.userId) qs.set('userId', params.userId);
   if (params.count != null) qs.set('count', String(params.count));
@@ -84,6 +117,7 @@ export async function fetchRedisAdminRelated(params: { groupId?: string; userId?
 }
 
 export async function deleteRedisAdminByPattern(params: {
+  profile?: 'main' | 'mcp';
   pattern: string;
   dryRun?: boolean;
   count?: number;
@@ -92,9 +126,29 @@ export async function deleteRedisAdminByPattern(params: {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({
+      profile: params.profile,
       pattern: params.pattern,
       dryRun: params.dryRun !== undefined ? params.dryRun : true,
       count: params.count,
+    }),
+  });
+  return readJsonOrThrow(res);
+}
+
+export async function deleteRedisAdminGroupStatePairs(params: {
+  profile?: 'main' | 'mcp';
+  groupId: string;
+  pairIds: string[];
+  dryRun?: boolean;
+}): Promise<any> {
+  const res = await fetch('/api/redis-admin/groupState/deletePairs', {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      profile: params.profile,
+      groupId: params.groupId,
+      pairIds: params.pairIds,
+      dryRun: params.dryRun !== undefined ? params.dryRun : true,
     }),
   });
   return readJsonOrThrow(res);

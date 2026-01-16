@@ -24,17 +24,19 @@ function readEnvFileMap(envPath) {
   }
 }
 
-function getEnvFrom(map, name, defaultValue) {
+function getEnvFrom(map, name, defaultValue, strict = false) {
   const v = map && Object.prototype.hasOwnProperty.call(map, name) ? map[name] : undefined;
   const pv = v !== undefined && v !== null && String(v) !== '' ? String(v) : undefined;
   if (pv !== undefined) return pv;
-  const ev = process.env[name];
-  if (ev !== undefined && ev !== null && String(ev) !== '') return String(ev);
+  if (!strict) {
+    const ev = process.env[name];
+    if (ev !== undefined && ev !== null && String(ev) !== '') return String(ev);
+  }
   return defaultValue;
 }
 
-function getEnvIntFrom(map, name, defaultValue) {
-  const v = getEnvFrom(map, name, undefined);
+function getEnvIntFrom(map, name, defaultValue, strict = false) {
+  const v = getEnvFrom(map, name, undefined, strict);
   if (v === undefined) return defaultValue;
   const n = parseInt(v, 10);
   return Number.isFinite(n) ? n : defaultValue;
@@ -140,27 +142,29 @@ export class RedisAdmin {
     this.options = options && typeof options === 'object' ? options : {};
     this.envPath = path.resolve(String(this.options.envPath || '.env'));
 
+    this.strictEnv = this.options.strictEnv === undefined ? true : toBool(this.options.strictEnv);
+
     // Isolated env: read .env for THIS CLI only; do NOT mutate process.env and do NOT trigger EnvHotReload logs.
     this._envMap = readEnvFileMap(this.envPath);
 
     this.redisConfig = {
-      host: this.options.host || getEnvFrom(this._envMap, 'REDIS_HOST', '127.0.0.1'),
-      port: Number.isFinite(Number(this.options.port)) ? Number(this.options.port) : getEnvIntFrom(this._envMap, 'REDIS_PORT', 6379),
-      db: Number.isFinite(Number(this.options.db)) ? Number(this.options.db) : getEnvIntFrom(this._envMap, 'REDIS_DB', 0),
-      password: this.options.password !== undefined ? this.options.password : (getEnvFrom(this._envMap, 'REDIS_PASSWORD', undefined) || undefined),
+      host: this.options.host || getEnvFrom(this._envMap, 'REDIS_HOST', '127.0.0.1', this.strictEnv),
+      port: Number.isFinite(Number(this.options.port)) ? Number(this.options.port) : getEnvIntFrom(this._envMap, 'REDIS_PORT', 6379, this.strictEnv),
+      db: Number.isFinite(Number(this.options.db)) ? Number(this.options.db) : getEnvIntFrom(this._envMap, 'REDIS_DB', 0, this.strictEnv),
+      password: this.options.password !== undefined ? this.options.password : (getEnvFrom(this._envMap, 'REDIS_PASSWORD', undefined, this.strictEnv) || undefined),
     };
 
     this.prefixes = {
-      convPrivate: getEnvFrom(this._envMap, 'REDIS_CONV_PRIVATE_PREFIX', 'sentra:conv:private:'),
-      convGroup: getEnvFrom(this._envMap, 'REDIS_CONV_GROUP_PREFIX', 'sentra:conv:group:'),
-      groupHistory: getEnvFrom(this._envMap, 'REDIS_GROUP_HISTORY_PREFIX', 'sentra:group:'),
-      desire: getEnvFrom(this._envMap, 'REDIS_DESIRE_PREFIX', 'sentra:desire:'),
-      desireUserFatigue: getEnvFrom(this._envMap, 'REDIS_DESIRE_USER_FATIGUE_PREFIX', 'sentra:desire:user:'),
-      contextMemory: getEnvFrom(this._envMap, 'REDIS_CONTEXT_MEMORY_PREFIX', 'sentra:memory:'),
+      convPrivate: getEnvFrom(this._envMap, 'REDIS_CONV_PRIVATE_PREFIX', 'sentra:conv:private:', this.strictEnv),
+      convGroup: getEnvFrom(this._envMap, 'REDIS_CONV_GROUP_PREFIX', 'sentra:conv:group:', this.strictEnv),
+      groupHistory: getEnvFrom(this._envMap, 'REDIS_GROUP_HISTORY_PREFIX', 'sentra:group:', this.strictEnv),
+      desire: getEnvFrom(this._envMap, 'REDIS_DESIRE_PREFIX', 'sentra:desire:', this.strictEnv),
+      desireUserFatigue: getEnvFrom(this._envMap, 'REDIS_DESIRE_USER_FATIGUE_PREFIX', 'sentra:desire:user:', this.strictEnv),
+      contextMemory: getEnvFrom(this._envMap, 'REDIS_CONTEXT_MEMORY_PREFIX', 'sentra:memory:', this.strictEnv),
       presetTeachingExamples: 'sentra:preset:teaching:examples:',
-      mcpMetrics: getEnvFrom(this._envMap, 'REDIS_METRICS_PREFIX', 'sentra:mcp:metrics'),
-      mcpContext: getEnvFrom(this._envMap, 'REDIS_CONTEXT_PREFIX', 'sentra:mcp:ctx'),
-      mcpMem: getEnvFrom(this._envMap, 'MEM_PREFIX', 'sentra:mcp:mem'),
+      mcpMetrics: getEnvFrom(this._envMap, 'REDIS_METRICS_PREFIX', 'sentra:mcp:metrics', this.strictEnv),
+      mcpContext: getEnvFrom(this._envMap, 'REDIS_CONTEXT_PREFIX', 'sentra:mcp:ctx', this.strictEnv),
+      mcpMem: getEnvFrom(this._envMap, 'MEM_PREFIX', 'sentra:mcp:mem', this.strictEnv),
     };
 
     this.redis = new Redis({

@@ -1,4 +1,4 @@
-import { config, getStageModel } from '../config/index.js';
+import { config, getStageModel, getStageProvider } from '../config/index.js';
 import logger from '../logger/index.js';
 import { HistoryStore } from '../history/store.js';
 import { chatCompletion } from '../openai/client.js';
@@ -73,13 +73,14 @@ export async function summarizeToolHistory(runId, objective = '', context = {}) 
         } catch {}
       }
       const messages = [...baseMsgs, { role: 'user', content: [reinforce, policy, instr].filter(Boolean).join('\n\n') }];
+      const provider = getStageProvider('summary');
       const summaryModel = getStageModel('summary');
       const res = await chatCompletion({
         messages,
         temperature,
         top_p,
-        apiKey: fc.apiKey,
-        baseURL: fc.baseURL,
+        apiKey: provider.apiKey,
+        baseURL: provider.baseURL,
         model: summaryModel,
         ...(omit ? { omitMaxTokens: true } : { max_tokens: fc.maxTokens })
       });
@@ -87,7 +88,7 @@ export async function summarizeToolHistory(runId, objective = '', context = {}) 
       lastContent = content;
       logger.info('FC 总结：模型原始响应内容', {
         label: 'SUMMARY', attempt,
-        provider: { baseURL: fc.baseURL, model: fc.model },
+        provider: { baseURL: provider.baseURL, model: summaryModel },
         contentPreview: clip(String(content)),
         length: String(content || '').length
       });

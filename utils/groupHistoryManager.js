@@ -4,8 +4,16 @@ import { createLogger } from './logger.js';
 import { escapeXml, escapeXmlAttr } from './xmlUtils.js';
 import { getRedis } from './redisClient.js';
 import { getEnv, getEnvInt } from './envHotReloader.js';
+import { TokenCounter } from '../src/token-counter.js';
 
 const logger = createLogger('GroupHistory');
+
+let tokenCounterSingleton = null;
+function getTokenCounterSingleton() {
+  if (tokenCounterSingleton) return tokenCounterSingleton;
+  tokenCounterSingleton = new TokenCounter();
+  return tokenCounterSingleton;
+}
 
 function getGroupHistoryKeyPrefix() {
   return getEnv('REDIS_GROUP_HISTORY_PREFIX', 'sentra:group:');
@@ -1242,7 +1250,7 @@ class GroupHistoryManager {
       return [];
     }
 
-    const { timeStart, timeEnd = 0, recentPairs } = options;
+    const { timeStart, timeEnd = 0, recentPairs, maxTokens } = options;
 
     // 将扁平数组按 pairId 聚合为对话对
     const pairMap = new Map();
@@ -1371,6 +1379,65 @@ class GroupHistoryManager {
         conversationsForContext.push({ role: m.role, content: m.content });
       }
     }
+
+    try {
+      const tokenLimit = Number(maxTokens);
+      if (Number.isFinite(tokenLimit) && tokenLimit > 0 && targetPairs.length > 0) {
+        const counter = getTokenCounterSingleton();
+        const pairTokenCache = new Map();
+
+        const countPairTokens = (pair) => {
+          const pid = pair && pair.pairId != null ? String(pair.pairId) : '';
+          if (pid && pairTokenCache.has(pid)) return pairTokenCache.get(pid);
+
+          const msgs = Array.isArray(pair?.messages) ? pair.messages : [];
+          const text = msgs
+            .map((m, idx) => {
+              if (!m || typeof m !== 'object') return '';
+              const role = m.role || (idx % 2 === 0 ? 'user' : 'assistant');
+              const content = typeof m.content === 'string' ? m.content : String(m.content ?? '');
+              if (!content.trim()) return '';
+              return `[${role}] ${content}`;
+            })
+            .filter(Boolean)
+            .join('\n\n');
+
+          const tokens = text ? counter.countTokens(text) : 0;
+          if (pid) pairTokenCache.set(pid, tokens);
+          return tokens;
+        };
+
+        let totalTokens = 0;
+        for (const p of targetPairs) {
+          totalTokens += countPairTokens(p);
+        }
+
+        if (totalTokens > tokenLimit) {
+          const beforePairs = targetPairs.length;
+          const beforeTokens = totalTokens;
+
+          while (targetPairs.length > 0 && totalTokens > tokenLimit) {
+            const removed = targetPairs.shift();
+            totalTokens -= countPairTokens(removed);
+          }
+
+          if (targetPairs.length !== beforePairs) {
+            logger.info(
+              `上下文裁剪: ${groupId} tokenLimit=${tokenLimit}, ${beforePairs}组/${beforeTokens}tokens -> ${targetPairs.length}组/${totalTokens}tokens`
+            );
+
+            conversationsForContext.length = 0;
+            for (const p of targetPairs) {
+              const msgs = Array.isArray(p.messages) ? p.messages : [];
+              for (const m of msgs) {
+                if (!m || typeof m !== 'object') continue;
+                conversationsForContext.push({ role: m.role, content: m.content });
+              }
+            }
+          }
+        }
+      }
+    } catch {}
 
     return conversationsForContext;
   }

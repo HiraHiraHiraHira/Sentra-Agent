@@ -3,7 +3,7 @@
  */
 
 import logger from '../../logger/index.js';
-import { config, getStageModel } from '../../config/index.js';
+import { config, getStageModel, getStageProvider } from '../../config/index.js';
 import { chatCompletion } from '../../openai/client.js';
 import { validateAndRepairArgs } from '../../utils/schema.js';
 import { clip } from '../../utils/text.js';
@@ -214,12 +214,13 @@ export async function generateToolArgs(params) {
           });
         }
         
+        const provider = getStageProvider('arg');
         const argModel = getStageModel('arg');
         const resp = await chatCompletion({
           messages: messagesFC,
           temperature: fc.temperature ?? config.llm.temperature,
-          apiKey: fc.apiKey,
-          baseURL: fc.baseURL,
+          apiKey: provider.apiKey,
+          baseURL: provider.baseURL,
           model: argModel,
           ...(omit ? { omitMaxTokens: true } : { max_tokens: fc.maxTokens })
         });
@@ -229,7 +230,7 @@ export async function generateToolArgs(params) {
             label: 'ARGS',
             aiName,
             attempt,
-            provider: { baseURL: fc.baseURL, model: fc.model },
+            provider: { baseURL: provider.baseURL, model: argModel },
             contentPreview: clip(String(content)),
             length: String(content || '').length
           });
@@ -338,12 +339,13 @@ export async function generateToolArgs(params) {
             });
           }
           
+          const provider = getStageProvider('arg');
           const argModel = getStageModel('arg');
           const resp2 = await chatCompletion({
             messages: messagesFC,
             temperature: fc.temperature ?? config.llm.temperature,
-            apiKey: fc.apiKey,
-            baseURL: fc.baseURL,
+            apiKey: provider.apiKey,
+            baseURL: provider.baseURL,
             model: argModel,
             ...(omit ? { omitMaxTokens: true } : { max_tokens: fc.maxTokens })
           });
@@ -353,7 +355,7 @@ export async function generateToolArgs(params) {
               label: 'ARGS',
               aiName,
               attempt,
-              provider: { baseURL: fc.baseURL, model: fc.model },
+              provider: { baseURL: provider.baseURL, model: argModel },
               contentPreview: clip(String(content2)),
               length: String(content2 || '').length
             });
@@ -559,12 +561,13 @@ export async function fixToolArgs(params) {
         }
         const policy = await buildFCPolicy();
         const messagesFixFC = [...messagesFix, { role: 'user', content: [reinforce, policy, instruction].filter(Boolean).join('\n\n') }];
+        const provider = getStageProvider('arg');
         const argModel = getStageModel('arg');
         const respFix = await chatCompletion({
           messages: messagesFixFC,
           temperature: fc.temperature ?? config.llm.temperature,
-          apiKey: fc.apiKey,
-          baseURL: fc.baseURL,
+          apiKey: provider.apiKey,
+          baseURL: provider.baseURL,
           model: argModel,
           ...(omit ? { omitMaxTokens: true } : { max_tokens: fc.maxTokens })
         });
@@ -574,7 +577,7 @@ export async function fixToolArgs(params) {
             label: 'ARGS',
             aiName,
             attempt,
-            provider: { baseURL: fc.baseURL, model: fc.model },
+            provider: { baseURL: provider.baseURL, model: argModel },
             contentPreview: clip(String(contentFix)),
             length: String(contentFix || '').length
           });
@@ -639,12 +642,13 @@ export async function fixToolArgs(params) {
             });
           }
 
+          const provider = getStageProvider('arg');
           const argModel = getStageModel('arg');
           const respFix2 = await chatCompletion({
             messages: messagesFixFC,
             temperature: fc.temperature ?? config.llm.temperature,
-            apiKey: fc.apiKey,
-            baseURL: fc.baseURL,
+            apiKey: provider.apiKey,
+            baseURL: provider.baseURL,
             model: argModel,
             ...(omit ? { omitMaxTokens: true } : { max_tokens: fc.maxTokens })
           });
@@ -654,7 +658,7 @@ export async function fixToolArgs(params) {
               label: 'ARGS',
               aiName,
               attempt,
-              provider: { baseURL: fc.baseURL, model: fc.model },
+              provider: { baseURL: provider.baseURL, model: argModel },
               contentPreview: clip(String(contentFix2)),
               length: String(contentFix2 || '').length
             });

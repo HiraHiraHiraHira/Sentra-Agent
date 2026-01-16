@@ -321,6 +321,29 @@ export async function restorePluginConfig(pluginName: string): Promise<void> {
   }
 }
 
+export async function fetchFileContent(path: string): Promise<{ content: string; isBinary: boolean }>{
+  const response = await fetch(`${API_BASE}/files/content?path=${encodeURIComponent(path)}`, {
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || 'Failed to fetch file content');
+  }
+  return response.json();
+}
+
+export async function saveFileContent(path: string, content: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/files/content`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ path, content }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || 'Failed to save file content');
+  }
+}
+
 export async function fetchPresets(): Promise<any[]> {
   const response = await fetch(`${API_BASE}/presets`, {
     headers: getAuthHeaders()

@@ -124,12 +124,13 @@ function sanitizeContextForLog(context) {
 // 时间意图现在完全交由模型自行理解与决策，不再在 planner 中做额外的 TimeParser 预判断。
 
 // 多计划生成（native tools 模式）——单次生成一个候选
-async function generateSingleNativePlan({ messages, tools, allowedAiNames, temperature }) {
+async function generateSingleNativePlan({ messages, tools, allowedAiNames, temperature, model }) {
   const res = await chatCompletion({
     messages,
     tools,
     tool_choice: { type: 'function', function: { name: 'emit_plan' } },
-    temperature
+    temperature,
+    model,
   });
   const call = res.choices?.[0]?.message?.tool_calls?.[0];
   let parsed; try { parsed = call?.function?.arguments ? JSON.parse(call.function.arguments) : {}; } catch { parsed = {}; }
@@ -343,94 +344,142 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
     { role: 'user', content: ep.user_request }
   ]);
 
+  const planModelsRaw = Array.isArray(config.plan?.models) ? config.plan.models : [];
+  const planModels = planModelsRaw.filter((m) => typeof m === 'string' && m.trim());
+  const uniquePlanModels = Array.from(new Set(planModels)).slice(0, 5);
+  const planModel = String(config.plan?.model || config.llm?.model || 'gpt-4.1-mini');
+
   // allowedAiNames 已在上文声明，直接复用
   const enableMulti = !!config.planner?.multiEnable && Number(config.planner?.multiCandidates || 0) > 1;
   let steps = [];
   if (enableMulti) {
-    const K = Math.max(2, Math.min(5, Number(config.planner.multiCandidates || 3)));
-    const half = Math.ceil(K / 2);
-    const minWait = Math.max(0, Number(config.planner?.candidateMinTimeoutMs ?? 3000));
-    const maxWait = Math.max(minWait, Number(config.planner?.candidateMaxTimeoutMs ?? 25000));
-    const factor = Number.isFinite(config.planner?.candidateTimeFactor) ? Number(config.planner.candidateTimeFactor) : 1.25;
-    const extra = 1 + 0.25 * (K - half);
-    const queue = [];
-    const resolvers = [];
-    function push(x) { const r = resolvers.shift(); if (r) r(x); else queue.push(x); }
-    function next() { if (queue.length) return Promise.resolve(queue.shift()); return new Promise(res => resolvers.push(res)); }
-    const startedAt = now();
-    let finished = 0;
-    const done = [];
-    let deadline = 0;
-
-    const tasks = [];
-    for (let i = 0; i < K; i++) {
-      const diversifyHint = `多方案生成：这是变体 #${i + 1}。请提供与其它变体差异明显且可执行的计划，步骤不超过 ${Math.max(1, Number(config.planner?.maxSteps || 8))} 步。`;
-      const msgs = compactMessages([...baseMessages, { role: 'user', content: diversifyHint }]);
-      const t0 = now();
-      const p = generateSingleNativePlan({ messages: msgs, tools, allowedAiNames, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1 + Math.min(0.3, 0.03 * i)) })
-        .then((res) => ({ ok: true, res, i, ms: now() - t0 }))
-        .catch(() => ({ ok: false, res: null, i, ms: now() - t0 }))
-        .then((r) => { push(r); return r; });
-      tasks.push(p);
-    }
-
-    while (finished < K) {
-      let waiter;
-      if (deadline > 0) {
-        const remain = Math.max(0, deadline - now());
-        waiter = Promise.race([next(), new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), remain))]);
+    if (uniquePlanModels.length > 1) {
+      const candidatesByModel = [];
+      for (const m of uniquePlanModels) {
+        try {
+          const one = await generateSingleNativePlan({
+            messages: baseMessages,
+            tools,
+            allowedAiNames,
+            temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1),
+            model: m,
+          });
+          if (Array.isArray(one?.steps) && one.steps.length > 0) {
+            candidatesByModel.push({ steps: one.steps || [], removedUnknown: !!one.removedUnknown, parsed: one.parsed, model: m });
+          }
+        } catch {}
+      }
+      if (candidatesByModel.length === 0) {
+        const one = await generateSingleNativePlan({ messages: baseMessages, tools, allowedAiNames, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1), model: planModel });
+        steps = one.steps || [];
+        removedUnknown = !!one.removedUnknown;
+        parsed = one.parsed;
+      } else if (candidatesByModel.length === 1) {
+        steps = candidatesByModel[0].steps || [];
+        removedUnknown = !!candidatesByModel[0].removedUnknown;
+        parsed = candidatesByModel[0].parsed;
       } else {
-        waiter = next();
-      }
-      const evt = await waiter;
-      if (evt && evt.timeout) break;
-      if (!evt) break;
-      finished += 1;
-      if (evt.ok && evt.res && Array.isArray(evt.res.steps) && evt.res.steps.length > 0) done.push(evt);
-      if (done.length === half && deadline === 0) {
-        const mean = done.reduce((s, x) => s + Number(x.ms || 0), 0) / Math.max(1, done.length);
-        const waitMs = Math.max(minWait, Math.min(maxWait, mean * factor * extra));
+        const pick = await selectBestNativePlan({ objective, manifest, candidates: candidatesByModel, context });
+        const idx = Math.max(0, Math.min(candidatesByModel.length - 1, Number(pick.index) || 0));
+        const best = candidatesByModel[idx];
+        steps = best.steps || [];
+        removedUnknown = !!best.removedUnknown;
+        parsed = best.parsed;
         if (config.flags.enableVerboseSteps) {
-          logger.info('Native 多计划：达到50%完成阈值，进入动态等待', { label: 'PLAN', K, half, meanMs: Math.round(mean), waitMs: Math.round(waitMs) });
+          logger.info('Native 多模型规划：选择候选', { label: 'PLAN', index: idx, model: best.model, audit: clip(String(pick.audit || ''), 360) });
         }
-        deadline = now() + waitMs;
+        try {
+          if (context?.runId) {
+            await HistoryStore.append(context.runId, { type: 'plan_audit', mode: 'native', candidates: candidatesByModel.length, chosenIndex: idx, chosenModel: best.model, reason: String(pick.audit || '') });
+          }
+        } catch {}
       }
-    }
-
-    const candidates = done
-      .map((d) => ({ steps: Array.isArray(d.res.steps) ? d.res.steps : [], removedUnknown: !!d.res.removedUnknown, parsed: d.res.parsed }))
-      .filter((c) => c.steps.length > 0);
-    if (config.flags.enableVerboseSteps) {
-      logger.info('Native 多计划：生成候选数量', { label: 'PLAN', count: candidates.length });
-    }
-    if (candidates.length === 0) {
-      // 回退到单次生成
-      const one = await generateSingleNativePlan({ messages: baseMessages, tools, allowedAiNames, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1) });
-      steps = one.steps || [];
-      removedUnknown = !!one.removedUnknown;
-      parsed = one.parsed;
-    } else if (candidates.length === 1) {
-      steps = candidates[0].steps || [];
-      removedUnknown = !!candidates[0].removedUnknown;
-      parsed = candidates[0].parsed;
     } else {
-      const pick = await selectBestNativePlan({ objective, manifest, candidates, context });
-      const idx = Math.max(0, Math.min(candidates.length - 1, Number(pick.index) || 0));
-      steps = candidates[idx].steps || [];
-      removedUnknown = !!candidates[idx].removedUnknown;
-      parsed = candidates[idx].parsed;
-      if (config.flags.enableVerboseSteps) {
-        logger.info('Native 多计划：选择候选', { label: 'PLAN', index: idx, audit: clip(String(pick.audit || ''), 360) });
+      const K = Math.max(2, Math.min(5, Number(config.planner.multiCandidates || 3)));
+      const half = Math.ceil(K / 2);
+      const minWait = Math.max(0, Number(config.planner?.candidateMinTimeoutMs ?? 3000));
+      const maxWait = Math.max(minWait, Number(config.planner?.candidateMaxTimeoutMs ?? 25000));
+      const factor = Number.isFinite(config.planner?.candidateTimeFactor) ? Number(config.planner.candidateTimeFactor) : 1.25;
+      const extra = 1 + 0.25 * (K - half);
+      const queue = [];
+      const resolvers = [];
+      function push(x) { const r = resolvers.shift(); if (r) r(x); else queue.push(x); }
+      function next() { if (queue.length) return Promise.resolve(queue.shift()); return new Promise(res => resolvers.push(res)); }
+      const startedAt = now();
+      let finished = 0;
+      const done = [];
+      let deadline = 0;
+
+      const tasks = [];
+      for (let i = 0; i < K; i++) {
+        const diversifyHint = `多方案生成：这是变体 #${i + 1}。请提供与其它变体差异明显且可执行的计划，步骤不超过 ${Math.max(1, Number(config.planner?.maxSteps || 8))} 步。`;
+        const msgs = compactMessages([...baseMessages, { role: 'user', content: diversifyHint }]);
+        const t0 = now();
+        const p = generateSingleNativePlan({ messages: msgs, tools, allowedAiNames, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1 + Math.min(0.3, 0.03 * i)), model: planModel })
+          .then((res) => ({ ok: true, res, i, ms: now() - t0 }))
+          .catch(() => ({ ok: false, res: null, i, ms: now() - t0 }))
+          .then((r) => { push(r); return r; });
+        tasks.push(p);
       }
-      try {
-        if (context?.runId) {
-          await HistoryStore.append(context.runId, { type: 'plan_audit', mode: 'native', candidates: candidates.length, chosenIndex: idx, reason: String(pick.audit || '') });
+
+      while (finished < K) {
+        let waiter;
+        if (deadline > 0) {
+          const remain = Math.max(0, deadline - now());
+          waiter = Promise.race([next(), new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), remain))]);
+        } else {
+          waiter = next();
         }
-      } catch {}
+        const evt = await waiter;
+        if (evt && evt.timeout) break;
+        if (!evt) break;
+        finished += 1;
+        if (evt.ok && evt.res && Array.isArray(evt.res.steps) && evt.res.steps.length > 0) done.push(evt);
+        if (done.length === half && deadline === 0) {
+          const mean = done.reduce((s, x) => s + Number(x.ms || 0), 0) / Math.max(1, done.length);
+          const waitMs = Math.max(minWait, Math.min(maxWait, mean * factor * extra));
+          if (config.flags.enableVerboseSteps) {
+            logger.info('Native 多计划：达到50%完成阈值，进入动态等待', { label: 'PLAN', K, half, meanMs: Math.round(mean), waitMs: Math.round(waitMs) });
+          }
+          deadline = now() + waitMs;
+        }
+      }
+
+      const candidates = done
+        .map((d) => ({ steps: Array.isArray(d.res.steps) ? d.res.steps : [], removedUnknown: !!d.res.removedUnknown, parsed: d.res.parsed }))
+        .filter((c) => c.steps.length > 0);
+      if (config.flags.enableVerboseSteps) {
+        logger.info('Native 多计划：生成候选数量', { label: 'PLAN', count: candidates.length });
+      }
+      if (candidates.length === 0) {
+        // 回退到单次生成
+        const one = await generateSingleNativePlan({ messages: baseMessages, tools, allowedAiNames, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1), model: planModel });
+        steps = one.steps || [];
+        removedUnknown = !!one.removedUnknown;
+        parsed = one.parsed;
+      } else if (candidates.length === 1) {
+        steps = candidates[0].steps || [];
+        removedUnknown = !!candidates[0].removedUnknown;
+        parsed = candidates[0].parsed;
+      } else {
+        const pick = await selectBestNativePlan({ objective, manifest, candidates, context });
+        const idx = Math.max(0, Math.min(candidates.length - 1, Number(pick.index) || 0));
+        steps = candidates[idx].steps || [];
+        removedUnknown = !!candidates[idx].removedUnknown;
+        parsed = candidates[idx].parsed;
+        if (config.flags.enableVerboseSteps) {
+          logger.info('Native 多计划：选择候选', { label: 'PLAN', index: idx, audit: clip(String(pick.audit || ''), 360) });
+        }
+        try {
+          if (context?.runId) {
+            await HistoryStore.append(context.runId, { type: 'plan_audit', mode: 'native', candidates: candidates.length, chosenIndex: idx, reason: String(pick.audit || '') });
+          }
+        } catch {}
+      }
     }
   } else {
     // 原有单计划路径
-    const one = await generateSingleNativePlan({ messages: baseMessages, tools, allowedAiNames, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1) });
+    const one = await generateSingleNativePlan({ messages: baseMessages, tools, allowedAiNames, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1), model: planModel });
     steps = one.steps || [];
     removedUnknown = !!one.removedUnknown;
     parsed = one.parsed;
@@ -467,7 +516,7 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
         { role: 'assistant', content: '严格约束：只能从以下 aiName 中选择，并且每步仅包含一个工具。若无合适工具可输出空计划。可选 aiName 列表:\n' + (allowedAiNames.join(', ')) },
         { role: 'user', content: ep.user_request }
       ]);
-      const re2 = await chatCompletion({ messages: replanMessages2, tools, tool_choice: { type: 'function', function: { name: 'emit_plan' } }, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1) });
+      const re2 = await chatCompletion({ messages: replanMessages2, tools, tool_choice: { type: 'function', function: { name: 'emit_plan' } }, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1), model: planModel });
       const rcall2 = re2.choices?.[0]?.message?.tool_calls?.[0];
       let reparsed2; try { reparsed2 = rcall2?.function?.arguments ? JSON.parse(rcall2.function.arguments) : {}; } catch { reparsed2 = {}; }
       const stepsArr2 = Array.isArray(reparsed2?.steps)
@@ -535,7 +584,7 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
       { role: 'assistant', content: '上一个计划的 dependsOn 存在越界/环/自依赖问题。请重新生成一个满足以下严格约束的计划：\n1) 每一步的 dependsOn 仅引用小于当前步索引的步骤；\n2) 禁止任何形式的环；\n3) 避免自依赖；\n4) 若不需要依赖请省略 dependsOn 字段；\n5) 仅输出必需字段并符合 emit_plan 的 JSON 结构。' },
       { role: 'user', content: ep.user_request }
     ]);
-    const re = await chatCompletion({ messages: replanMessages, tools, tool_choice: { type: 'function', function: { name: 'emit_plan' } }, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1) });
+    const re = await chatCompletion({ messages: replanMessages, tools, tool_choice: { type: 'function', function: { name: 'emit_plan' } }, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1), model: planModel });
     const rcall = re.choices?.[0]?.message?.tool_calls?.[0];
     let reparsed; try { reparsed = rcall?.function?.arguments ? JSON.parse(rcall.function.arguments) : {}; } catch { reparsed = {}; }
     const stepsArr = Array.isArray(reparsed?.steps)

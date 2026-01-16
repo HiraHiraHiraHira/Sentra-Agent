@@ -1,6 +1,6 @@
 import { createLogger } from './logger.js';
 import { OpenAIEmbeddings } from '@langchain/openai';
-import { getEnv, getEnvInt } from './envHotReloader.js';
+import { getEnv, getEnvInt, onEnvReload } from './envHotReloader.js';
 
 const logger = createLogger('MessageBundler');
 
@@ -57,6 +57,53 @@ function normalizeSenderId(senderId) {
 
 let embeddingClient = null;
 let embeddingInitFailed = false;
+
+function resetEmbeddingClient(reason, changedKeys = []) {
+  embeddingClient = null;
+  embeddingInitFailed = false;
+  try {
+    logger.info('Embedding 客户端已重置（等待下次调用时重新初始化）', {
+      reason: reason || 'env_reload',
+      changedKeys
+    });
+  } catch {}
+}
+
+function shouldResetEmbeddingClientByEnvDiff(payload) {
+  if (!payload || typeof payload !== 'object') return true;
+  const keys = new Set([
+    ...(Array.isArray(payload.added) ? payload.added : []),
+    ...(Array.isArray(payload.updated) ? payload.updated : []),
+    ...(Array.isArray(payload.removed) ? payload.removed : [])
+  ]);
+  if (!keys.size) return true;
+  const watchKeys = new Set([
+    'EMBEDDING_API_KEY',
+    'EMBEDDING_API_BASE_URL',
+    'EMBEDDING_MODEL',
+    'API_KEY',
+    'API_BASE_URL'
+  ]);
+  for (const k of keys) {
+    if (watchKeys.has(k)) return true;
+  }
+  return false;
+}
+
+onEnvReload((payload) => {
+  try {
+    if (!embeddingClient && !embeddingInitFailed) return;
+    if (!shouldResetEmbeddingClientByEnvDiff(payload)) return;
+    const changedKeys = Array.from(
+      new Set([
+        ...(Array.isArray(payload?.added) ? payload.added : []),
+        ...(Array.isArray(payload?.updated) ? payload.updated : []),
+        ...(Array.isArray(payload?.removed) ? payload.removed : [])
+      ])
+    );
+    resetEmbeddingClient('env_reload', changedKeys);
+  } catch {}
+});
 
 function getEmbeddingClient() {
   if (embeddingClient || embeddingInitFailed) return embeddingClient;

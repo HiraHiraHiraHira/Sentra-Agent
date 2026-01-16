@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { join, resolve, relative, dirname } from 'path';
+import { join, resolve, relative, dirname, isAbsolute } from 'path';
 import { existsSync, statSync, readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, rmSync } from 'fs';
 
 // Helper to get root directory
@@ -11,12 +11,16 @@ function getRootDir(): string {
 function isSafePath(targetPath: string): boolean {
     const rootDir = getRootDir();
     const resolvedPath = resolve(rootDir, targetPath);
-    return resolvedPath.startsWith(rootDir);
+    const rel = relative(rootDir, resolvedPath);
+    if (!rel) return true;
+    if (rel.startsWith('..')) return false;
+    if (isAbsolute(rel)) return false;
+    return true;
 }
 
 // Helper to get absolute path
 function getAbsolutePath(targetPath: string): string {
-    return join(getRootDir(), targetPath);
+    return resolve(getRootDir(), targetPath);
 }
 
 const IGNORED_DIRS = ['node_modules', '.git', '.cache', 'dist', 'build', 'coverage', '.idea', '.vscode'];

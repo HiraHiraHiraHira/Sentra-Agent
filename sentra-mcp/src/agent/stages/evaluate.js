@@ -3,7 +3,7 @@
  */
 
 import logger from '../../logger/index.js';
-import { config, getStageModel } from '../../config/index.js';
+import { config, getStageModel, getStageProvider } from '../../config/index.js';
 import { chatCompletion } from '../../openai/client.js';
 import { HistoryStore } from '../../history/store.js';
 import { loadPrompt, renderTemplate, composeSystem } from '../prompts/loader.js';
@@ -145,13 +145,14 @@ export async function evaluateRun(objective, plan, exec, runId, context = {}) {
       } catch {}
     }
     const messages = compactMessages([...baseMsgs, { role: 'user', content: [reinforce, policy, fcInstr].filter(Boolean).join('\n\n') }]);
+    const provider = getStageProvider('eval');
     const evalModel = getStageModel('eval');
     const res = await chatCompletion({
       messages,
       temperature,
       top_p,
-      apiKey: fc.apiKey,
-      baseURL: fc.baseURL,
+      apiKey: provider.apiKey,
+      baseURL: provider.baseURL,
       model: evalModel,
       ...(omit ? { omitMaxTokens: true } : { max_tokens: fc.maxTokens })
     });
@@ -159,7 +160,7 @@ export async function evaluateRun(objective, plan, exec, runId, context = {}) {
     lastContent = content;
     logger.info('FC 评估：模型原始响应内容', {
       label: 'EVAL', attempt,
-      provider: { baseURL: fc.baseURL, model: fc.model },
+      provider: { baseURL: provider.baseURL, model: evalModel },
       contentPreview: clip(String(content)),
       length: String(content || '').length
     });

@@ -135,9 +135,9 @@ function buildUserInputXml({ task, lang, queryText, contextText, documentText })
 }
 
 export async function requestContractXml(openai, policy, { task, queryText, contextText, documentText, lang }) {
-  const model = getEnv('OPENAI_CHAT_MODEL', { defaultValue: 'gpt-4o-mini' });
-  const temperature = getEnvNumber('OPENAI_TEMPERATURE', { defaultValue: 0 });
-  const max_tokens = getEnvNumber('OPENAI_MAX_OUTPUT_TOKENS', { defaultValue: 2000 });
+  const model = getEnv('CHAT_MODEL', { defaultValue: 'gpt-4o-mini' });
+  const temperature = getEnvNumber('CHAT_TEMPERATURE', { defaultValue: 0 });
+  const max_tokens = getEnvNumber('CHAT_MAX_OUTPUT_TOKENS', { defaultValue: 2000 });
 
   const inputXml = buildUserInputXml({ task, lang, queryText, contextText, documentText });
 
@@ -157,9 +157,9 @@ export async function requestContractXml(openai, policy, { task, queryText, cont
 }
 
 export async function requestContractXmlRepair(openai, policy, { badXml, errorReport, lang }) {
-  const model = getEnv('OPENAI_CHAT_MODEL', { defaultValue: 'gpt-4o-mini' });
+  const model = getEnv('CHAT_MODEL', { defaultValue: 'gpt-4o-mini' });
   const temperature = 0;
-  const max_tokens = getEnvNumber('OPENAI_MAX_OUTPUT_TOKENS', { defaultValue: 2000 });
+  const max_tokens = getEnvNumber('CHAT_MAX_OUTPUT_TOKENS', { defaultValue: 2000 });
 
   const user = [
     '<sentra-repair>',

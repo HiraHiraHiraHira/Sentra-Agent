@@ -10,6 +10,16 @@ export function parseEnvFile(content: string): EnvVariable[] {
   // 支持连续多行注释块：第一行为说明，后续行为 type / range / options 等元数据
   let currentCommentLines: string[] = [];
 
+  const isMetaLine = (text: string) => {
+    const t = String(text || '').trim().toLowerCase();
+    return (
+      t.startsWith('type:') ||
+      t.startsWith('range:') ||
+      t.startsWith('options:') ||
+      t.startsWith('invalid fallback:')
+    );
+  };
+
   for (const line of lines) {
     const trimmed = line.trim();
 
@@ -42,10 +52,19 @@ export function parseEnvFile(content: string): EnvVariable[] {
         value = value.substring(1, value.length - 1);
       }
 
+      let displayName: string | undefined;
+      let commentLines = currentCommentLines;
+      // 约定：注释块第 1 行是解释；第 2 行（若不是元数据）作为中文名称 displayName
+      if (currentCommentLines.length >= 2 && !isMetaLine(currentCommentLines[1])) {
+        displayName = currentCommentLines[1];
+        commentLines = [currentCommentLines[0], ...currentCommentLines.slice(2)];
+      }
+
       variables.push({
         key,
         value,
-        comment: currentCommentLines.length ? currentCommentLines.join('\n') : undefined,
+        displayName,
+        comment: commentLines.length ? commentLines.join('\n') : undefined,
       });
 
       // 重置注释缓冲，下一条变量重新开始
@@ -64,8 +83,12 @@ export function serializeEnvFile(variables: EnvVariable[]): string {
 
   for (const variable of variables) {
     // 添加注释：支持多行，逐行加上 #
-    if (variable.comment) {
-      const commentLines = variable.comment.split(/\r?\n/);
+    if (variable.comment || variable.displayName) {
+      const commentLines = variable.comment ? variable.comment.split(/\r?\n/) : [];
+      if (variable.displayName) {
+        if (commentLines.length >= 1) commentLines.splice(1, 0, variable.displayName);
+        else commentLines.push(variable.displayName);
+      }
       for (const c of commentLines) {
         const text = c.trim();
         if (text) {
@@ -153,6 +176,10 @@ export function mergeEnvWithExample(envVars: EnvVariable[], exampleVars: EnvVari
       if (exVar.comment) {
         const index = envKeyMap.get(exVar.key)!;
         result[index].comment = exVar.comment;
+      }
+      if (exVar.displayName) {
+        const index = envKeyMap.get(exVar.key)!;
+        result[index].displayName = exVar.displayName;
       }
     } else {
       // Key 不存在：从 example 补充

@@ -7,6 +7,20 @@ function getSentraRoot() {
   return path.resolve(process.cwd(), root);
 }
 
+function normalizeProfile(p: any): 'main' | 'mcp' {
+  const s = String(p ?? '').trim().toLowerCase();
+  if (s === 'mcp') return 'mcp';
+  return 'main';
+}
+
+function getEnvPathByProfile(profile: 'main' | 'mcp') {
+  const sentraRoot = getSentraRoot();
+  if (profile === 'mcp') {
+    return path.join(sentraRoot, 'sentra-mcp', '.env');
+  }
+  return path.join(sentraRoot, '.env');
+}
+
 async function getRedisAdminClass() {
   const sentraRoot = getSentraRoot();
   const modPath = path.join(sentraRoot, 'components', 'RedisAdmin.js');
@@ -36,6 +50,85 @@ function formatDateTime(tsMs: number | null) {
   return `${y}-${m}-${d} ${hh}:${mm}`;
 }
 
+function normalizeTsMs(ts: any): number | null {
+  const n = typeof ts === 'number' ? ts : Number(ts);
+  if (!Number.isFinite(n)) return null;
+  if (n > 0 && n < 1e12) return n * 1000;
+  return n;
+}
+
+function parseYmdToStartMs(ymd: string): number | null {
+  const s = String(ymd || '').trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null;
+  const dt = new Date(y, mo - 1, d, 0, 0, 0, 0);
+  const ms = dt.getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function pickMaxTs(obj: any, keys: string[]): number | null {
+  let best: number | null = null;
+  for (const k of keys) {
+    const v = normalizeTsMs(obj?.[k]);
+    if (v == null) continue;
+    best = best == null ? v : Math.max(best, v);
+  }
+  return best;
+}
+
+function inferTsFromStringValue(meta: any, raw: any): number | null {
+  if (!raw || typeof raw !== 'object') return null;
+
+  if (meta?.category === '会话') {
+    const arrs = [raw.userMessages, raw.botMessages];
+    let best: number | null = null;
+    for (const arr of arrs) {
+      if (!Array.isArray(arr)) continue;
+      for (const it of arr) {
+        const v = normalizeTsMs(it?.timestamp);
+        if (v == null) continue;
+        best = best == null ? v : Math.max(best, v);
+      }
+    }
+    return best;
+  }
+
+  if (meta?.category === '群会话状态') {
+    let best: number | null = null;
+    const ap = raw.activePairs && typeof raw.activePairs === 'object' ? raw.activePairs : null;
+    if (ap) {
+      for (const v of Object.values(ap)) {
+        const vv = pickMaxTs(v, ['lastUpdatedAt', 'createdAt']);
+        if (vv == null) continue;
+        best = best == null ? vv : Math.max(best, vv);
+      }
+    }
+    const slt = raw.senderLastMessageTime && typeof raw.senderLastMessageTime === 'object' ? raw.senderLastMessageTime : null;
+    if (slt) {
+      for (const v of Object.values(slt)) {
+        const vv = normalizeTsMs(v);
+        if (vv == null) continue;
+        best = best == null ? vv : Math.max(best, vv);
+      }
+    }
+    return best;
+  }
+
+  if (meta?.category === '意愿/主动') {
+    return pickMaxTs(raw, ['lastUpdateAt', 'lastUserAt', 'lastBotAt', 'lastProactiveAt', 'msgWindowStart']);
+  }
+
+  if (meta?.category === '疲劳度') {
+    return pickMaxTs(raw, ['lastUserReplyAt', 'lastProactiveAt', 'penaltyUntil']);
+  }
+
+  return pickMaxTs(raw, ['updatedAt', 'createdAt', 'timestamp', 'ts', 'tsMs']);
+}
+
 function parseKeyMeta(key: string, prefixes: any) {
   const k = asString(key).trim();
   const p = prefixes || {};
@@ -56,6 +149,7 @@ function parseKeyMeta(key: string, prefixes: any) {
   const desirePrefix = asString(p.desire || 'sentra:desire:');
   const fatiguePrefix = asString(p.desireUserFatigue || 'sentra:desire:user:');
   const ctxMemPrefix = asString(p.contextMemory || 'sentra:memory:');
+  const mcpMetricsPrefix = asString(p.mcpMetrics || 'sentra:mcp:metrics');
   const mcpCtxPrefix = asString(p.mcpContext || 'sentra:mcp:ctx');
   const mcpMemPrefix = asString(p.mcpMem || 'sentra:mcp:mem');
 
@@ -79,7 +173,7 @@ function parseKeyMeta(key: string, prefixes: any) {
   }
 
   if (k.startsWith(groupHistoryPrefix)) {
-    out.category = '群历史';
+    out.category = '群会话状态';
     out.chatType = '群聊';
     out.groupId = k.slice(groupHistoryPrefix.length) || null;
     return out;
@@ -119,6 +213,7 @@ function parseKeyMeta(key: string, prefixes: any) {
         out.extra.kind = 'cursor';
       } else if (/^\d{4}-\d{2}-\d{2}$/.test(suffix)) {
         out.date = suffix;
+        out.tsMs = parseYmdToStartMs(suffix);
       }
     }
     return out;
@@ -142,8 +237,50 @@ function parseKeyMeta(key: string, prefixes: any) {
     return out;
   }
 
+  if (k.startsWith(mcpMetricsPrefix)) {
+    out.category = 'MCP 指标';
+    const restRaw = k.slice(mcpMetricsPrefix.length);
+    const rest = restRaw.startsWith(':') ? restRaw.slice(1) : restRaw;
+    out.extra.kind = 'metrics';
+
+    if (rest.startsWith('cooldown:')) {
+      out.extra.kind = 'cooldown';
+      out.extra.aiName = rest.slice('cooldown:'.length) || null;
+      return out;
+    }
+
+    if (rest.startsWith('cache:tool:')) {
+      out.extra.kind = 'tool_cache';
+      const parts = rest.split(':');
+      // cache:tool:<aiName>:<hash>
+      out.extra.aiName = parts.length >= 3 ? parts[2] : null;
+      out.extra.hash = parts.length >= 4 ? parts[3] : null;
+      return out;
+    }
+
+    // calls/success/failure/latency_*
+    const parts = rest.split(':').filter(Boolean);
+    if (parts.length >= 2) {
+      out.extra.metric = parts[0];
+      out.extra.provider = parts[1];
+      if (parts[0] === 'failure_code' && parts.length >= 3) {
+        out.extra.code = parts[2];
+      }
+    }
+    return out;
+  }
+
   if (k.startsWith(mcpCtxPrefix)) {
     out.category = 'MCP 上下文';
+    const restRaw = k.slice(mcpCtxPrefix.length);
+    const rest = restRaw.startsWith(':') ? restRaw.slice(1) : restRaw;
+    // expected: run:<runId>:history | run:<runId>:plan | run:<runId>:summary
+    const mRun = rest.match(/^run:([^:]+):([^:]+)$/);
+    if (mRun) {
+      out.extra.kind = 'run';
+      out.extra.runId = mRun[1];
+      out.extra.section = mRun[2];
+    }
     return out;
   }
 
@@ -165,6 +302,26 @@ function parseKeyMeta(key: string, prefixes: any) {
       out.date = formatDateTime(out.tsMs);
       out.extra.kind = 'argcache';
     }
+
+    const mPlanIdx = k.match(new RegExp(`^${pp}:index:plan$`));
+    if (mPlanIdx) {
+      out.extra.kind = 'index_plan';
+      return out;
+    }
+
+    const mToolIdx = k.match(new RegExp(`^${pp}:index:tool:([^:]+)$`));
+    if (mToolIdx) {
+      out.extra.kind = 'index_tool';
+      out.extra.aiName = mToolIdx[1];
+      return out;
+    }
+
+    const mArgIdx = k.match(new RegExp(`^${pp}:argcache:index:([^:]+)$`));
+    if (mArgIdx) {
+      out.extra.kind = 'argcache_index';
+      out.extra.aiName = mArgIdx[1];
+      return out;
+    }
     return out;
   }
 
@@ -181,10 +338,132 @@ export async function redisAdminRoutes(fastify: FastifyInstance) {
     };
   });
 
+  fastify.get('/api/redis-admin/info', async (_request, reply) => {
+    try {
+      const profile = normalizeProfile((_request.query as any)?.profile);
+      const RedisAdmin = await getRedisAdminClass();
+      const envPath = getEnvPathByProfile(profile);
+      const admin = new RedisAdmin({ envPath });
+      try {
+        const cfg = (admin as any)?.redisConfig || {};
+        return {
+          success: true,
+          profile,
+          envPath,
+          host: cfg.host != null ? String(cfg.host) : null,
+          port: cfg.port != null ? Number(cfg.port) : null,
+          db: cfg.db != null ? Number(cfg.db) : null,
+          hasPassword: !!cfg.password,
+          prefixes: (admin as any)?.prefixes || {},
+        };
+      } finally {
+        await admin.disconnect();
+      }
+    } catch (e: any) {
+      reply.code(500).send({ success: false, error: e?.message || String(e) });
+    }
+  });
+
+  fastify.post('/api/redis-admin/groupState/deletePairs', async (request, reply) => {
+    try {
+      const body: any = (request as any).body || {};
+      const profile = normalizeProfile(body.profile);
+      const groupId = String(body.groupId || '').trim();
+      const pairIds = Array.isArray(body.pairIds) ? body.pairIds.map((x: any) => String(x || '').trim()).filter(Boolean) : [];
+      const dryRun = body.dryRun === true || body.dryRun === 1 || body.dryRun === '1' || body.dryRun === 'true';
+
+      if (!groupId) {
+        return reply.code(400).send({ success: false, error: 'Missing groupId' });
+      }
+      if (!pairIds.length) {
+        return reply.code(400).send({ success: false, error: 'Missing pairIds' });
+      }
+
+      const RedisAdmin = await getRedisAdminClass();
+      const admin = new RedisAdmin({ envPath: getEnvPathByProfile(profile) });
+
+      try {
+        const key = `${String(admin.prefixes?.groupHistory || 'sentra:group:')}${groupId}`;
+        const ttl = await admin.redis.ttl(key);
+        const raw = await admin.redis.get(key);
+        if (!raw) {
+          return reply.code(404).send({ success: false, error: `Key not found: ${key}` });
+        }
+
+        let parsed: any = null;
+        try {
+          parsed = JSON.parse(String(raw));
+        } catch {
+          parsed = null;
+        }
+        if (!parsed || typeof parsed !== 'object') {
+          return reply.code(400).send({ success: false, error: 'Invalid JSON value (not object)' });
+        }
+
+        const conv = Array.isArray(parsed.conversations) ? parsed.conversations : [];
+        const activePairs = parsed.activePairs && typeof parsed.activePairs === 'object' ? parsed.activePairs : {};
+
+        const uniqPairIds = Array.from(new Set(pairIds));
+
+        const beforeMsgs = conv.length;
+        const beforeActive = Object.keys(activePairs).length;
+
+        const drop = new Set(uniqPairIds);
+        const nextConv = conv.filter((m: any) => {
+          const pid = m && m.pairId != null ? String(m.pairId) : '';
+          return !pid || !drop.has(pid);
+        });
+
+        const nextActive: Record<string, any> = {};
+        for (const [pid, ctx] of Object.entries(activePairs)) {
+          const k = String(pid || '');
+          if (!k || drop.has(k)) continue;
+          (nextActive as any)[k] = ctx;
+        }
+
+        const afterMsgs = nextConv.length;
+        const afterActive = Object.keys(nextActive).length;
+
+        const deletedMsgs = beforeMsgs - afterMsgs;
+        const deletedActive = beforeActive - afterActive;
+
+        if (!dryRun) {
+          parsed.conversations = nextConv;
+          parsed.activePairs = nextActive;
+          const encoded = JSON.stringify(parsed);
+          if (Number.isFinite(ttl as any) && Number(ttl) > 0) {
+            await admin.redis.set(key, encoded, 'EX', Number(ttl));
+          } else {
+            await admin.redis.set(key, encoded);
+          }
+        }
+
+        return {
+          success: true,
+          profile,
+          key,
+          dryRun,
+          groupId,
+          pairIds: uniqPairIds,
+          stats: {
+            before: { conversations: beforeMsgs, activePairs: beforeActive },
+            after: { conversations: afterMsgs, activePairs: afterActive },
+            deleted: { conversations: deletedMsgs, activePairs: deletedActive },
+          },
+        };
+      } finally {
+        await admin.disconnect();
+      }
+    } catch (e: any) {
+      reply.code(500).send({ success: false, error: e?.message || String(e) });
+    }
+  });
+
   fastify.get('/api/redis-admin/groups', async (_request, reply) => {
     try {
+      const profile = normalizeProfile((_request.query as any)?.profile);
       const RedisAdmin = await getRedisAdminClass();
-      const admin = new RedisAdmin({ envPath: path.join(getSentraRoot(), '.env') });
+      const admin = new RedisAdmin({ envPath: getEnvPathByProfile(profile) });
       try {
         return { groups: admin.getKeyGroups() };
       } finally {
@@ -197,9 +476,10 @@ export async function redisAdminRoutes(fastify: FastifyInstance) {
 
   fastify.get('/api/redis-admin/overview', async (request, reply) => {
     try {
+      const profile = normalizeProfile((request.query as any)?.profile);
       const count = Math.max(1, Number((request.query as any)?.count || 500));
       const RedisAdmin = await getRedisAdminClass();
-      const admin = new RedisAdmin({ envPath: path.join(getSentraRoot(), '.env') });
+      const admin = new RedisAdmin({ envPath: getEnvPathByProfile(profile) });
       try {
         const payload = await admin.overview({ count });
         return { success: true, ...payload };
@@ -214,11 +494,12 @@ export async function redisAdminRoutes(fastify: FastifyInstance) {
   fastify.get('/api/redis-admin/stats', async (request, reply) => {
     try {
       const q: any = request.query || {};
+      const profile = normalizeProfile(q.profile);
       const pattern = String(q.pattern || '').trim();
       const count = Math.max(1, Number(q.count || 500));
       const limit = Math.max(1, Number(q.limit || 500));
       const RedisAdmin = await getRedisAdminClass();
-      const admin = new RedisAdmin({ envPath: path.join(getSentraRoot(), '.env') });
+      const admin = new RedisAdmin({ envPath: getEnvPathByProfile(profile) });
       try {
         const payload = await admin.statsByPattern(pattern, { count, limit });
         return { success: true, ...payload };
@@ -233,11 +514,12 @@ export async function redisAdminRoutes(fastify: FastifyInstance) {
   fastify.get('/api/redis-admin/list', async (request, reply) => {
     try {
       const q: any = request.query || {};
+      const profile = normalizeProfile(q.profile);
       const pattern = String(q.pattern || '').trim();
       const count = Math.max(1, Number(q.count || 500));
       const withMeta = q.withMeta === '1' || q.withMeta === 1 || q.withMeta === true || q.withMeta === 'true';
       const RedisAdmin = await getRedisAdminClass();
-      const admin = new RedisAdmin({ envPath: path.join(getSentraRoot(), '.env') });
+      const admin = new RedisAdmin({ envPath: getEnvPathByProfile(profile) });
       try {
         const keys = await admin.scanKeys(pattern, { count });
         if (!withMeta) {
@@ -302,6 +584,48 @@ export async function redisAdminRoutes(fastify: FastifyInstance) {
           }
         }
 
+        const maxGetBytes = 220_000;
+        const valueKeys: string[] = [];
+        const valueIndexByKey = new Map<string, number>();
+        for (let i = 0; i < items.length; i++) {
+          const it = items[i];
+          if (!it || it.tsMs != null) continue;
+          if (it.redisType !== 'string') continue;
+          const ln = Number.isFinite(Number(it.len)) ? Number(it.len) : null;
+          if (ln == null || ln <= 0 || ln > maxGetBytes) continue;
+          if (it.category !== '会话' && it.category !== '群会话状态' && it.category !== '意愿/主动' && it.category !== '疲劳度' && it.category !== 'MCP 上下文') continue;
+          valueIndexByKey.set(it.key, i);
+          valueKeys.push(it.key);
+        }
+
+        if (valueKeys.length) {
+          const vpipe = admin.redis.pipeline();
+          for (const k of valueKeys) vpipe.get(k);
+          const vrows = await vpipe.exec();
+
+          for (let i = 0; i < valueKeys.length; i++) {
+            const k = valueKeys[i];
+            const idx = valueIndexByKey.get(k);
+            if (idx == null) continue;
+            const row = vrows[i];
+            const raw = row && row[1] != null ? row[1] : null;
+            if (typeof raw !== 'string' || !raw.trim()) continue;
+            let parsed: any = null;
+            try {
+              parsed = JSON.parse(raw);
+            } catch {
+              parsed = null;
+            }
+            const tms = inferTsFromStringValue(items[idx], parsed);
+            if (tms != null) {
+              items[idx].tsMs = tms;
+              if (!items[idx].date) {
+                items[idx].date = formatDateTime(tms);
+              }
+            }
+          }
+        }
+
         return { success: true, pattern, count: items.length, items };
       } finally {
         await admin.disconnect();
@@ -314,9 +638,10 @@ export async function redisAdminRoutes(fastify: FastifyInstance) {
   fastify.get('/api/redis-admin/inspect', async (request, reply) => {
     try {
       const q: any = request.query || {};
+      const profile = normalizeProfile(q.profile);
       const key = String(q.key || '').trim();
       const RedisAdmin = await getRedisAdminClass();
-      const admin = new RedisAdmin({ envPath: path.join(getSentraRoot(), '.env') });
+      const admin = new RedisAdmin({ envPath: getEnvPathByProfile(profile) });
       try {
         const payload = await admin.inspectKey(key, {
           preview: q.preview,
@@ -337,12 +662,13 @@ export async function redisAdminRoutes(fastify: FastifyInstance) {
   fastify.get('/api/redis-admin/related', async (request, reply) => {
     try {
       const q: any = request.query || {};
+      const profile = normalizeProfile(q.profile);
       const groupId = q.groupId != null ? String(q.groupId).trim() : '';
       const userId = q.userId != null ? String(q.userId).trim() : '';
       const count = Math.max(1, Number(q.count || 500));
       const withMeta = q.withMeta === '1' || q.withMeta === 1 || q.withMeta === true || q.withMeta === 'true';
       const RedisAdmin = await getRedisAdminClass();
-      const admin = new RedisAdmin({ envPath: path.join(getSentraRoot(), '.env') });
+      const admin = new RedisAdmin({ envPath: getEnvPathByProfile(profile) });
       try {
         const payload = await admin.listRelatedKeys({
           groupId: groupId || null,
@@ -350,7 +676,7 @@ export async function redisAdminRoutes(fastify: FastifyInstance) {
         }, { count });
 
         if (!withMeta) {
-          return { success: true, ...payload };
+          return { success: true, groupId: groupId || null, userId: userId || null, keys: payload.keys };
         }
 
         const keyArrays = payload?.keys && typeof payload.keys === 'object' ? Object.values(payload.keys) : [];
@@ -394,6 +720,7 @@ export async function redisAdminRoutes(fastify: FastifyInstance) {
   fastify.post('/api/redis-admin/deleteByPattern', async (request, reply) => {
     try {
       const body: any = request.body || {};
+      const profile = normalizeProfile(body.profile);
       const pattern = String(body.pattern || '').trim();
       const dryRun = body.dryRun !== undefined ? !!body.dryRun : true;
       const count = Math.max(1, Number(body.count || 800));
@@ -401,7 +728,7 @@ export async function redisAdminRoutes(fastify: FastifyInstance) {
       if (!pattern) return reply.code(400).send({ success: false, error: 'Missing pattern' });
 
       const RedisAdmin = await getRedisAdminClass();
-      const admin = new RedisAdmin({ envPath: path.join(getSentraRoot(), '.env') });
+      const admin = new RedisAdmin({ envPath: getEnvPathByProfile(profile) });
       try {
         const result = await admin.deleteByPattern(pattern, { dryRun, count });
         return { success: true, ...result };

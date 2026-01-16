@@ -1,5 +1,5 @@
 import { requestContractXml } from '../openai/contract_call.js';
-import { getEnv } from '../config/env.js';
+import { getEnv, getEnvBoolean, getEnvNumber } from '../config/env.js';
 import { rerankDocuments } from '../rerank/index.js';
 
 function cosineSafeScore(score) {
@@ -179,7 +179,7 @@ function buildContextText(chunks, budgetChars = 12000) {
   return out.trim();
 }
 
-async function rerankChunks(openai, queryText, chunks, { candidateK = 40, topN = 40 } = {}) {
+async function rerankChunks(queryText, chunks, { candidateK = 40, topN = 40 } = {}) {
   const docs = chunks.map((c) => String(c?.text || '').trim());
   const pairs = docs.map((t, i) => ({ i, text: t })).filter((p) => p.text);
   if (!pairs.length) return { chunks, stats: { rerankMode: 'none' } };
@@ -192,17 +192,19 @@ async function rerankChunks(openai, queryText, chunks, { candidateK = 40, topN =
   const requestedTopN = Number(topN);
   const finalTopN = !Number.isFinite(requestedTopN) || requestedTopN <= 0 ? docTexts.length : Math.max(1, Math.min(requestedTopN, docTexts.length));
 
-  const embeddingModel = getEnv('OPENAI_EMBEDDING_MODEL', { defaultValue: 'text-embedding-3-small' });
+  const timeoutMs = getEnvNumber('RERANK_TIMEOUT_MS', { defaultValue: 12000 });
+  const baseURL = getEnv('RERANK_BASE_URL', { required: true });
+  const apiKey = getEnv('RERANK_API_KEY', { required: true });
+  const model = getEnv('RERANK_MODEL', { required: true });
   const ranked = await rerankDocuments({
     query: String(queryText ?? ''),
     documents: docTexts,
-    openai,
-    embeddingModel,
+    enableOnline: true,
     topN: finalTopN,
-    timeoutMs: Number(getEnv('RERANK_TIMEOUT_MS', { defaultValue: 12000 })),
-    baseURL: getEnv('RERANK_BASE_URL', { defaultValue: undefined }),
-    apiKey: getEnv('RERANK_API_KEY', { defaultValue: '' }),
-    model: getEnv('RERANK_MODEL', { defaultValue: undefined }),
+    timeoutMs,
+    baseURL,
+    apiKey,
+    model,
   });
 
   const idx = (ranked.indices || []).filter((x) => Number.isInteger(x) && x >= 0 && x < topPairs.length);
@@ -210,7 +212,7 @@ async function rerankChunks(openai, queryText, chunks, { candidateK = 40, topN =
   return { chunks: out.length ? out : chunks, stats: { rerankMode: ranked.mode, rerankTopN: out.length } };
 }
 
-export async function queryWithNeo4j(neo4j, openai, policy, contract, { queryText, contextText, lang }) {
+export async function queryWithNeo4j(neo4j, chatOpenai, embeddingOpenai, policy, contract, { queryText, contextText, lang }) {
   const plan = contract.retrieval_plan;
   const vectorIndex = getEnv('NEO4J_VECTOR_INDEX', { defaultValue: 'chunkChildEmbedding' });
   const fulltextIndex = getEnv('NEO4J_FULLTEXT_INDEX', { defaultValue: 'chunkText' });
@@ -223,8 +225,8 @@ export async function queryWithNeo4j(neo4j, openai, policy, contract, { queryTex
   let vectorHits = [];
   if (Number.isFinite(kVector) && kVector > 0) {
     // Embedding
-    const embeddingModel = getEnv('OPENAI_EMBEDDING_MODEL', { defaultValue: 'text-embedding-3-small' });
-    const emb = await openai.embeddings.create({ model: embeddingModel, input: queryText });
+    const embeddingModel = getEnv('EMBEDDING_MODEL', { defaultValue: 'text-embedding-3-small' });
+    const emb = await embeddingOpenai.embeddings.create({ model: embeddingModel, input: queryText });
     const queryEmbedding = emb.data?.[0]?.embedding;
     if (!Array.isArray(queryEmbedding)) throw new Error('Embedding failed');
 
@@ -241,16 +243,16 @@ export async function queryWithNeo4j(neo4j, openai, policy, contract, { queryTex
     ...fulltextHits.map((h) => ({ text: h.text || h.title || '', rawText: h.rawText })),
   ]);
 
-  const enableRerank = String(getEnv('RERANK_ENABLE', { defaultValue: 'true' })).toLowerCase() !== 'false';
-  const candidateK = Number(getEnv('RERANK_CANDIDATE_K', { defaultValue: 40 }));
-  const topN = Number(getEnv('RERANK_TOP_N', { defaultValue: 40 }));
-  const reranked = enableRerank ? await rerankChunks(openai, queryText, merged, { candidateK, topN }) : { chunks: merged, stats: { rerankMode: 'disabled' } };
+  const enableRerank = getEnvBoolean('RERANK_ENABLE', { defaultValue: false });
+  const candidateK = getEnvNumber('RERANK_CANDIDATE_K', { defaultValue: 40 });
+  const topN = getEnvNumber('RERANK_TOP_N', { defaultValue: 40 });
+  const reranked = enableRerank ? await rerankChunks(queryText, merged, { candidateK, topN }) : { chunks: merged, stats: { rerankMode: 'disabled' } };
 
   const budgetChars = Math.max(4000, Math.floor(tokenBudget * 4));
   const context = buildContextText(reranked.chunks, budgetChars);
 
   // Ask model for final answer using the same contract policy but task=query
-  const xml = await requestContractXml(openai, policy, {
+  const xml = await requestContractXml(chatOpenai, policy, {
     task: 'query',
     queryText,
     contextText: [contextText, '---', context].filter(Boolean).join('\n'),

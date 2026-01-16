@@ -24,7 +24,11 @@ export async function rerankDocumentsSiliconFlow({ query, documents, baseURL, ap
     throw new Error(`Invalid rerank inputs: query='${q}', docs=${docsClean.length}`);
   }
 
-  const payload = { model: model || 'BAAI/bge-reranker-v2-m3', query: q, documents: docsClean };
+  if (!String(model || '').trim()) {
+    throw new Error('Rerank model is required');
+  }
+
+  const payload = { model: String(model).trim(), query: q, documents: docsClean };
   if (!Number.isFinite(topN) || Number(topN) <= 0) {
     payload.top_n = docsClean.length;
   } else {
@@ -111,33 +115,31 @@ export async function rerankDocuments({
   const docs = (documents || []).map((s) => String(s || '').trim()).filter(Boolean);
   if (!q || docs.length === 0) return { indices: [], scores: [], mode: 'none' };
 
-  const onlineEnabled = enableOnline ?? boolFromEnv(process.env.RAG_RERANK_ENABLE, { defaultValue: true });
-  const key = apiKey || process.env.RAG_RERANK_API_KEY || '';
+  const onlineEnabled = enableOnline ?? false;
+  if (!onlineEnabled) return { indices: [], scores: [], mode: 'disabled' };
 
-  if (onlineEnabled && key) {
-    try {
-      const results = await rerankDocumentsSiliconFlow({
-        query: q,
-        documents: docs,
-        baseURL: baseURL || process.env.RAG_RERANK_BASE_URL,
-        apiKey: key,
-        model: model || process.env.RAG_RERANK_MODEL,
-        topN,
-        timeoutMs,
-      });
+  const key = String(apiKey || '').trim();
+  const url = String(baseURL || '').trim();
+  const m = String(model || '').trim();
+  if (!key) throw new Error('Rerank is enabled but apiKey is missing');
+  if (!url) throw new Error('Rerank is enabled but baseURL is missing');
+  if (!m) throw new Error('Rerank is enabled but model is missing');
 
-      const raw = results
-        .filter((r) => Number.isInteger(r.index) && r.index >= 0 && r.index < docs.length)
-        .sort((a, b) => Number(b.score) - Number(a.score));
+  const results = await rerankDocumentsSiliconFlow({
+    query: q,
+    documents: docs,
+    baseURL: url,
+    apiKey: key,
+    model: m,
+    topN,
+    timeoutMs,
+  });
 
-      const indices = raw.map((r) => r.index);
-      const scores = raw.map((r) => Number(r.score) || 0);
-      return { indices, scores, mode: 'online' };
-    } catch {
-      // fall through
-    }
-  }
+  const raw = results
+    .filter((r) => Number.isInteger(r.index) && r.index >= 0 && r.index < docs.length)
+    .sort((a, b) => Number(b.score) - Number(a.score));
 
-  const out = await rerankDocumentsByEmbedding({ query: q, documents: docs, openai, embeddingModel, topN });
-  return { ...out, mode: 'embedding' };
+  const indices = raw.map((r) => r.index);
+  const scores = raw.map((r) => Number(r.score) || 0);
+  return { indices, scores, mode: 'online' };
 }

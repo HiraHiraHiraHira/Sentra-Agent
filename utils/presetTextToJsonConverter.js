@@ -2,13 +2,17 @@ import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
 import { createLogger } from './logger.js';
-import { getEnv } from './envHotReloader.js';
+import { getEnv, onEnvReload } from './envHotReloader.js';
 import { loadPrompt } from '../prompts/loader.js';
 
 const logger = createLogger('PresetTextToJson');
 
 const PRESET_CONVERTER_PROMPT_NAME = 'preset_converter';
 let cachedPresetConverterSystemPrompt = null;
+
+onEnvReload(() => {
+  cachedPresetConverterSystemPrompt = null;
+});
 
 async function getPresetConverterSystemPrompt() {
   try {
@@ -37,22 +41,24 @@ function hashText(text) {
   }
 }
 
-function getPresetCachePath(fileName) {
+function getPresetCachePath(fileName, signatureText) {
   const baseDir = './agent-presets';
   const cacheDir = path.join(baseDir, '.cache');
   const safeName = (fileName || 'default.txt').replace(/[^a-zA-Z0-9._-]/g, '_');
-  const cacheFile = path.join(cacheDir, `${safeName}.json`);
+  const sigHash = signatureText ? hashText(signatureText) : null;
+  const suffix = sigHash ? `.${sigHash.slice(0, 12)}` : '';
+  const cacheFile = path.join(cacheDir, `${safeName}${suffix}.json`);
   return { cacheDir, cacheFile };
 }
 
-function tryLoadPresetCache(rawText, fileName) {
+function tryLoadPresetCache(rawText, fileName, signatureText) {
   const text = typeof rawText === 'string' ? rawText : '';
   if (!text) return null;
 
   const hash = hashText(text);
   if (!hash) return null;
 
-  const { cacheFile } = getPresetCachePath(fileName);
+  const { cacheFile } = getPresetCachePath(fileName, signatureText);
   if (!fs.existsSync(cacheFile)) return null;
 
   try {
@@ -69,14 +75,14 @@ function tryLoadPresetCache(rawText, fileName) {
   }
 }
 
-function savePresetCache(presetJson, rawText, fileName) {
+function savePresetCache(presetJson, rawText, fileName, signatureText) {
   const text = typeof rawText === 'string' ? rawText : '';
   if (!text || !presetJson || typeof presetJson !== 'object') return;
 
   const hash = hashText(text);
   if (!hash) return;
 
-  const { cacheDir, cacheFile } = getPresetCachePath(fileName);
+  const { cacheDir, cacheFile } = getPresetCachePath(fileName, signatureText);
   try {
     if (!fs.existsSync(cacheDir)) {
       fs.mkdirSync(cacheDir, { recursive: true });
@@ -275,17 +281,6 @@ export async function convertPresetTextToJson({ agent, rawText, fileName, model 
     };
   }
 
-  const cacheJson = tryLoadPresetCache(text, fileName);
-  if (cacheJson) {
-    const normalizedFromCache = normalizePresetJson(cacheJson, { rawText: text, fileName });
-    return {
-      presetJson: normalizedFromCache,
-      rawText: text
-    };
-  }
-
-  const systemPrompt = await getPresetConverterSystemPrompt();
-
   const userContent = [
     '下面是 Agent 的完整中文预设文本（可能是 Markdown 或自然语言，描述外貌、人设、身份、兴趣、性格、说话风格、行为规则等）：',
     '---',
@@ -301,6 +296,25 @@ export async function convertPresetTextToJson({ agent, rawText, fileName, model 
   ];
 
   const chosenModel = model || getEnv('AGENT_PRESET_CONVERTER_MODEL', getEnv('MAIN_AI_MODEL'));
+  const converterBaseUrl = getEnv('AGENT_PRESET_CONVERTER_BASE_URL', getEnv('API_BASE_URL', 'https://yuanplus.chat/v1'));
+  const converterApiKey = getEnv('AGENT_PRESET_CONVERTER_API_KEY', getEnv('API_KEY'));
+
+  const cacheSignature = JSON.stringify({
+    prompt: PRESET_CONVERTER_PROMPT_NAME,
+    model: chosenModel || '',
+    baseUrl: converterBaseUrl || ''
+  });
+
+  const cacheJson = tryLoadPresetCache(text, fileName, cacheSignature);
+  if (cacheJson) {
+    const normalizedFromCache = normalizePresetJson(cacheJson, { rawText: text, fileName });
+    return {
+      presetJson: normalizedFromCache,
+      rawText: text
+    };
+  }
+
+  const systemPrompt = await getPresetConverterSystemPrompt();
 
   logger.info(`convertPresetTextToJson: 开始转换预设(XML 工作流)，file=${fileName || ''}, model=${chosenModel || ''}`);
 
@@ -308,7 +322,9 @@ export async function convertPresetTextToJson({ agent, rawText, fileName, model 
   try {
     reply = await agent.chat(messages, {
       model: chosenModel,
-      temperature: 0
+      temperature: 0,
+      apiBaseUrl: converterBaseUrl,
+      apiKey: converterApiKey
     });
   } catch (e) {
     logger.error('convertPresetTextToJson: 调用 LLM 失败，将回退到最小 JSON', e);
@@ -347,7 +363,7 @@ export async function convertPresetTextToJson({ agent, rawText, fileName, model 
   }
 
   const normalized = normalizePresetJson(extracted, { rawText: text, fileName });
-  savePresetCache(normalized, text, fileName);
+  savePresetCache(normalized, text, fileName, cacheSignature);
   logger.success('convertPresetTextToJson: 预设文本已通过 Sentra XML 成功结构化为 JSON');
 
   return {

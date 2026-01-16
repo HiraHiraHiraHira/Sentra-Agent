@@ -135,6 +135,9 @@ class Agent {
     const options = typeof modelOrOptions === 'string' 
       ? { model: modelOrOptions }
       : modelOrOptions;
+
+    const apiBaseUrl = options.apiBaseUrl || this.config.apiBaseUrl;
+    const apiKey = options.apiKey || this.config.apiKey;
     
     const requestConfig = {
       model: options.model || this.config.defaultModel,
@@ -170,11 +173,11 @@ class Agent {
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        const response = await fetch(`${this.config.apiBaseUrl}/chat/completions`, {
+        const response = await fetch(`${apiBaseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.config.apiKey}`
+            'Authorization': `Bearer ${apiKey}`
           },
           body: JSON.stringify(requestConfig),
           signal: AbortSignal.timeout(this.config.timeout)
@@ -275,6 +278,8 @@ class Agent {
    * @returns {Promise<String>} 完整的回复内容
    */
   async chatStream(messages, options = {}, onChunk) {
+    const apiBaseUrl = options.apiBaseUrl || this.config.apiBaseUrl;
+    const apiKey = options.apiKey || this.config.apiKey;
     const requestConfig = {
       model: options.model || this.config.defaultModel,
       temperature: options.temperature !== undefined ? options.temperature : this.config.temperature,
@@ -289,11 +294,11 @@ class Agent {
     }
     
     try {
-      const response = await fetch(`${this.config.apiBaseUrl}/chat/completions`, {
+      const response = await fetch(`${apiBaseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.config.apiKey}`
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify(requestConfig),
         signal: AbortSignal.timeout(this.config.timeout)

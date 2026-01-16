@@ -3,7 +3,7 @@
  * 使用 Sentra XML 协议进行工具调用
  */
 
-import { config, getStageModel } from '../../config/index.js';
+import { config, getStageModel, getStageProvider } from '../../config/index.js';
 import { chatCompletion } from '../../openai/client.js';
 import { manifestToXmlToolsCatalog } from '../plan/manifest.js';
 import { loadPrompt, renderTemplate, composeSystem } from '../prompts/loader.js';
@@ -130,14 +130,15 @@ export async function judgeToolNecessityFC(objective, manifest, conversation, co
        .catch((err) => { clearTimeout(t); reject(err); });
     });
 
+    const provider = getStageProvider('judge');
     const attemptOnce = async (modelName) => {
       const res = await chatCompletion({
         messages: msgs,
         omitMaxTokens: useOmit,
         max_tokens: useOmit ? undefined : Number(config.fcLlm.maxTokens),
         temperature: Number(config.fcLlm.temperature ?? 0.2),
-        apiKey: config.fcLlm.apiKey,
-        baseURL: config.fcLlm.baseURL,
+        apiKey: provider.apiKey,
+        baseURL: provider.baseURL,
         model: modelName,
       });
       const content = res?.choices?.[0]?.message?.content || '';

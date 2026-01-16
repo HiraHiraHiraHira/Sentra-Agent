@@ -1,4 +1,4 @@
-import { config, getStageModel } from '../../config/index.js';
+import { config, getStageModel, getStageProvider } from '../../config/index.js';
 import logger from '../../logger/index.js';
 import { HistoryStore } from '../../history/store.js';
 import { chatCompletion } from '../../openai/client.js';
@@ -128,13 +128,14 @@ export async function checkTaskCompleteness(runId, objective = '', manifest = {}
         ? '注意：如果 is_complete=false，missing_aspects 和 suggested_supplements 必须各至少包含 1 项。请严格输出所有 4 个字段。'
         : '';
       const messages = [...baseMsgs, { role: 'user', content: [policy, instr, reinforce].filter(Boolean).join('\n\n') }];
+      const provider = getStageProvider('reflection');
       
       const res = await chatCompletion({
         messages,
         temperature,
         top_p,
-        apiKey: fc.apiKey,
-        baseURL: fc.baseURL,
+        apiKey: provider.apiKey,
+        baseURL: provider.baseURL,
         model: reflectionModel,
         ...(omit ? { omitMaxTokens: true } : { max_tokens: fc.maxTokens })
       });
@@ -145,7 +146,7 @@ export async function checkTaskCompleteness(runId, objective = '', manifest = {}
       logger.info('Reflection: 模型响应', {
         label: 'REFLECTION',
         attempt,
-        provider: { baseURL: fc.baseURL, model: reflectionModel },
+        provider: { baseURL: provider.baseURL, model: reflectionModel },
         contentPreview: clip(String(content))
       });
       

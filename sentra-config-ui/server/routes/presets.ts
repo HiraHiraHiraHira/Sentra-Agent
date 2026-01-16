@@ -3,6 +3,7 @@ import { join, resolve, basename, relative } from 'path';
 import { existsSync, statSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import dotenv from 'dotenv';
 import { TextDecoder } from 'util';
+import { XMLParser } from 'fast-xml-parser';
 
 // Helper to get root directory
 function getRootDir(): string {
@@ -38,94 +39,85 @@ function extractFirstTagBlock(text: string, tagName: string): string {
     return m ? m[0] : '';
 }
 
-function extractTagText(xml: string, tagName: string): string {
-    if (!xml || !tagName) return '';
-    const re = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}\\s*>`, 'i');
-    const m = String(xml).match(re);
-    return m ? (m[1] || '').trim() : '';
+const sentraPresetXmlParser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '',
+    allowBooleanAttributes: true,
+    trimValues: true,
+    parseTagValue: false,
+    parseAttributeValue: false,
+    isArray: (_name: string, jpath: string) => {
+        return (
+            jpath === 'sentra-agent-preset.rules.rule'
+            || jpath === 'sentra-agent-preset.rules.rule.conditions.condition'
+        );
+    },
+});
+
+function asArray<T>(v: T | T[] | undefined | null): T[] {
+    if (v == null) return [];
+    return Array.isArray(v) ? v : [v];
 }
 
-function parseSimpleChildrenBlock(inner: string): Record<string, any> {
-    const result: Record<string, any> = {};
-    if (!inner) return result;
-    const re = /<([A-Za-z0-9_:-]+)\b[^>]*>([\s\S]*?)<\/\1\s*>/g;
-    let m: RegExpExecArray | null;
-    const src = String(inner);
-    while ((m = re.exec(src)) !== null) {
-        const tag = m[1];
-        const text = (m[2] || '').trim();
-        if (!tag) continue;
-        if (Object.prototype.hasOwnProperty.call(result, tag)) {
-            const prev = result[tag];
-            if (Array.isArray(prev)) {
-                prev.push(text);
-            } else {
-                result[tag] = [prev, text];
-            }
-        } else {
-            result[tag] = text;
-        }
+function parseBoolLoose(v: any): boolean | undefined {
+    if (v == null) return undefined;
+    const s = String(v).trim().toLowerCase();
+    if (s === 'true' || s === '1') return true;
+    if (s === 'false' || s === '0') return false;
+    return undefined;
+}
+
+function normalizeConditionNode(node: any): { type: string; value: string } | null {
+    if (node == null) return null;
+    if (typeof node === 'string') {
+        const text = node.trim();
+        if (!text) return null;
+        return { type: 'text', value: text };
     }
-    return result;
+    if (typeof node === 'object') {
+        const type = typeof node.type === 'string' ? node.type.trim() : '';
+        const value = typeof node.value === 'string' ? node.value.trim() : String(node.value ?? '').trim();
+        if (type || value) return { type: type || 'text', value };
+        return { type: 'text', value: JSON.stringify(node) };
+    }
+    return { type: 'text', value: String(node).trim() };
 }
 
 function parseSentraAgentPresetXml(xml: string): any {
     if (!xml) return null;
-    const metaXml = extractFirstTagBlock(xml, 'meta');
-    const meta: Record<string, any> = {};
-    const metaKeys = ['node_name', 'category', 'description', 'version', 'author'];
-    for (const key of metaKeys) {
-        const v = extractTagText(metaXml, key);
-        if (v) meta[key] = v;
+    let parsed: any;
+    try {
+        parsed = sentraPresetXmlParser.parse(xml);
+    } catch {
+        return null;
     }
 
-    const parametersInner = extractTagText(xml, 'parameters');
-    const parameters = parseSimpleChildrenBlock(parametersInner);
+    const root = parsed && typeof parsed === 'object' ? (parsed['sentra-agent-preset'] || parsed) : null;
+    if (!root || typeof root !== 'object') return null;
 
-    const rulesInner = extractTagText(xml, 'rules');
-    const rules: any[] = [];
-    if (rulesInner) {
-        const reRule = /<rule\b[^>]*>([\s\S]*?)<\/rule\s*>/gi;
-        let m: RegExpExecArray | null;
-        const src = String(rulesInner);
-        while ((m = reRule.exec(src)) !== null) {
-            const block = m[0];
-            const id = extractTagText(block, 'id');
-            const enabledRaw = extractTagText(block, 'enabled');
-            let enabled: boolean | undefined;
-            if (enabledRaw) {
-                const t = enabledRaw.trim().toLowerCase();
-                if (t === 'true' || t === '1') enabled = true;
-                else if (t === 'false' || t === '0') enabled = false;
-            }
-            const event = extractTagText(block, 'event');
+    const meta = root.meta && typeof root.meta === 'object' ? root.meta : {};
+    const parameters = root.parameters && typeof root.parameters === 'object' ? root.parameters : {};
 
-            const conditionsInner = extractTagText(block, 'conditions');
-            const conditions: any[] = [];
-            if (conditionsInner) {
-                const reCond = /<condition\b[^>]*>([\s\S]*?)<\/condition\s*>/gi;
-                let mc: RegExpExecArray | null;
-                const srcCond = String(conditionsInner);
-                while ((mc = reCond.exec(srcCond)) !== null) {
-                    const text = (mc[1] || '').trim();
-                    if (!text) continue;
-                    conditions.push({ type: 'text', value: text });
-                }
-            }
+    const ruleNodes = asArray<any>(root?.rules?.rule);
+    const rules = ruleNodes.map((r) => {
+        const enabled = parseBoolLoose(r?.enabled);
+        const condNodes = asArray<any>(r?.conditions?.condition);
+        const conditions = condNodes.map(normalizeConditionNode).filter(Boolean);
+        const behavior = r?.behavior && typeof r.behavior === 'object' ? r.behavior : {};
 
-            const behaviorInner = extractTagText(block, 'behavior');
-            const behavior = behaviorInner ? parseSimpleChildrenBlock(behaviorInner) : {};
-
-            const rule: any = { id: id || undefined, enabled, event: event || undefined };
-            if (conditions.length > 0) rule.conditions = conditions;
-            if (behavior && Object.keys(behavior).length > 0) rule.behavior = behavior;
-            rules.push(rule);
-        }
-    }
+        const rule: any = {
+            id: typeof r?.id === 'string' ? r.id : (r?.id != null ? String(r.id) : undefined),
+            enabled,
+            event: typeof r?.event === 'string' ? r.event : (r?.event != null ? String(r.event) : undefined),
+        };
+        if (conditions.length > 0) rule.conditions = conditions;
+        if (behavior && Object.keys(behavior).length > 0) rule.behavior = behavior;
+        return rule;
+    }).filter((r) => r && (r.id || r.event || r.behavior || r.conditions));
 
     const result: any = {};
-    if (Object.keys(meta).length > 0) result.meta = meta;
-    result.parameters = parameters && typeof parameters === 'object' ? parameters : {};
+    if (meta && Object.keys(meta).length > 0) result.meta = meta;
+    result.parameters = parameters;
     if (rules.length > 0) result.rules = rules;
     return result;
 }
@@ -521,14 +513,27 @@ export async function presetRoutes(fastify: FastifyInstance) {
             const { base } = splitFileName(fileName);
 
             const rootDir = getRootDir();
-            const promptPath = join(rootDir, 'prompts', 'preset_converter.json');
+            const localPromptPath = join(process.cwd(), 'server', 'prompts', 'preset_converter.json');
+            const promptPath = existsSync(localPromptPath)
+                ? localPromptPath
+                : join(rootDir, 'prompts', 'preset_converter.json');
             if (!existsSync(promptPath)) {
                 return reply.code(500).send({ error: 'Missing preset_converter prompt', message: `Not found: ${promptPath}` });
             }
 
             const promptJson = JSON.parse(readFileSync(promptPath, 'utf-8')) as any;
+            const fileMessages = Array.isArray(promptJson?.messages) ? promptJson.messages : null;
             const systemPrompt = typeof promptJson?.system === 'string' ? promptJson.system : '';
-            if (!systemPrompt) {
+            const baseMessages = fileMessages
+                ? fileMessages
+                    .filter((m: any) => m && typeof m.role === 'string' && typeof m.content === 'string')
+                    .map((m: any) => ({ role: m.role, content: m.content }))
+                : null;
+
+            if (baseMessages && baseMessages.length === 0) {
+                return reply.code(500).send({ error: 'Invalid preset_converter prompt', message: 'Empty messages template' });
+            }
+            if (!baseMessages && !systemPrompt) {
                 return reply.code(500).send({ error: 'Invalid preset_converter prompt', message: 'Missing system prompt' });
             }
 
@@ -576,10 +581,12 @@ export async function presetRoutes(fastify: FastifyInstance) {
                 '请你只输出一个结构完整、可机读的 <sentra-agent-preset> XML 块，不要输出任何额外解释或 JSON。'
             ].join('\n');
 
-            const messages = [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userContent },
-            ];
+            const messages = baseMessages
+                ? baseMessages.concat([{ role: 'user', content: userContent }])
+                : [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userContent },
+                ];
 
             const wantsStream = !!body.stream;
             if (wantsStream) {

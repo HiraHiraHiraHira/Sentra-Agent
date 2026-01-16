@@ -1,5 +1,6 @@
 import { createLogger } from '../utils/logger.js';
 import { compressContext } from '../utils/contextCompressor.js';
+import { getEnv } from '../utils/envHotReloader.js';
 import {
   saveContextMemoryItem,
   getLastSummarizedPairCount,
@@ -83,6 +84,9 @@ export async function triggerContextSummarizationIfNeededCore(options = {}) {
 
     const model = CONTEXT_MEMORY_MODEL || MAIN_AI_MODEL;
 
+    const contextMemoryBaseUrl = getEnv('CONTEXT_MEMORY_BASE_URL', getEnv('API_BASE_URL', 'https://yuanplus.chat/v1'));
+    const contextMemoryApiKey = getEnv('CONTEXT_MEMORY_API_KEY', getEnv('API_KEY'));
+
     logger.info(
       `[${groupId}] ContextMemory: 开始摘要 discarded pairs ${sliceStart}-${sliceEnd} (count=${unsummarizedCount}, model=${model})`
     );
@@ -99,7 +103,9 @@ export async function triggerContextSummarizationIfNeededCore(options = {}) {
       timeEnd,
       maxSummarySentences: 3,
       model,
-      presetText
+      presetText,
+      apiBaseUrl: contextMemoryBaseUrl,
+      apiKey: contextMemoryApiKey
     });
 
     if (!summary || !summary.trim()) {

@@ -288,7 +288,7 @@
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 13px;
   font-weight: 600;
-  color: var(--accent-color);
+  color: var(--text-secondary);
 }
 
 .newKeyInput {
@@ -431,6 +431,13 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.displayName {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-color);
+  line-height: 1.2;
 }
 
 .keyLine {

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, Suspense, lazy, memo, type Dispatch, type SetStateAction, type ReactNode } from 'react';
+import { Component, useState, useCallback, useEffect, useMemo, Suspense, lazy, memo, type Dispatch, type SetStateAction, type ReactNode } from 'react';
 import { MenuBar } from '../components/MenuBar';
 import { MacWindow } from '../components/MacWindow';
 import { EnvEditor } from '../components/EnvEditor';
@@ -7,6 +7,7 @@ const PresetsEditor = lazy(() => import('../components/PresetsEditor').then(modu
 const FileManager = lazy(() => import('../components/FileManager').then(module => ({ default: module.FileManager })));
 const DeepWikiChat = lazy(() => import('../components/DeepWikiChat').then(module => ({ default: module.DeepWikiChat })));
 const PresetImporter = lazy(() => import('../components/PresetImporter').then(module => ({ default: module.PresetImporter })));
+const ModelProvidersManager = lazy(() => import('../components/ModelProvidersManager/ModelProvidersManager').then(module => ({ default: module.default })));
 
 import { Dock } from '../components/Dock';
 import { Launchpad } from '../components/Launchpad';
@@ -21,6 +22,29 @@ import type { DeskWindow, DesktopIcon, FileItem, TerminalWin, AppFolder } from '
 import { AppFolderModal } from '../components/AppFolderModal';
 import { DevCenterV2 } from '../components/DevCenterV2';
 import { RedisAdminManager } from '../components/RedisAdminManager/RedisAdminManager';
+
+class WindowErrorBoundary extends Component<
+  { resetKey: string; fallback: (err: any) => ReactNode; children: ReactNode },
+  { err: any }
+> {
+  state: { err: any } = { err: null };
+
+  static getDerivedStateFromError(err: any) {
+    return { err };
+  }
+
+  componentDidUpdate(prevProps: { resetKey: string }) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.err) {
+      // eslint-disable-next-line react/no-did-update-set-state
+      this.setState({ err: null });
+    }
+  }
+
+  render() {
+    if (this.state.err) return this.props.fallback(this.state.err);
+    return this.props.children as any;
+  }
+}
 
 export type DesktopViewProps = {
   isSolidColor: boolean;
@@ -124,6 +148,11 @@ export type DesktopViewProps = {
   setRedisAdminOpen: (open: boolean) => void;
   redisAdminMinimized: boolean;
   setRedisAdminMinimized: (min: boolean) => void;
+
+  modelProvidersManagerOpen: boolean;
+  setModelProvidersManagerOpen: (open: boolean) => void;
+  modelProvidersManagerMinimized: boolean;
+  setModelProvidersManagerMinimized: (min: boolean) => void;
 };
 
 type EnvWindowItemProps = {
@@ -326,6 +355,10 @@ export function DesktopView(props: DesktopViewProps) {
     setRedisAdminOpen,
     redisAdminMinimized,
     setRedisAdminMinimized,
+    modelProvidersManagerOpen,
+    setModelProvidersManagerOpen,
+    modelProvidersManagerMinimized,
+    setModelProvidersManagerMinimized,
   } = props;
 
   // Folder & window state
@@ -381,6 +414,7 @@ export function DesktopView(props: DesktopViewProps) {
     (devCenterOpen ? 1 : 0) +
     (deepWikiOpen ? 1 : 0) +
     (redisAdminOpen ? 1 : 0) +
+    (modelProvidersManagerOpen ? 1 : 0) +
     (presetsEditorOpen ? 1 : 0) +
     (presetImporterOpen ? 1 : 0) +
     (fileManagerOpen ? 1 : 0);
@@ -390,6 +424,15 @@ export function DesktopView(props: DesktopViewProps) {
   const performanceMode =
     maximizedWindowIds.length > 0 ||
     (openWindows.length + terminalWindows.length + openUtilityCount) >= 4;
+
+  useEffect(() => {
+    try {
+      document.documentElement.setAttribute('data-performance', performanceMode ? '1' : '0');
+      document.body.setAttribute('data-performance', performanceMode ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [performanceMode]);
 
   const handleActivateWindowFromSide = useCallback((id: string) => {
     bringToFront(id);
@@ -442,6 +485,12 @@ export function DesktopView(props: DesktopViewProps) {
       bringUtilityToFront('redis-admin');
     }
   }, [redisAdminOpen, utilityZMap, bringUtilityToFront]);
+
+  useEffect(() => {
+    if (modelProvidersManagerOpen && utilityZMap['model-providers-manager'] == null) {
+      bringUtilityToFront('model-providers-manager');
+    }
+  }, [modelProvidersManagerOpen, utilityZMap, bringUtilityToFront]);
 
   useEffect(() => {
     if (presetsEditorOpen && utilityZMap['presets-editor'] == null) {
@@ -574,6 +623,27 @@ export function DesktopView(props: DesktopViewProps) {
     });
   }
 
+  if (modelProvidersManagerOpen) {
+    extraTabs.push({
+      id: 'model-providers-manager',
+      title: '模型供应商',
+      icon: getIconForType('model-providers-manager', 'module'),
+      isActive: activeUtilityId === 'model-providers-manager',
+      onActivate: () => {
+        setModelProvidersManagerOpen(true);
+        setModelProvidersManagerMinimized(false);
+        bringUtilityToFront('model-providers-manager');
+      },
+      onClose: () => {
+        setModelProvidersManagerOpen(false);
+        setModelProvidersManagerMinimized(false);
+        if (activeUtilityId === 'model-providers-manager') {
+          setActiveUtilityId(null);
+        }
+      },
+    });
+  }
+
   if (presetsEditorOpen) {
     extraTabs.push({
       id: 'presets-editor',
@@ -693,6 +763,16 @@ export function DesktopView(props: DesktopViewProps) {
         setRedisAdminOpen(true);
         setRedisAdminMinimized(false);
         bringUtilityToFront('redis-admin');
+      }
+    },
+    {
+      name: 'model-providers-manager',
+      type: 'module' as const,
+      onClick: () => {
+        recordUsage('app:model-providers-manager');
+        setModelProvidersManagerOpen(true);
+        setModelProvidersManagerMinimized(false);
+        bringUtilityToFront('model-providers-manager');
       }
     },
     ...allItems.map(item => ({
@@ -843,6 +923,16 @@ export function DesktopView(props: DesktopViewProps) {
                   },
                 },
                 {
+                  id: 'model-providers-manager',
+                  name: 'model-providers-manager',
+                  subtitle: '模型供应商管理（配置 /v1/models）',
+                  onOpen: () => {
+                    setModelProvidersManagerOpen(true);
+                    setModelProvidersManagerMinimized(false);
+                    bringUtilityToFront('model-providers-manager');
+                  },
+                },
+                {
                   id: 'presets-editor',
                   name: 'presets-editor',
                   subtitle: '预设撰写（内置工具）',
@@ -912,6 +1002,37 @@ export function DesktopView(props: DesktopViewProps) {
             onMove={() => { }}
           >
             <RedisAdminManager addToast={addToast} />
+          </MacWindow>
+        )}
+
+        {modelProvidersManagerOpen && (
+          <MacWindow
+            id="model-providers-manager"
+            title="模型供应商"
+            icon={getIconForType('model-providers-manager', 'module')}
+            safeArea={desktopSafeArea}
+            zIndex={utilityZMap['model-providers-manager'] ?? 2007}
+            isActive={activeUtilityId === 'model-providers-manager'}
+            isMinimized={modelProvidersManagerMinimized}
+            performanceMode={performanceMode}
+            initialSize={{ width: 1120, height: 720 }}
+            onClose={() => {
+              handleWindowMaximize('model-providers-manager', false);
+              setModelProvidersManagerOpen(false);
+              setModelProvidersManagerMinimized(false);
+            }}
+            onMinimize={() => {
+              handleWindowMaximize('model-providers-manager', false);
+              setModelProvidersManagerMinimized(true);
+              setActiveUtilityId(null);
+            }}
+            onMaximize={(isMax) => handleWindowMaximize('model-providers-manager', isMax)}
+            onFocus={() => { bringUtilityToFront('model-providers-manager'); }}
+            onMove={() => { }}
+          >
+            <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载中...</div>}>
+              <ModelProvidersManager addToast={addToast as any} />
+            </Suspense>
           </MacWindow>
         )}
 
@@ -1075,12 +1196,23 @@ export function DesktopView(props: DesktopViewProps) {
             onMove={() => { }}
           >
             <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载中...</div>}>
-              <FileManager
-                onClose={() => setFileManagerOpen(false)}
-                theme={theme}
-                addToast={addToast}
-                performanceMode={performanceMode}
-              />
+              <WindowErrorBoundary
+                resetKey={`file-manager:${performanceMode ? 'p' : 'n'}`}
+                fallback={(err) => (
+                  <div style={{ padding: 16, color: '#ef4444', fontSize: 13, lineHeight: 1.5 }}>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>文件管理器渲染失败</div>
+                    <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{String((err as any)?.message || err)}</div>
+                    <div style={{ marginTop: 10, color: '#888' }}>请打开开发者工具查看详细报错堆栈。</div>
+                  </div>
+                )}
+              >
+                <FileManager
+                  onClose={() => setFileManagerOpen(false)}
+                  theme={theme}
+                  addToast={addToast}
+                  performanceMode={performanceMode}
+                />
+              </WindowErrorBoundary>
             </Suspense>
           </MacWindow>
         )}
@@ -1134,6 +1266,14 @@ export function DesktopView(props: DesktopViewProps) {
 
               {desktopIcons?.find(i => i.id === 'desktop-redis-admin') && (() => {
                 const icon = desktopIcons.find(i => i.id === 'desktop-redis-admin')!;
+                return renderTopTile(icon.id, icon.name, icon.icon, (e) => {
+                  e.stopPropagation();
+                  icon.onClick();
+                });
+              })()}
+
+              {desktopIcons?.find(i => i.id === 'desktop-model-providers-manager') && (() => {
+                const icon = desktopIcons.find(i => i.id === 'desktop-model-providers-manager')!;
                 return renderTopTile(icon.id, icon.name, icon.icon, (e) => {
                   e.stopPropagation();
                   icon.onClick();

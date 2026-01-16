@@ -9,6 +9,7 @@ import { deepWikiRoutes } from './routes/deepwiki';
 import { systemRoutes } from './routes/system.ts';
 import { redisRoutes } from './routes/redis.ts';
 import { redisAdminRoutes } from './routes/redisAdmin.ts';
+import { llmProvidersRoutes } from './routes/llmProviders.ts';
 import { join } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import dotenv from 'dotenv';
@@ -423,6 +424,7 @@ async function start() {
   await fastify.register(systemRoutes);
   await fastify.register(redisRoutes);
   await fastify.register(redisAdminRoutes);
+  await fastify.register(llmProvidersRoutes);
 
   // 生产环境提供静态文件
   if (process.env.NODE_ENV === 'production') {

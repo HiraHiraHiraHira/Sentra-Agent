@@ -106,6 +106,8 @@ class UserPersonaManager {
       minMessagesForUpdate: getEnvInt('PERSONA_MIN_MESSAGES', 10),
       maxHistorySize: getEnvInt('PERSONA_MAX_HISTORY', 100),
       model: getEnv('PERSONA_MODEL', 'gpt-4.1-mini'),
+      baseUrl: getEnv('PERSONA_BASE_URL', getEnv('API_BASE_URL', 'https://yuanplus.chat/v1')),
+      apiKey: getEnv('PERSONA_API_KEY', getEnv('API_KEY')),
       recentMessagesCount: getEnvInt('PERSONA_RECENT_MESSAGES', 40),
       halfLifeMs: getEnvInt('PERSONA_HALFLIFE_MS', 172800000),
       maxTraits: getEnvInt('PERSONA_MAX_TRAITS', 6),
@@ -145,6 +147,12 @@ class UserPersonaManager {
 
     const nextModel = typeof cfg.model === 'string' && cfg.model.trim() ? cfg.model.trim() : this.model;
     this.model = nextModel;
+
+    const nextBaseUrl = typeof cfg.baseUrl === 'string' && cfg.baseUrl.trim() ? cfg.baseUrl.trim() : this.baseUrl;
+    this.baseUrl = nextBaseUrl;
+
+    const nextApiKey = typeof cfg.apiKey === 'string' && cfg.apiKey.trim() ? cfg.apiKey.trim() : this.apiKey;
+    this.apiKey = nextApiKey;
 
     const nextRecentMessagesCount = Number(cfg.recentMessagesCount);
     this.recentMessagesCount = Number.isFinite(nextRecentMessagesCount) && nextRecentMessagesCount > 0
@@ -389,7 +397,9 @@ class UserPersonaManager {
         {
           model: this.model,
           temperature: 1,
-          max_tokens: 2000
+          max_tokens: 2000,
+          apiBaseUrl: this.baseUrl,
+          apiKey: this.apiKey
         }
       );
 

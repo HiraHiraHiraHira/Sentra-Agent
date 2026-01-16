@@ -666,8 +666,11 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
         ? MCP_MAX_CONTEXT_PAIRS
         : historyManager.maxConversationPairs || 20;
 
+    const contextTokensLimit = getEnvInt('MCP_MAX_CONTEXT_TOKENS', 0) || 0;
+
     let historyConversations = historyManager.getConversationHistoryForContext(groupId, {
-      recentPairs: contextPairsLimit
+      recentPairs: contextPairsLimit,
+      maxTokens: contextTokensLimit
     });
     try {
       if (timeText) {
@@ -685,7 +688,8 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
             const enhancedHistory = historyManager.getConversationHistoryForContext(groupId, {
               timeStart: start,
               timeEnd: end,
-              recentPairs: contextPairsLimit
+              recentPairs: contextPairsLimit,
+              maxTokens: contextTokensLimit
             });
             if (Array.isArray(enhancedHistory)) {
               if (enhancedHistory.length > 0) {

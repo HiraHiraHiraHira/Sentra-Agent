@@ -1,0 +1,2572 @@
+{
+  "rules": [
+    {
+      "key": "deepseek",
+      "label": "DeepSeek",
+      "iconName": "DeepSeek",
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "deepseek-"
+        },
+        {
+          "kind": "contains",
+          "value": "deepseek"
+        }
+      ]
+    },
+    {
+      "key": "openai",
+      "label": "OpenAI",
+      "iconName": "OpenAI",
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "gpt-"
+        },
+        {
+          "kind": "prefix",
+          "value": "o1-"
+        },
+        {
+          "kind": "prefix",
+          "value": "o3-"
+        },
+        {
+          "kind": "contains",
+          "value": "openai"
+        },
+        {
+          "kind": "contains",
+          "value": "text-embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "whisper"
+        },
+        {
+          "kind": "contains",
+          "value": "dall-e"
+        }
+      ]
+    },
+    {
+      "key": "anthropic",
+      "label": "Anthropic",
+      "iconName": "Anthropic",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "anthropic"
+        },
+        {
+          "kind": "contains",
+          "value": "claude"
+        }
+      ]
+    },
+    {
+      "key": "gemini",
+      "label": "Gemini",
+      "iconName": "Gemini",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "gemini-"
+        },
+        {
+          "kind": "contains",
+          "value": "gemma-"
+        },
+        {
+          "kind": "contains",
+          "value": "gamma-"
+        },
+        {
+          "kind": "contains",
+          "value": "nano-banana"
+        },
+        {
+          "kind": "contains",
+          "value": "veo2"
+        },
+        {
+          "kind": "contains",
+          "value": "veo3"
+        },
+        {
+          "kind": "contains",
+          "value": "veo-"
+        }
+      ]
+    },
+    {
+      "key": "internlm",
+      "label": "InternLM",
+      "iconName": "InternLM",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "internlm"
+        },
+        {
+          "kind": "contains",
+          "value": "intern-"
+        },
+        {
+          "kind": "contains",
+          "value": "internvl"
+        }
+      ]
+    },
+    {
+      "key": "baai",
+      "label": "BAAI",
+      "iconName": "BAAI",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "baai"
+        },
+        {
+          "kind": "contains",
+          "value": "bge"
+        }
+      ]
+    },
+    {
+      "key": "chatglm",
+      "label": "ChatGLM",
+      "iconName": "ChatGLM",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "chatglm"
+        },
+        {
+          "kind": "contains",
+          "value": "glm"
+        },
+        {
+          "kind": "contains",
+          "value": "zhipu"
+        }
+      ]
+    },
+    {
+      "key": "qwen",
+      "label": "Qwen",
+      "iconName": "Qwen",
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "qwen"
+        },
+        {
+          "kind": "prefix",
+          "value": "z-image"
+        },
+        {
+          "kind": "contains",
+          "value": "qwq-"
+        },
+        {
+          "kind": "contains",
+          "value": "tongyi"
+        }
+      ]
+    },
+    {
+      "key": "wenxin",
+      "label": "Wenxin",
+      "iconName": "Wenxin",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "wenxin"
+        },
+        {
+          "kind": "contains",
+          "value": "ernie"
+        }
+      ]
+    },
+    {
+      "key": "hunyuan",
+      "label": "Hunyuan",
+      "iconName": "Hunyuan",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "hunyuan"
+        }
+      ]
+    },
+    {
+      "key": "comfyui",
+      "label": "Comfyui",
+      "iconName": "Comfyui",
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "anishadow-"
+        },
+        {
+          "kind": "prefix",
+          "value": "naishadow-"
+        },
+        {
+          "kind": "prefix",
+          "value": "newbie-"
+        },
+        {
+          "kind": "prefix",
+          "value": "lumensculptor-"
+        },
+        {
+          "kind": "prefix",
+          "value": "luminaArchitect-"
+        },
+        {
+          "kind": "prefix",
+          "value": "ill-dream-"
+        },
+        {
+          "kind": "prefix",
+          "value": "radiance-"
+        },
+        {
+          "kind": "prefix",
+          "value": "noobai-"
+        }
+      ]
+    },
+    {
+      "key": "jimeng",
+      "label": "Jimeng",
+      "iconName": "Jimeng",
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "jimeng-"
+        }
+      ]
+    },
+    {
+      "key": "midjourney",
+      "label": "Midjourney",
+      "iconName": "Midjourney",
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "mj_"
+        }
+      ]
+    },
+    {
+      "key": "suno",
+      "label": "Suno",
+      "iconName": "Suno",
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "suno"
+        }
+      ]
+    },
+    {
+      "key": "nova",
+      "label": "Nova",
+      "iconName": "Aws",
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "nova-"
+        }
+      ]
+    },
+    {
+      "key": "moonshot",
+      "label": "Moonshot",
+      "iconName": "Moonshot",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "moonshot"
+        },
+        {
+          "kind": "contains",
+          "value": "kimi"
+        }
+      ]
+    },
+    {
+      "key": "ollama",
+      "label": "Ollama",
+      "iconName": "Ollama",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "ollama"
+        },
+        {
+          "kind": "prefix",
+          "value": "llama"
+        }
+      ]
+    },
+    {
+      "key": "meta",
+      "label": "Meta",
+      "iconName": "Meta",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "meta"
+        },
+        {
+          "kind": "contains",
+          "value": "llama"
+        },
+        {
+          "kind": "contains",
+          "value": "llama-"
+        }
+      ]
+    },
+    {
+      "key": "mistral",
+      "label": "Mistral",
+      "iconName": "Mistral",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "pixtral-"
+        },
+        {
+          "kind": "contains",
+          "value": "voxtral-"
+        },
+        {
+          "kind": "contains",
+          "value": "mistral-"
+        },
+        {
+          "kind": "contains",
+          "value": "ministral-"
+        },
+        {
+          "kind": "contains",
+          "value": "codestral-"
+        },
+        {
+          "kind": "contains",
+          "value": "magistral-"
+        },
+        {
+          "kind": "contains",
+          "value": "devstral-"
+        },
+        {
+          "kind": "contains",
+          "value": "mixtral"
+        }
+      ]
+    },
+    {
+      "key": "novelai",
+      "label": "Novelai",
+      "iconName": "Novelai",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "novelai-"
+        },
+        {
+          "kind": "contains",
+          "value": "nai-"
+        }
+      ]
+    },
+    {
+      "key": "flux",
+      "label": "Flux",
+      "iconName": "Flux",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "flux-"
+        },
+        {
+          "kind": "contains",
+          "value": "flux."
+        }
+      ]
+    },
+    {
+      "key": "cohere",
+      "label": "Cohere",
+      "iconName": "Cohere",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "cohere"
+        },
+        {
+          "kind": "contains",
+          "value": "command-r"
+        }
+      ]
+    },
+    {
+      "key": "groq",
+      "label": "Groq",
+      "iconName": "Groq",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "groq"
+        },
+        {
+          "kind": "contains",
+          "value": "llama-3.1"
+        },
+        {
+          "kind": "contains",
+          "value": "llama-3.2"
+        }
+      ]
+    },
+    {
+      "key": "openrouter",
+      "label": "OpenRouter",
+      "iconName": "OpenRouter",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "openrouter"
+        },
+        {
+          "kind": "contains",
+          "value": "openrouter.ai"
+        },
+        {
+          "kind": "contains",
+          "value": "open-router"
+        }
+      ]
+    },
+    {
+      "key": "azure",
+      "label": "Azure",
+      "iconName": "Azure",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "azure"
+        },
+        {
+          "kind": "contains",
+          "value": "azure-openai"
+        }
+      ]
+    },
+    {
+      "key": "together",
+      "label": "Together",
+      "iconName": "Together",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "together"
+        },
+        {
+          "kind": "contains",
+          "value": "together.ai"
+        }
+      ]
+    },
+    {
+      "key": "fireworks",
+      "label": "Fireworks",
+      "iconName": "Fireworks",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "fireworks"
+        }
+      ]
+    },
+    {
+      "key": "perplexity",
+      "label": "Perplexity",
+      "iconName": "Perplexity",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "perplexity"
+        },
+        {
+          "kind": "contains",
+          "value": "pplx"
+        }
+      ]
+    },
+    {
+      "key": "xai",
+      "label": "xAI",
+      "iconName": "XAI",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "xai"
+        },
+        {
+          "kind": "contains",
+          "value": "grok"
+        }
+      ]
+    },
+    {
+      "key": "minimax",
+      "label": "MiniMax",
+      "iconName": "Minimax",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "minimax"
+        },
+        {
+          "kind": "contains",
+          "value": "abab"
+        }
+      ]
+    },
+    {
+      "key": "baichuan",
+      "label": "Baichuan",
+      "iconName": "Baichuan",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "baichuan"
+        }
+      ]
+    },
+    {
+      "key": "yi",
+      "label": "Yi",
+      "iconName": "Yi",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "yi-"
+        },
+        {
+          "kind": "contains",
+          "value": "01-ai"
+        }
+      ]
+    },
+    {
+      "key": "stepfun",
+      "label": "StepFun",
+      "iconName": "Stepfun",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "stepfun"
+        },
+        {
+          "kind": "contains",
+          "value": "step-"
+        }
+      ]
+    },
+    {
+      "key": "nvidia",
+      "label": "NVIDIA",
+      "iconName": "Nvidia",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "nvidia"
+        },
+        {
+          "kind": "contains",
+          "value": "nvcf"
+        }
+      ]
+    },
+    {
+      "key": "bedrock",
+      "label": "AWS Bedrock",
+      "iconName": "Aws",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "bedrock"
+        },
+        {
+          "kind": "contains",
+          "value": "amazon"
+        },
+        {
+          "kind": "contains",
+          "value": "aws"
+        }
+      ]
+    },
+    {
+      "key": "cloudflare",
+      "label": "Cloudflare",
+      "iconName": "Cloudflare",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "cloudflare"
+        },
+        {
+          "kind": "contains",
+          "value": "workers ai"
+        },
+        {
+          "kind": "contains",
+          "value": "workers-ai"
+        },
+        {
+          "kind": "contains",
+          "value": "workersai"
+        }
+      ]
+    },
+    {
+      "key": "huggingface",
+      "label": "Hugging Face",
+      "iconName": "HuggingFace",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "huggingface"
+        },
+        {
+          "kind": "contains",
+          "value": "hf.co"
+        },
+        {
+          "kind": "contains",
+          "value": "inference-api"
+        },
+        {
+          "kind": "contains",
+          "value": "inference api"
+        }
+      ]
+    },
+    {
+      "key": "replicate",
+      "label": "Replicate",
+      "iconName": "Replicate",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "replicate"
+        },
+        {
+          "kind": "contains",
+          "value": "replicate.com"
+        }
+      ]
+    },
+    {
+      "key": "stability",
+      "label": "Stability AI",
+      "iconName": "Stability",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "stability"
+        },
+        {
+          "kind": "contains",
+          "value": "stable-diffusion"
+        },
+        {
+          "kind": "contains",
+          "value": "stablediffusion"
+        },
+        {
+          "kind": "contains",
+          "value": "sdxl"
+        }
+      ]
+    },
+    {
+      "key": "siliconflow",
+      "label": "SiliconFlow",
+      "iconName": "SiliconCloud",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "siliconflow"
+        },
+        {
+          "kind": "contains",
+          "value": "silicon-flow"
+        },
+        {
+          "kind": "contains",
+          "value": "silicon cloud"
+        },
+        {
+          "kind": "contains",
+          "value": "siliconcloud"
+        }
+      ]
+    },
+    {
+      "key": "volcengine",
+      "label": "Volcengine",
+      "iconName": "Volcengine",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "volcengine"
+        },
+        {
+          "kind": "contains",
+          "value": "volc"
+        },
+        {
+          "kind": "contains",
+          "value": "ark"
+        },
+        {
+          "kind": "contains",
+          "value": "ark-runtime"
+        },
+        {
+          "kind": "contains",
+          "value": "bytedance"
+        }
+      ]
+    },
+    {
+      "key": "doubao",
+      "label": "Doubao",
+      "iconName": "Doubao",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "doubao-"
+        },
+        {
+          "kind": "contains",
+          "value": "seedance-"
+        },
+        {
+          "kind": "contains",
+          "value": "seedream-"
+        }
+      ]
+    },
+    {
+      "key": "sensetime",
+      "label": "SenseTime",
+      "iconName": "SenseNova",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "sensetime"
+        },
+        {
+          "kind": "contains",
+          "value": "sense"
+        },
+        {
+          "kind": "contains",
+          "value": "sensenova"
+        }
+      ]
+    },
+    {
+      "key": "iflytek",
+      "label": "iFlytek",
+      "iconName": "IFlyTekCloud",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "iflytek"
+        },
+        {
+          "kind": "contains",
+          "value": "spark"
+        },
+        {
+          "kind": "contains",
+          "value": "讯飞"
+        },
+        {
+          "kind": "contains",
+          "value": "sparkdesk"
+        }
+      ]
+    },
+    {
+      "key": "kling",
+      "label": "Kling",
+      "iconName": "Kling",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "kling"
+        },
+        {
+          "kind": "contains",
+          "value": "可灵"
+        }
+      ]
+    },
+    {
+      "key": "baidu_qianfan",
+      "label": "Qianfan",
+      "iconName": "Wenxin",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "qianfan"
+        },
+        {
+          "kind": "contains",
+          "value": "千帆"
+        }
+      ]
+    },
+    {
+      "key": "ibm",
+      "label": "IBM",
+      "iconName": "IBM",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "ibm"
+        },
+        {
+          "kind": "contains",
+          "value": "watsonx"
+        },
+        {
+          "kind": "contains",
+          "value": "watson"
+        }
+      ]
+    },
+    {
+      "key": "databricks",
+      "label": "Databricks",
+      "iconName": "Dbrx",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "databricks"
+        },
+        {
+          "kind": "contains",
+          "value": "dbrx"
+        }
+      ]
+    },
+    {
+      "key": "intel",
+      "label": "Intel",
+      "iconName": "Intel",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "intel"
+        },
+        {
+          "kind": "contains",
+          "value": "gaudi"
+        }
+      ]
+    },
+    {
+      "key": "microsoft",
+      "label": "Microsoft",
+      "iconName": "Microsoft",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "microsoft"
+        },
+        {
+          "kind": "contains",
+          "value": "phi-"
+        },
+        {
+          "kind": "contains",
+          "value": "phi3"
+        },
+        {
+          "kind": "contains",
+          "value": "phi-3"
+        },
+        {
+          "kind": "contains",
+          "value": "phi4"
+        },
+        {
+          "kind": "contains",
+          "value": "phi-4"
+        }
+      ]
+    },
+    {
+      "key": "alibaba_cloud",
+      "label": "Alibaba Cloud",
+      "iconName": "AlibabaCloud",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "alibabacloud"
+        },
+        {
+          "kind": "contains",
+          "value": "aliyun"
+        },
+        {
+          "kind": "contains",
+          "value": "aliyuncs"
+        }
+      ]
+    },
+    {
+      "key": "baidu",
+      "label": "Baidu",
+      "iconName": "Baidu",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "baidu"
+        }
+      ]
+    },
+    {
+      "key": "tencent_cloud",
+      "label": "Tencent Cloud",
+      "iconName": "TencentCloud",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "tencentcloud"
+        },
+        {
+          "kind": "contains",
+          "value": "tencent cloud"
+        }
+      ]
+    },
+    {
+      "key": "github",
+      "label": "GitHub",
+      "iconName": "Github",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "github"
+        },
+        {
+          "kind": "contains",
+          "value": "copilot"
+        }
+      ]
+    },
+    {
+      "key": "deepinfra",
+      "label": "DeepInfra",
+      "iconName": "DeepInfra",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "deepinfra"
+        }
+      ]
+    },
+    {
+      "key": "lepton",
+      "label": "Lepton",
+      "iconName": "LeptonAI",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "lepton"
+        },
+        {
+          "kind": "contains",
+          "value": "lepton.ai"
+        }
+      ]
+    },
+    {
+      "key": "anyscale",
+      "label": "Anyscale",
+      "iconName": "Anyscale",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "anyscale"
+        }
+      ]
+    },
+    {
+      "key": "novita",
+      "label": "Novita AI",
+      "iconName": "Novita",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "novita"
+        },
+        {
+          "kind": "contains",
+          "value": "novita.ai"
+        }
+      ]
+    },
+    {
+      "key": "baichuanai",
+      "label": "Baichuan AI",
+      "iconName": "Baichuan",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "baichuan-ai"
+        },
+        {
+          "kind": "contains",
+          "value": "baichuanai"
+        }
+      ]
+    },
+    {
+      "key": "jina",
+      "label": "Jina AI",
+      "iconName": "Jina",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "jina"
+        },
+        {
+          "kind": "contains",
+          "value": "jina.ai"
+        }
+      ]
+    },
+    {
+      "key": "voyage",
+      "label": "Voyage AI",
+      "iconName": "Voyage",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "voyage"
+        },
+        {
+          "kind": "contains",
+          "value": "voyageai"
+        }
+      ]
+    },
+    {
+      "key": "nomic",
+      "label": "Nomic",
+      "iconName": "Nomic",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "nomic"
+        },
+        {
+          "kind": "contains",
+          "value": "nomic-ai"
+        }
+      ]
+    },
+    {
+      "key": "ai21",
+      "label": "AI21 Labs",
+      "iconName": "Ai21",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "ai21"
+        },
+        {
+          "kind": "contains",
+          "value": "jamba"
+        }
+      ]
+    },
+    {
+      "key": "runpod",
+      "label": "RunPod",
+      "iconName": "Runpod",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "runpod"
+        },
+        {
+          "kind": "contains",
+          "value": "runpod.ai"
+        }
+      ]
+    },
+    {
+      "key": "cerebras",
+      "label": "Cerebras",
+      "iconName": "Cerebras",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "cerebras"
+        }
+      ]
+    },
+    {
+      "key": "sambanova",
+      "label": "SambaNova",
+      "iconName": "SambaNova",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "sambanova"
+        }
+      ]
+    },
+    {
+      "key": "lmstudio",
+      "label": "LM Studio",
+      "iconName": "LmStudio",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "lmstudio"
+        },
+        {
+          "kind": "contains",
+          "value": "lm studio"
+        }
+      ]
+    },
+    {
+      "key": "gpt4all",
+      "label": "GPT4All",
+      "iconName": "GPT4All",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "gpt4all"
+        }
+      ]
+    },
+    {
+      "key": "litellm",
+      "label": "LiteLLM",
+      "iconName": "OpenAI",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "litellm"
+        },
+        {
+          "kind": "contains",
+          "value": "lite-llm"
+        }
+      ]
+    },
+    {
+      "key": "vllm",
+      "label": "vLLM",
+      "iconName": "OpenAI",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "vllm"
+        },
+        {
+          "kind": "contains",
+          "value": "vllm-openai"
+        },
+        {
+          "kind": "contains",
+          "value": "vllm openai"
+        }
+      ]
+    },
+    {
+      "key": "xinference",
+      "label": "Xinference",
+      "iconName": "OpenAI",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "xinference"
+        }
+      ]
+    },
+    {
+      "key": "tgi",
+      "label": "Text Generation Inference",
+      "iconName": "HuggingFace",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "text-generation-inference"
+        },
+        {
+          "kind": "contains",
+          "value": "text generation inference"
+        },
+        {
+          "kind": "contains",
+          "value": "tgi"
+        }
+      ]
+    },
+    {
+      "key": "sagemaker",
+      "label": "Amazon SageMaker",
+      "iconName": "Aws",
+      "match": [
+        {
+          "kind": "contains",
+          "value": "sagemaker"
+        },
+        {
+          "kind": "contains",
+          "value": "sage-maker"
+        }
+      ]
+    }
+  ],
+  "capabilityMeta": [
+    {
+      "key": "chat",
+      "label": "对话",
+      "icon": "chatbubble",
+      "theme": {
+        "fg": "#2563eb",
+        "bg": "rgba(37, 99, 235, 0.14)",
+        "border": "rgba(37, 99, 235, 0.34)"
+      }
+    },
+    {
+      "key": "reasoning",
+      "label": "推理",
+      "icon": "bulb",
+      "theme": {
+        "fg": "#0ea5e9",
+        "bg": "rgba(14, 165, 233, 0.14)",
+        "border": "rgba(14, 165, 233, 0.34)"
+      }
+    },
+    {
+      "key": "vision",
+      "label": "视觉",
+      "icon": "eye",
+      "theme": {
+        "fg": "#8b5cf6",
+        "bg": "rgba(139, 92, 246, 0.14)",
+        "border": "rgba(139, 92, 246, 0.34)"
+      }
+    },
+    {
+      "key": "image_generate",
+      "label": "图片生成",
+      "icon": "image",
+      "theme": {
+        "fg": "#f97316",
+        "bg": "rgba(249, 115, 22, 0.14)",
+        "border": "rgba(249, 115, 22, 0.34)"
+      }
+    },
+    {
+      "key": "image_edit",
+      "label": "图片编辑",
+      "icon": "brush",
+      "theme": {
+        "fg": "#fb7185",
+        "bg": "rgba(251, 113, 133, 0.14)",
+        "border": "rgba(251, 113, 133, 0.34)"
+      }
+    },
+    {
+      "key": "web",
+      "label": "联网",
+      "icon": "globe",
+      "theme": {
+        "fg": "#38bdf8",
+        "bg": "rgba(56, 189, 248, 0.14)",
+        "border": "rgba(56, 189, 248, 0.34)"
+      }
+    },
+    {
+      "key": "audio_read",
+      "label": "音频读取",
+      "icon": "music",
+      "theme": {
+        "fg": "#f59e0b",
+        "bg": "rgba(245, 158, 11, 0.14)",
+        "border": "rgba(245, 158, 11, 0.34)"
+      }
+    },
+    {
+      "key": "music_generate",
+      "label": "作曲",
+      "icon": "music",
+      "theme": {
+        "fg": "#a855f7",
+        "bg": "rgba(168, 85, 247, 0.14)",
+        "border": "rgba(168, 85, 247, 0.34)"
+      }
+    },
+    {
+      "key": "realtime",
+      "label": "实时",
+      "icon": "pulse",
+      "theme": {
+        "fg": "#06b6d4",
+        "bg": "rgba(6, 182, 212, 0.14)",
+        "border": "rgba(6, 182, 212, 0.34)"
+      }
+    },
+    {
+      "key": "speech_synthesis",
+      "label": "语音合成",
+      "icon": "volume",
+      "theme": {
+        "fg": "#84cc16",
+        "bg": "rgba(132, 204, 22, 0.14)",
+        "border": "rgba(132, 204, 22, 0.34)"
+      }
+    },
+    {
+      "key": "video_read",
+      "label": "视频读取",
+      "icon": "play",
+      "theme": {
+        "fg": "#22c55e",
+        "bg": "rgba(34, 197, 94, 0.14)",
+        "border": "rgba(34, 197, 94, 0.34)"
+      }
+    },
+    {
+      "key": "video_generate",
+      "label": "视频制作",
+      "icon": "videocam",
+      "theme": {
+        "fg": "#fb7185",
+        "bg": "rgba(251, 113, 133, 0.14)",
+        "border": "rgba(251, 113, 133, 0.34)"
+      }
+    },
+    {
+      "key": "embedding",
+      "label": "向量",
+      "icon": "layers",
+      "theme": {
+        "fg": "#14b8a6",
+        "bg": "rgba(20, 184, 166, 0.14)",
+        "border": "rgba(20, 184, 166, 0.34)"
+      }
+    },
+    {
+      "key": "rerank",
+      "label": "重排序",
+      "icon": "shuffle",
+      "theme": {
+        "fg": "#60a5fa",
+        "bg": "rgba(96, 165, 250, 0.14)",
+        "border": "rgba(96, 165, 250, 0.34)"
+      }
+    },
+    {
+      "key": "code",
+      "label": "代码",
+      "icon": "code",
+      "theme": {
+        "fg": "#a78bfa",
+        "bg": "rgba(167, 139, 250, 0.14)",
+        "border": "rgba(167, 139, 250, 0.34)"
+      }
+    },
+    {
+      "key": "function_call",
+      "label": "工具调用",
+      "icon": "tool",
+      "theme": {
+        "fg": "#f43f5e",
+        "bg": "rgba(244, 63, 94, 0.14)",
+        "border": "rgba(244, 63, 94, 0.34)"
+      }
+    },
+    {
+      "key": "json_mode",
+      "label": "JSON",
+      "icon": "json",
+      "theme": {
+        "fg": "#94a3b8",
+        "bg": "rgba(148, 163, 184, 0.14)",
+        "border": "rgba(148, 163, 184, 0.34)"
+      }
+    },
+    {
+      "key": "long_context",
+      "label": "长上下文",
+      "icon": "time",
+      "theme": {
+        "fg": "#0f766e",
+        "bg": "rgba(15, 118, 110, 0.14)",
+        "border": "rgba(15, 118, 110, 0.34)"
+      }
+    },
+    {
+      "key": "moderation",
+      "label": "内容安全",
+      "icon": "shield",
+      "theme": {
+        "fg": "#ef4444",
+        "bg": "rgba(239, 68, 68, 0.14)",
+        "border": "rgba(239, 68, 68, 0.34)"
+      }
+    },
+    {
+      "key": "translation",
+      "label": "翻译",
+      "icon": "language",
+      "theme": {
+        "fg": "#22c55e",
+        "bg": "rgba(34, 197, 94, 0.14)",
+        "border": "rgba(34, 197, 94, 0.34)"
+      }
+    },
+    {
+      "key": "local",
+      "label": "本地",
+      "icon": "laptop",
+      "theme": {
+        "fg": "#334155",
+        "bg": "rgba(51, 65, 85, 0.14)",
+        "border": "rgba(51, 65, 85, 0.34)"
+      }
+    }
+  ],
+  "capabilityRules": [
+    {
+      "key": "moderation",
+      "label": "内容安全",
+      "priority": 1100,
+      "order": 110,
+      "match": [
+        {
+          "kind": "contains",
+          "value": "moderation"
+        },
+        {
+          "kind": "contains",
+          "value": "omni-moderation"
+        }
+      ]
+    },
+    {
+      "key": "image_generate",
+      "label": "图片生成",
+      "priority": 1050,
+      "order": 15,
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "nai-"
+        },
+        {
+          "kind": "prefix",
+          "value": "lumensculptor-"
+        },
+        {
+          "kind": "prefix",
+          "value": "luminaArchitect-"
+        },
+        {
+          "kind": "prefix",
+          "value": "radiance"
+        },
+        {
+          "kind": "prefix",
+          "value": "anishadow"
+        },
+        {
+          "kind": "prefix",
+          "value": "naishadow"
+        },
+        {
+          "kind": "prefix",
+          "value": "ill-dream"
+        },
+        {
+          "kind": "prefix",
+          "value": "jimeng"
+        },
+        {
+          "kind": "prefix",
+          "value": "mj_imagine"
+        },
+        {
+          "kind": "contains",
+          "value": "novelai"
+        },
+        {
+          "kind": "contains",
+          "value": "noobai"
+        },
+        {
+          "kind": "prefix",
+          "value": "newbie"
+        },
+        {
+          "kind": "prefix",
+          "value": "z-image"
+        },
+        {
+          "kind": "prefix",
+          "value": "kling-"
+        },
+        {
+          "kind": "prefix",
+          "value": "flux-"
+        },
+        {
+          "kind": "prefix",
+          "value": "flux."
+        },
+        {
+          "kind": "contains",
+          "value": "seedream"
+        },
+        {
+          "kind": "prefix",
+          "value": "nano-banana"
+        },
+        {
+          "kind": "prefix",
+          "value": "gemini-2.5-flash-image-"
+        },
+        {
+          "kind": "prefix",
+          "value": "gemini-3-pro-image-"
+        },
+        {
+          "kind": "prefix",
+          "value": "gemini-3-flash-image-"
+        },
+        {
+          "kind": "prefix",
+          "value": "dall-e"
+        },
+        {
+          "kind": "prefix",
+          "value": "dalle"
+        },
+        {
+          "kind": "prefix",
+          "value": "gpt-image-"
+        },
+        [
+          {
+            "kind": "contains",
+            "value": "image"
+          },
+          {
+            "kind": "contains",
+            "value": "gen"
+          }
+        ],
+        [
+          {
+            "kind": "contains",
+            "value": "image"
+          },
+          {
+            "kind": "contains",
+            "value": "generate"
+          }
+        ],
+        {
+          "kind": "contains",
+          "value": "image-generation"
+        },
+        {
+          "kind": "contains",
+          "value": "imagen"
+        },
+        {
+          "kind": "prefix",
+          "value": "stable-diffusion"
+        },
+        {
+          "kind": "contains",
+          "value": "stablediffusion"
+        },
+        {
+          "kind": "contains",
+          "value": "sdxl"
+        },
+        {
+          "kind": "contains",
+          "value": "kandinsky"
+        },
+        {
+          "kind": "contains",
+          "value": "pixart"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "contains",
+          "value": "embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "rerank"
+        }
+      ]
+    },
+    {
+      "key": "image_edit",
+      "label": "图片编辑",
+      "priority": 1040,
+      "order": 16,
+      "match": [
+        {
+          "kind": "contains",
+          "value": "seedream"
+        },
+        {
+          "kind": "contains",
+          "value": "seededit"
+        },
+        {
+          "kind": "prefix",
+          "value": "flux-kontext"
+        },
+        {
+          "kind": "prefix",
+          "value": "flux-2"
+        },
+        {
+          "kind": "prefix",
+          "value": "nano-banana"
+        },
+        {
+          "kind": "prefix",
+          "value": "kling-"
+        },
+        {
+          "kind": "prefix",
+          "value": "gemini-2.5-flash-image-"
+        },
+        {
+          "kind": "prefix",
+          "value": "gemini-3-pro-image-"
+        },
+        {
+          "kind": "prefix",
+          "value": "gemini-3-flash-image-"
+        },
+        {
+          "kind": "contains",
+          "value": "-edit"
+        }
+      ]
+    },
+    {
+      "key": "music_generate",
+      "label": "作曲",
+      "priority": 1035,
+      "order": 34,
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "suno-"
+        },
+        {
+          "kind": "prefix",
+          "value": "udio-"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "contains",
+          "value": "embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "rerank"
+        }
+      ]
+    },
+    {
+      "key": "speech_synthesis",
+      "label": "语音合成",
+      "priority": 1030,
+      "order": 35,
+      "requireAbsentKeys": [
+        "audio_read"
+      ],
+      "match": [
+        {
+          "kind": "contains",
+          "value": "tts"
+        },
+        {
+          "kind": "contains",
+          "value": "text-to-speech"
+        },
+        {
+          "kind": "contains",
+          "value": "text to speech"
+        },
+        {
+          "kind": "contains",
+          "value": "elevenlabs"
+        },
+        {
+          "kind": "contains",
+          "value": "speech"
+        }
+      ]
+    },
+    {
+      "key": "realtime",
+      "label": "实时",
+      "priority": 1025,
+      "order": 25,
+      "match": [
+        {
+          "kind": "contains",
+          "value": "realtime"
+        },
+        {
+          "kind": "contains",
+          "value": "realtime-preview"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "contains",
+          "value": "embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "rerank"
+        }
+      ]
+    },
+    {
+      "key": "reasoning",
+      "label": "推理",
+      "priority": 1020,
+      "order": 5,
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "o1-"
+        },
+        {
+          "kind": "prefix",
+          "value": "o3-"
+        },
+        {
+          "kind": "prefix",
+          "value": "minimax-m"
+        },
+        {
+          "kind": "prefix",
+          "value": "deepseek-v3"
+        },
+        {
+          "kind": "suffix",
+          "value": "-reasoning"
+        },
+        {
+          "kind": "contains",
+          "value": "-thinking"
+        },
+        {
+          "kind": "contains",
+          "value": "reasoner"
+        },
+        {
+          "kind": "suffix",
+          "value": "-r1"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "contains",
+          "value": "embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "rerank"
+        }
+      ]
+    },
+    {
+      "key": "code",
+      "label": "代码",
+      "priority": 1010,
+      "order": 80,
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "claude-"
+        },
+        {
+          "kind": "contains",
+          "value": "code"
+        },
+        {
+          "kind": "contains",
+          "value": "coder"
+        },
+        {
+          "kind": "contains",
+          "value": "codestral"
+        },
+        {
+          "kind": "contains",
+          "value": "deepseek-coder"
+        },
+        {
+          "kind": "contains",
+          "value": "qwen2.5-coder"
+        },
+        {
+          "kind": "contains",
+          "value": "starcoder"
+        },
+        {
+          "kind": "contains",
+          "value": "codellama"
+        },
+        {
+          "kind": "contains",
+          "value": "codegemma"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "contains",
+          "value": "embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "rerank"
+        }
+      ]
+    },
+    {
+      "key": "long_context",
+      "label": "长上下文",
+      "priority": 1002,
+      "order": 100,
+      "match": [
+        {
+          "kind": "contains",
+          "value": "-16k"
+        },
+        {
+          "kind": "contains",
+          "value": "16k"
+        },
+        {
+          "kind": "contains",
+          "value": "-32k"
+        },
+        {
+          "kind": "contains",
+          "value": "32k"
+        },
+        {
+          "kind": "contains",
+          "value": "-64k"
+        },
+        {
+          "kind": "contains",
+          "value": "64k"
+        },
+        {
+          "kind": "contains",
+          "value": "-128k"
+        },
+        {
+          "kind": "contains",
+          "value": "128k"
+        },
+        {
+          "kind": "contains",
+          "value": "-200k"
+        },
+        {
+          "kind": "contains",
+          "value": "200k"
+        },
+        {
+          "kind": "contains",
+          "value": "-1m"
+        },
+        {
+          "kind": "contains",
+          "value": "1m"
+        },
+        {
+          "kind": "contains",
+          "value": "long"
+        },
+        {
+          "kind": "contains",
+          "value": "context"
+        }
+      ]
+    },
+    {
+      "key": "embedding",
+      "label": "向量",
+      "priority": 1000,
+      "order": 60,
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "text-embedding-"
+        },
+        {
+          "kind": "prefix",
+          "value": "gemini-embedding-"
+        },
+        {
+          "kind": "prefix",
+          "value": "models/text-embedding-"
+        },
+        {
+          "kind": "prefix",
+          "value": "models/embedding-"
+        },
+        {
+          "kind": "contains",
+          "value": "-embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "embed"
+        },
+        {
+          "kind": "contains",
+          "value": "bge-m"
+        },
+        {
+          "kind": "contains",
+          "value": "e5"
+        },
+        {
+          "kind": "contains",
+          "value": "gte"
+        }
+      ]
+    },
+    {
+      "key": "rerank",
+      "label": "重排序",
+      "priority": 1000,
+      "order": 70,
+      "match": [
+        {
+          "kind": "contains",
+          "value": "rerank"
+        },
+        {
+          "kind": "contains",
+          "value": "re-rank"
+        },
+        {
+          "kind": "contains",
+          "value": "reranker"
+        },
+        {
+          "kind": "contains",
+          "value": "cross-encoder"
+        },
+        {
+          "kind": "contains",
+          "value": "ranker"
+        }
+      ]
+    },
+    {
+      "key": "chat",
+      "label": "对话",
+      "priority": 0,
+      "order": 0,
+      "match": [
+        {
+          "kind": "prefix",
+          "value": "gpt-"
+        },
+        {
+          "kind": "prefix",
+          "value": "c4ai-"
+        },
+        {
+          "kind": "prefix",
+          "value": "command"
+        },
+        {
+          "kind": "prefix",
+          "value": "doubao-"
+        },
+        {
+          "kind": "prefix",
+          "value": "minimax"
+        },
+        {
+          "kind": "prefix",
+          "value": "kimi-"
+        },
+        {
+          "kind": "prefix",
+          "value": "magistral-"
+        },
+        {
+          "kind": "prefix",
+          "value": "devstral-"
+        },
+        {
+          "kind": "prefix",
+          "value": "ministral-"
+        },
+        {
+          "kind": "prefix",
+          "value": "nova-"
+        },
+        {
+          "kind": "prefix",
+          "value": "mimo-"
+        },
+        {
+          "kind": "prefix",
+          "value": "ernie-"
+        },
+        {
+          "kind": "prefix",
+          "value": "grok-"
+        },
+        {
+          "kind": "prefix",
+          "value": "qwq-"
+        },
+        {
+          "kind": "contains",
+          "value": "hunyuan"
+        },
+        {
+          "kind": "prefix",
+          "value": "claude-"
+        },
+        {
+          "kind": "prefix",
+          "value": "qwen-"
+        },
+        {
+          "kind": "prefix",
+          "value": "intern"
+        },
+        {
+          "kind": "prefix",
+          "value": "gemma-"
+        },
+        {
+          "kind": "prefix",
+          "value": "glm-"
+        },
+        {
+          "kind": "prefix",
+          "value": "deepseek-"
+        },
+        {
+          "kind": "contains",
+          "value": "chat"
+        },
+        {
+          "kind": "prefix",
+          "value": "gemini"
+        },
+        {
+          "kind": "contains",
+          "value": "llama"
+        },
+        {
+          "kind": "contains",
+          "value": "mistral"
+        },
+        {
+          "kind": "contains",
+          "value": "voxtral"
+        },
+        {
+          "kind": "contains",
+          "value": "pixtral"
+        },
+        {
+          "kind": "contains",
+          "value": "mixtral"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "contains",
+          "value": "embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "text-embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "rerank"
+        },
+        {
+          "kind": "contains",
+          "value": "re-rank"
+        },
+        {
+          "kind": "contains",
+          "value": "reranker"
+        },
+        {
+          "kind": "contains",
+          "value": "cross-encoder"
+        },
+        {
+          "kind": "contains",
+          "value": "ranker"
+        },
+        {
+          "kind": "contains",
+          "value": "moderation"
+        },
+        {
+          "kind": "contains",
+          "value": "omni-moderation"
+        }
+      ]
+    },
+    {
+      "key": "vision",
+      "label": "视觉",
+      "order": 10,
+      "match": [
+        [
+          {
+            "kind": "contains",
+            "value": "qwen"
+          },
+          {
+            "kind": "contains",
+            "value": "vl"
+          }
+        ],
+        [
+          {
+            "kind": "contains",
+            "value": "glm"
+          },
+          {
+            "kind": "contains",
+            "value": "v"
+          }
+        ],
+        [
+          {
+            "kind": "contains",
+            "value": "deepseek"
+          },
+          {
+            "kind": "contains",
+            "value": "ocr"
+          }
+        ],
+        {
+          "kind": "contains",
+          "value": "vision"
+        },
+        {
+          "kind": "contains",
+          "value": "multimodal"
+        },
+        {
+          "kind": "contains",
+          "value": "qwen-vl"
+        },
+        {
+          "kind": "contains",
+          "value": "qwen2-vl"
+        },
+        {
+          "kind": "contains",
+          "value": "qwen2.5-vl"
+        },
+        {
+          "kind": "contains",
+          "value": "glm-4v"
+        },
+        {
+          "kind": "contains",
+          "value": "glm-4v-plus"
+        },
+        {
+          "kind": "contains",
+          "value": "llava"
+        },
+        {
+          "kind": "contains",
+          "value": "internvl"
+        },
+        {
+          "kind": "contains",
+          "value": "internvl2"
+        },
+        {
+          "kind": "contains",
+          "value": "minicpm-v"
+        },
+        {
+          "kind": "contains",
+          "value": "deepseek-vl"
+        },
+        {
+          "kind": "contains",
+          "value": "phi-3-vision"
+        },
+        {
+          "kind": "prefix",
+          "value": "gpt-4o"
+        },
+        {
+          "kind": "prefix",
+          "value": "gpt-4.1"
+        },
+        {
+          "kind": "prefix",
+          "value": "o1-"
+        },
+        {
+          "kind": "prefix",
+          "value": "o3-"
+        },
+        {
+          "kind": "prefix",
+          "value": "gemma-"
+        },
+        {
+          "kind": "contains",
+          "value": "pixtral"
+        },
+        {
+          "kind": "contains",
+          "value": "claude-3"
+        },
+        {
+          "kind": "contains",
+          "value": "gemini"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "contains",
+          "value": "embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "text-embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "rerank"
+        },
+        {
+          "kind": "contains",
+          "value": "re-rank"
+        },
+        {
+          "kind": "contains",
+          "value": "reranker"
+        },
+        {
+          "kind": "contains",
+          "value": "cross-encoder"
+        },
+        {
+          "kind": "contains",
+          "value": "ranker"
+        }
+      ]
+    },
+    {
+      "key": "translation",
+      "label": "翻译",
+      "order": 120,
+      "match": [
+        {
+          "kind": "contains",
+          "value": "translate"
+        },
+        {
+          "kind": "contains",
+          "value": "translation"
+        }
+      ]
+    },
+    {
+      "key": "web",
+      "label": "联网",
+      "order": 20,
+      "match": [
+        {
+          "kind": "contains",
+          "value": "search"
+        },
+        {
+          "kind": "contains",
+          "value": "browse"
+        },
+        {
+          "kind": "contains",
+          "value": "browsing"
+        },
+        {
+          "kind": "contains",
+          "value": "web"
+        }
+      ]
+    },
+    {
+      "key": "video_generate",
+      "label": "视频制作",
+      "order": 50,
+      "match": [
+        [
+          {
+            "kind": "contains",
+            "value": "video"
+          },
+          {
+            "kind": "contains",
+            "value": "gen"
+          }
+        ],
+        {
+          "kind": "contains",
+          "value": "sora"
+        },
+        {
+          "kind": "contains",
+          "value": "veo"
+        },
+        {
+          "kind": "contains",
+          "value": "seedance"
+        },
+        {
+          "kind": "contains",
+          "value": "grok-imagine"
+        },
+        {
+          "kind": "contains",
+          "value": "grok_imagine"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "contains",
+          "value": "embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "text-embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "rerank"
+        },
+        {
+          "kind": "contains",
+          "value": "re-rank"
+        },
+        {
+          "kind": "contains",
+          "value": "reranker"
+        },
+        {
+          "kind": "contains",
+          "value": "cross-encoder"
+        },
+        {
+          "kind": "contains",
+          "value": "ranker"
+        }
+      ]
+    },
+    {
+      "key": "video_read",
+      "label": "视频读取",
+      "order": 40,
+      "match": [
+        [
+          {
+            "kind": "contains",
+            "value": "video"
+          },
+          {
+            "kind": "contains",
+            "value": "read"
+          }
+        ],
+        [
+          {
+            "kind": "contains",
+            "value": "video"
+          },
+          {
+            "kind": "contains",
+            "value": "understand"
+          }
+        ],
+        [
+          {
+            "kind": "contains",
+            "value": "video"
+          },
+          {
+            "kind": "contains",
+            "value": "analyze"
+          }
+        ],
+        {
+          "kind": "contains",
+          "value": "qwen3-vl"
+        },
+        {
+          "kind": "contains",
+          "value": "qwen-vl"
+        },
+        {
+          "kind": "contains",
+          "value": "gemini"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "contains",
+          "value": "embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "text-embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "rerank"
+        },
+        {
+          "kind": "contains",
+          "value": "re-rank"
+        },
+        {
+          "kind": "contains",
+          "value": "reranker"
+        },
+        {
+          "kind": "contains",
+          "value": "cross-encoder"
+        },
+        {
+          "kind": "contains",
+          "value": "ranker"
+        }
+      ]
+    },
+    {
+      "key": "audio_read",
+      "label": "音频读取",
+      "order": 30,
+      "match": [
+        {
+          "kind": "contains",
+          "value": "audio"
+        },
+        {
+          "kind": "contains",
+          "value": "asr"
+        },
+        {
+          "kind": "contains",
+          "value": "whisper"
+        },
+        {
+          "kind": "contains",
+          "value": "speech"
+        },
+        {
+          "kind": "contains",
+          "value": "gemini"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "contains",
+          "value": "embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "text-embedding"
+        },
+        {
+          "kind": "contains",
+          "value": "rerank"
+        },
+        {
+          "kind": "contains",
+          "value": "re-rank"
+        },
+        {
+          "kind": "contains",
+          "value": "reranker"
+        },
+        {
+          "kind": "contains",
+          "value": "cross-encoder"
+        },
+        {
+          "kind": "contains",
+          "value": "ranker"
+        }
+      ]
+    }
+  ]
+}

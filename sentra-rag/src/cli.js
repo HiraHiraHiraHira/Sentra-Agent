@@ -8,7 +8,7 @@ import { initDotenv } from './config/dotenv.js';
 import { normalizeMessagesToText } from './messages/normalize.js';
 import { createNeo4jClient } from './neo4j/client.js';
 import { ensureNeo4jSchema } from './neo4j/schema.js';
-import { createOpenAIClient } from './openai/client.js';
+import { createChatOpenAIClient, createEmbeddingOpenAIClient } from './openai/client.js';
 import { requestContractXml, requestContractXmlRepair } from './openai/contract_call.js';
 import { ingestContractToNeo4j } from './pipelines/ingest.js';
 import { queryWithNeo4j } from './pipelines/query.js';
@@ -39,9 +39,10 @@ program
     const policy = await loadContractPolicy();
     const text = await readFile(opts.file, 'utf8');
 
-    const openai = createOpenAIClient();
+    const chatOpenai = createChatOpenAIClient();
+    const embeddingOpenai = createEmbeddingOpenAIClient();
     logger.info('ingest: requesting contract');
-    const xml = await requestContractXml(openai, policy, {
+    const xml = await requestContractXml(chatOpenai, policy, {
       task: 'ingest',
       queryText: '',
       contextText: '',
@@ -53,7 +54,7 @@ program
 
     let contract = parseSentraContractXml(xml, { defaultTask: 'ingest' });
     if (!contract.ok) {
-      const repaired = await requestContractXmlRepair(openai, policy, {
+      const repaired = await requestContractXmlRepair(chatOpenai, policy, {
         badXml: xml,
         errorReport: contract.error,
         lang: contractLang(),
@@ -76,7 +77,7 @@ program
     await ensureNeo4jSchema(neo4j, contract.value.neo4j_schema);
 
     logger.info('ingest: writing graph');
-    const result = await ingestContractToNeo4j(neo4j, openai, contract.value, {
+    const result = await ingestContractToNeo4j(neo4j, embeddingOpenai, contract.value, {
       docId: opts.docId,
       title: opts.title,
       source: opts.source,
@@ -98,9 +99,10 @@ program
 
     const { queryText, contextText } = normalizeMessagesToText(messages);
 
-    const openai = createOpenAIClient();
+    const chatOpenai = createChatOpenAIClient();
+    const embeddingOpenai = createEmbeddingOpenAIClient();
     logger.info('query: requesting contract');
-    const xml = await requestContractXml(openai, policy, {
+    const xml = await requestContractXml(chatOpenai, policy, {
       task: 'query',
       queryText,
       contextText,
@@ -110,7 +112,7 @@ program
 
     let contract = parseSentraContractXml(xml, { defaultTask: 'query' });
     if (!contract.ok) {
-      const repaired = await requestContractXmlRepair(openai, policy, {
+      const repaired = await requestContractXmlRepair(chatOpenai, policy, {
         badXml: xml,
         errorReport: contract.error,
         lang: contractLang(),
@@ -124,7 +126,7 @@ program
     await ensureNeo4jSchema(neo4j, contract.value.neo4j_schema);
 
     logger.info('query: retrieving and answering');
-    const out = await queryWithNeo4j(neo4j, openai, policy, contract.value, {
+    const out = await queryWithNeo4j(neo4j, chatOpenai, embeddingOpenai, policy, contract.value, {
       queryText,
       contextText,
       lang: contractLang(),

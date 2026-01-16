@@ -6,8 +6,8 @@
   background: var(--pi-bg, rgba(255, 255, 255, 0.96));
   color: var(--pi-fg, #0f172a);
   background-image:
-    radial-gradient(1100px 700px at 15% 0%, rgba(255, 255, 255, 0.06), transparent 62%),
-    radial-gradient(900px 700px at 95% 10%, rgba(255, 255, 255, 0.04), transparent 58%);
+    radial-gradient(1100px 700px at 15% 0%, rgba(255, 255, 255, 0.30), transparent 62%),
+    radial-gradient(900px 700px at 95% 10%, rgba(255, 255, 255, 0.18), transparent 58%);
 }
 
 .topbar {
@@ -16,8 +16,8 @@
   justify-content: space-between;
   padding: 12px 14px;
   border-bottom: 1px solid var(--pi-border, rgba(15, 23, 42, 0.10));
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
-  backdrop-filter: blur(10px);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.60));
+  backdrop-filter: blur(8px);
 }
 
 .topbarRight {
@@ -29,7 +29,7 @@
 .segment {
   display: inline-flex;
   border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.12));
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--pi-seg-bg, rgba(15, 23, 42, 0.06));
   border-radius: 999px;
   padding: 2px;
 }
@@ -45,7 +45,7 @@
 }
 
 .segmentBtn:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.45);
 }
 
 .segmentBtn:disabled {
@@ -54,8 +54,8 @@
 }
 
 .segmentBtnActive {
-  background: var(--pi-primary-bg, #0B0B0D);
-  color: var(--pi-primary-fg, #FFFFFF);
+  background: var(--pi-seg-active-bg, rgba(255, 255, 255, 0.92));
+  color: var(--pi-seg-active-fg, #0f172a);
 }
 
 .header {
@@ -72,13 +72,13 @@
   font-size: 14px;
   font-weight: 900;
   letter-spacing: 0.2px;
-  color: var(--pi-fg, #0B0B0D);
+  color: var(--pi-fg, #0f172a);
 }
 
 .layout {
   flex: 1;
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px;
   padding: 14px;
   overflow: hidden;
@@ -98,12 +98,35 @@
 .sidebar {
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.10));
-  background: var(--pi-panel, rgba(255, 255, 255, 0.06));
+  background: var(--pi-panel, rgba(255, 255, 255, 0.72));
   border-radius: 16px;
-  padding: 12px;
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32);
+  padding: 10px;
+  box-shadow: none;
+  overscroll-behavior: contain;
+}
+
+.card {
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  margin-top: 12px;
+}
+
+.card:not(:first-of-type) {
+  border-top: 1px solid var(--pi-border, rgba(15, 23, 42, 0.10));
+  padding-top: 12px;
+}
+
+.cardTitle {
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
+  margin-bottom: 8px;
 }
 
 .main {
@@ -113,10 +136,80 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.10));
-  background: var(--pi-panel, rgba(255, 255, 255, 0.05));
+  background: var(--pi-panel, rgba(255, 255, 255, 0.72));
   border-radius: 16px;
   padding: 10px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.36);
+  box-shadow: none;
+}
+
+.mainHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 6px 10px;
+  border-bottom: 1px solid var(--pi-border, rgba(15, 23, 42, 0.10));
+}
+
+.mainTitle {
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  color: var(--pi-fg, #0f172a);
+}
+
+.mainBody {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px 6px 6px;
+}
+
+.rawSplit {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 10px;
+}
+
+.pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.10));
+  border-radius: 14px;
+  background: var(--pi-preview-bg, rgba(255, 255, 255, 0.82));
+}
+
+.paneHeader {
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
+  border-bottom: 1px solid var(--pi-border, rgba(15, 23, 42, 0.10));
+}
+
+.paneBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 12px;
+  overscroll-behavior: contain;
+}
+
+.code {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--pi-fg, #0f172a);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .sectionTitle {
@@ -136,31 +229,31 @@
   gap: 12px;
   padding: 12px;
   border-radius: 14px;
-  border: 1px dashed var(--pi-border, rgba(255, 255, 255, 0.16));
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed var(--pi-border, rgba(15, 23, 42, 0.16));
+  background: rgba(255, 255, 255, 0.78);
   cursor: pointer;
   transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
   user-select: none;
 }
 
 .fileDrop:hover {
-  border-color: rgba(255, 255, 255, 0.22);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.10) inset, 0 10px 25px rgba(0, 0, 0, 0.24);
-  transform: translateY(-1px);
+  border-color: rgba(15, 23, 42, 0.18);
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.06) inset;
+  transform: none;
 }
 
 .fileDropActive {
-  border-color: rgba(255, 255, 255, 0.28);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12) inset, 0 0 0 3px rgba(255, 255, 255, 0.06);
+  border-color: var(--pi-accent, rgb(59, 130, 246));
+  box-shadow: 0 0 0 3px var(--pi-focus, rgba(59, 130, 246, 0.26));
 }
 
 .paperclipBtn {
   width: 38px;
   height: 38px;
   border-radius: 12px;
-  border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.16));
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--pi-fg, #F5F5F6);
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.12));
+  background: var(--pi-btn-bg, rgba(255, 255, 255, 0.86));
+  color: var(--pi-fg, #0f172a);
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -169,9 +262,9 @@
 }
 
 .paperclipBtn:hover {
-  border-color: rgba(255, 255, 255, 0.28);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.22) inset, 0 10px 20px rgba(0, 0, 0, 0.20);
-  transform: translateY(-1px);
+  border-color: rgba(15, 23, 42, 0.18);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18) inset;
+  transform: none;
 }
 
 .paperclipBtn:disabled {
@@ -190,12 +283,12 @@
 .fileDropTitle {
   font-size: 13px;
   font-weight: 800;
-  color: var(--pi-fg, #F5F5F6);
+  color: var(--pi-fg, #0f172a);
 }
 
 .fileDropSub {
   font-size: 12px;
-  color: var(--pi-muted, rgba(245, 245, 246, 0.62));
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
 }
 
 .filePill {
@@ -205,9 +298,9 @@
   gap: 10px;
   padding: 10px 10px;
   border-radius: 999px;
-  border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.14));
-  background: rgba(255, 255, 255, 0.04);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.12));
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--mac-elev-1, 0 10px 26px rgba(15, 23, 42, 0.14));
 }
 
 .filePillName {
@@ -217,29 +310,29 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-  color: var(--pi-fg, #F5F5F6);
+  color: var(--pi-fg, #0f172a);
 }
 
 .filePillMeta {
   font-size: 12px;
-  color: var(--pi-muted, rgba(245, 245, 246, 0.62));
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
 }
 
 .removeBtn {
   width: 28px;
   height: 28px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(246, 248, 255, 0.92);
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.12));
+  background: var(--pi-btn-bg, rgba(255, 255, 255, 0.86));
+  color: var(--pi-fg, #0f172a);
   cursor: pointer;
   transition: background 140ms ease, transform 140ms ease, border-color 140ms ease;
 }
 
 .removeBtn:hover {
-  border-color: rgba(255, 255, 255, 0.35);
-  background: rgba(255, 255, 255, 0.10);
-  transform: translateY(-1px);
+  border-color: rgba(15, 23, 42, 0.18);
+  background: rgba(255, 255, 255, 0.96);
+  transform: none;
 }
 
 .removeBtn:disabled {
@@ -250,26 +343,26 @@
 
 .miniHint {
   font-size: 12px;
-  color: var(--pi-muted, rgba(245, 245, 246, 0.62));
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
   margin-top: 8px;
   line-height: 1.4;
 }
 
 .ghostBtn {
   width: 100%;
-  border: 1px dashed var(--pi-border, rgba(255, 255, 255, 0.16));
+  border: 1px dashed var(--pi-border, rgba(15, 23, 42, 0.12));
   background: transparent;
   border-radius: 12px;
   padding: 9px 10px;
   font-size: 12px;
-  color: var(--pi-muted, rgba(245, 245, 246, 0.62));
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
   cursor: pointer;
   margin-top: 10px;
 }
 
 .ghostBtn:hover {
-  border-color: rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(15, 23, 42, 0.18);
+  background: rgba(255, 255, 255, 0.70);
 }
 
 .ghostBtn:disabled {
@@ -280,7 +373,7 @@
 .advanced {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid var(--pi-border, rgba(255, 255, 255, 0.10));
+  border-top: 1px solid var(--pi-border, rgba(15, 23, 42, 0.10));
 }
 
 .field {
@@ -292,7 +385,7 @@
 
 .fieldLabel {
   font-size: 12px;
-  color: var(--pi-muted, rgba(245, 245, 246, 0.62));
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
 }
 
 .fieldRow {
@@ -304,29 +397,32 @@
 .sourceTabs {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  gap: 8px;
+  gap: 0;
   margin-top: 8px;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.12));
+  background: var(--pi-seg-bg, rgba(15, 23, 42, 0.06));
 }
 
 .tabBtn {
-  border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.14));
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--pi-muted, rgba(245, 245, 246, 0.62));
-  border-radius: 10px;
-  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
+  border-radius: 999px;
+  padding: 8px 8px;
   font-size: 12px;
+  font-weight: 800;
   cursor: pointer;
 }
 
 .tabBtn:hover {
-  border-color: rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.55);
 }
 
 .tabBtnActive {
-  background: var(--pi-primary-bg, #0B0B0D);
-  color: var(--pi-primary-fg, #FFFFFF);
-  border-color: rgba(255, 255, 255, 0.24);
+  background: var(--pi-seg-active-bg, rgba(255, 255, 255, 0.92));
+  color: var(--pi-seg-active-fg, #0f172a);
 }
 
 .tabBtn:disabled {
@@ -336,37 +432,37 @@
 
 .select {
   width: 100%;
-  border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.14));
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.12));
   border-radius: 10px;
   padding: 9px 10px;
   font-size: 12px;
   outline: none;
-  background: var(--pi-input-bg, rgba(255, 255, 255, 0.06));
-  color: var(--pi-fg, #F5F5F6);
+  background: var(--pi-input-bg, rgba(255, 255, 255, 0.90));
+  color: var(--pi-fg, #0f172a);
 }
 
 .select:focus {
-  border-color: rgba(255, 255, 255, 0.28);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.10);
+  border-color: var(--pi-accent, rgb(59, 130, 246));
+  box-shadow: 0 0 0 3px var(--pi-focus, rgba(59, 130, 246, 0.26));
 }
 
 .textarea {
   width: 100%;
   min-height: 140px;
   resize: vertical;
-  border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.14));
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.12));
   border-radius: 12px;
   padding: 10px;
   font-size: 12px;
   outline: none;
-  background: var(--pi-input-bg, rgba(255, 255, 255, 0.06));
-  color: var(--pi-fg, #F5F5F6);
+  background: var(--pi-input-bg, rgba(255, 255, 255, 0.90));
+  color: var(--pi-fg, #0f172a);
   line-height: 1.5;
 }
 
 .textarea:focus {
-  border-color: rgba(255, 255, 255, 0.28);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.10);
+  border-color: var(--pi-accent, rgb(59, 130, 246));
+  box-shadow: 0 0 0 3px var(--pi-focus, rgba(59, 130, 246, 0.26));
 }
 
 .switchRow {
@@ -375,9 +471,9 @@
   justify-content: space-between;
   gap: 12px;
   padding: 8px 10px;
-  border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.10));
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.12));
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.70);
 }
 
 .switch {
@@ -403,8 +499,8 @@
   position: absolute;
   inset: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.10);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(15, 23, 42, 0.10);
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.12));
 }
 
 .switchThumb {
@@ -414,8 +510,8 @@
   width: 20px;
   height: 20px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.30);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.16);
   transition: transform 140ms ease;
 }
 
@@ -424,7 +520,7 @@
 }
 
 .switchInput:checked ~ .switchTrack {
-  background: rgba(255, 255, 255, 0.20);
+  background: var(--pi-focus, rgba(59, 130, 246, 0.26));
 }
 
 .debugHeader {
@@ -444,13 +540,13 @@
 .liveTitle {
   font-size: 12px;
   font-weight: 700;
-  color: var(--pi-muted, rgba(245, 245, 246, 0.62));
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
 }
 
 .liveToggle {
-  border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.14));
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--pi-muted, rgba(245, 245, 246, 0.62));
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.12));
+  background: var(--pi-btn-bg, rgba(255, 255, 255, 0.86));
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
   border-radius: 999px;
   padding: 6px 10px;
   font-size: 12px;
@@ -458,25 +554,26 @@
 }
 
 .liveToggle:hover {
-  border-color: rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(15, 23, 42, 0.18);
+  background: rgba(255, 255, 255, 0.96);
 }
 
 .liveBox {
   margin-top: 8px;
   border-radius: 12px;
-  border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.10));
-  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.10));
+  background: var(--pi-preview-bg, rgba(255, 255, 255, 0.82));
   padding: 8px;
   max-height: 220px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .livePre {
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
-  color: var(--pi-fg, #F5F5F6);
+  color: var(--pi-fg, #0f172a);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -484,13 +581,13 @@
 .debugTitle {
   font-size: 12px;
   font-weight: 700;
-  color: var(--pi-muted, rgba(245, 245, 246, 0.62));
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
 }
 
 .debugToggle {
-  border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.14));
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--pi-muted, rgba(245, 245, 246, 0.62));
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.12));
+  background: var(--pi-btn-bg, rgba(255, 255, 255, 0.86));
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
   border-radius: 999px;
   padding: 6px 10px;
   font-size: 12px;
@@ -498,8 +595,8 @@
 }
 
 .debugToggle:hover {
-  border-color: rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(15, 23, 42, 0.18);
+  background: rgba(255, 255, 255, 0.96);
 }
 
 .debugSummary {
@@ -509,25 +606,26 @@
   gap: 4px;
   padding: 8px 10px;
   border-radius: 12px;
-  border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.10));
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--pi-muted, rgba(245, 245, 246, 0.62));
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.10));
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
   font-size: 12px;
 }
 
 .debugLog {
   margin-top: 8px;
   max-height: 180px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   border-radius: 12px;
-  border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.10));
-  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.10));
+  background: var(--pi-preview-bg, rgba(255, 255, 255, 0.82));
   padding: 8px;
 }
 
 .debugEmpty {
   font-size: 12px;
-  color: var(--pi-muted, rgba(245, 245, 246, 0.62));
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
   padding: 6px 4px;
 }
 
@@ -536,8 +634,8 @@
   grid-template-columns: 90px 60px 1fr;
   gap: 8px;
   padding: 6px 4px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  color: var(--pi-muted, rgba(245, 245, 246, 0.62));
+  border-bottom: 1px solid var(--pi-border, rgba(15, 23, 42, 0.10));
+  color: var(--pi-muted, rgba(15, 23, 42, 0.62));
   font-size: 12px;
 }
 
@@ -551,7 +649,7 @@
 
 .debugType {
   font-weight: 700;
-  color: var(--pi-fg, #F5F5F6);
+  color: var(--pi-fg, #0f172a);
 }
 
 .debugMsg {
@@ -611,22 +709,22 @@
 
 .input {
   flex: 1;
-  border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.14));
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.12));
   border-radius: 10px;
   padding: 9px 10px;
   font-size: 12px;
   outline: none;
-  background: var(--pi-input-bg, rgba(255, 255, 255, 0.06));
-  color: var(--pi-fg, #F5F5F6);
+  background: var(--pi-input-bg, rgba(255, 255, 255, 0.90));
+  color: var(--pi-fg, #0f172a);
 }
 
 .input:focus {
-  border-color: rgba(255, 255, 255, 0.28);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.10);
+  border-color: var(--pi-accent, rgb(59, 130, 246));
+  box-shadow: 0 0 0 3px var(--pi-focus, rgba(59, 130, 246, 0.26));
 }
 
 .input::placeholder {
-  color: rgba(245, 245, 246, 0.45);
+  color: rgba(15, 23, 42, 0.42);
 }
 
 .fileInput {
@@ -637,7 +735,8 @@
 .preview {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: var(--pi-preview-bg, rgba(255, 255, 255, 0.03));
   border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.10));
   border-radius: 12px;
@@ -647,49 +746,35 @@
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
+  overscroll-behavior: contain;
 }
 
-/* Scrollbar: unify look and fix top-right white dot (scrollbar corner) */
+/* Scrollbar: hide (keep scroll) to match macOS preferences look */
 .sidebar,
-.chat,
-.preview {
-  scrollbar-color: var(--scrollbar-thumb) transparent;
-  scrollbar-width: thin;
+.paneBody,
+.preview,
+.liveBox,
+.debugLog {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+
 
 .sidebar::-webkit-scrollbar,
-.chat::-webkit-scrollbar,
-.preview::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+.paneBody::-webkit-scrollbar,
+.preview::-webkit-scrollbar,
+.liveBox::-webkit-scrollbar,
+.debugLog::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
+
 
 .sidebar::-webkit-scrollbar-thumb,
-.chat::-webkit-scrollbar-thumb,
-.preview::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 999px;
-  border: 3px solid transparent;
-  background-clip: padding-box;
-}
-
-.sidebar::-webkit-scrollbar-thumb:hover,
-.chat::-webkit-scrollbar-thumb:hover,
-.preview::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
-  border: 3px solid transparent;
-  background-clip: padding-box;
-}
-
-.sidebar::-webkit-scrollbar-track,
-.chat::-webkit-scrollbar-track,
-.preview::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.sidebar::-webkit-scrollbar-corner,
-.chat::-webkit-scrollbar-corner,
-.preview::-webkit-scrollbar-corner {
+.paneBody::-webkit-scrollbar-thumb,
+.preview::-webkit-scrollbar-thumb,
+.liveBox::-webkit-scrollbar-thumb,
+.debugLog::-webkit-scrollbar-thumb {
   background: transparent;
 }
 
@@ -762,21 +847,21 @@
 }
 
 .btn {
-  border: 1px solid var(--pi-border, rgba(255, 255, 255, 0.14));
+  border: 1px solid var(--pi-border, rgba(15, 23, 42, 0.12));
   border-radius: 999px;
   padding: 8px 12px;
   font-size: 12px;
   background: var(--pi-btn-bg, rgba(255, 255, 255, 0.85));
-  color: var(--pi-fg, #0B0B0D);
+  color: var(--pi-fg, #0f172a);
   cursor: pointer;
   transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
 }
 
 .btn:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.22);
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.22);
-  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(15, 23, 42, 0.18);
+  box-shadow: none;
+  transform: none;
 }
 
 .btn:disabled {
@@ -787,7 +872,7 @@
 
 .btnPrimary {
   background: var(--pi-primary-bg, #0B0B0D);
-  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.26);
+  box-shadow: none;
   border: none;
   color: var(--pi-primary-fg, #FFFFFF);
 }

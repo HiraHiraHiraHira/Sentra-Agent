@@ -1,6 +1,6 @@
 import { Agent } from '../agent.js';
 import { createLogger } from '../utils/logger.js';
-import { getEnv, getEnvInt } from '../utils/envHotReloader.js';
+import { getEnv, getEnvInt, onEnvReload } from '../utils/envHotReloader.js';
 import { parseSentraResponse } from '../utils/protocolUtils.js';
 import { escapeXml, appendXmlBlockLines, appendConstraintsBlock } from '../utils/xmlUtils.js';
 import { chatWithRetry as chatWithRetryCore } from './ChatWithRetry.js';
@@ -174,13 +174,21 @@ let cachedSystemPrompt = null;
 let cachedPlannerPresetXml = null;
 let plannerPresetInitPromise = null;
 
+function getProactivePlannerBaseUrl() {
+  return getEnv('PROACTIVE_DIRECTIVE_BASE_URL', getEnv('API_BASE_URL', 'https://yuanplus.chat/v1'));
+}
+
+function getProactivePlannerApiKey() {
+  return getEnv('PROACTIVE_DIRECTIVE_API_KEY', getEnv('API_KEY'));
+}
+
 function getPlannerAgent() {
   if (sharedAgent) return sharedAgent;
   try {
     const { model, maxTokens, timeout, maxRetries } = getPlannerConfig();
     sharedAgent = new Agent({
-      apiKey: getEnv('API_KEY'),
-      apiBaseUrl: getEnv('API_BASE_URL', 'https://yuanplus.chat/v1'),
+      apiKey: getProactivePlannerApiKey(),
+      apiBaseUrl: getProactivePlannerBaseUrl(),
       defaultModel: model,
       temperature: 0.2,
       maxTokens,
@@ -198,6 +206,24 @@ function getPlannerAgent() {
   }
   return sharedAgent;
 }
+
+onEnvReload(() => {
+  try {
+    if (!sharedAgent || !sharedAgent.config) return;
+
+    const nextBaseUrl = getProactivePlannerBaseUrl();
+    if (nextBaseUrl && nextBaseUrl !== sharedAgent.config.apiBaseUrl) {
+      sharedAgent.config.apiBaseUrl = nextBaseUrl;
+      logger.info('ProactiveDirectivePlanner LLM 配置热更新: baseURL 已更新', { baseURL: nextBaseUrl });
+    }
+
+    const nextApiKey = getProactivePlannerApiKey();
+    if (nextApiKey && nextApiKey !== sharedAgent.config.apiKey) {
+      sharedAgent.config.apiKey = nextApiKey;
+      logger.info('ProactiveDirectivePlanner LLM 配置热更新: apiKey 已更新');
+    }
+  } catch {}
+});
 
 async function getPlannerAgentPresetXml() {
   if (cachedPlannerPresetXml !== null) {

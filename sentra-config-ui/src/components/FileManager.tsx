@@ -625,7 +625,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ addToast, theme, perfo
                                     minimap: { enabled: !performanceMode },
                                     fontSize: 14,
                                     wordWrap: 'on',
-                                    automaticLayout: !performanceMode,
+                                    automaticLayout: true,
                                     contextmenu: true,
                                     find: {
                                         addExtraSpaceOnTop: true,

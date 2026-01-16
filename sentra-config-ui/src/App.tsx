@@ -188,6 +188,8 @@ function App() {
   const [deepWikiMinimized, setDeepWikiMinimized] = useState(() => readBool('sentra_deepwiki_minimized', false));
   const [redisAdminOpen, setRedisAdminOpen] = useState(() => readBool('sentra_redis_admin_open', false));
   const [redisAdminMinimized, setRedisAdminMinimized] = useState(() => readBool('sentra_redis_admin_minimized', false));
+  const [modelProvidersManagerOpen, setModelProvidersManagerOpen] = useState(() => readBool('sentra_model_providers_manager_open', false));
+  const [modelProvidersManagerMinimized, setModelProvidersManagerMinimized] = useState(() => readBool('sentra_model_providers_manager_minimized', false));
   const [presetsEditorOpen, setPresetsEditorOpen] = useState(() => readBool('sentra_presets_editor_open', false));
   const [presetsEditorMinimized, setPresetsEditorMinimized] = useState(() => readBool('sentra_presets_editor_minimized', false));
   const [iosPresetsEditorOpen, setIosPresetsEditorOpen] = useState(false);
@@ -206,6 +208,8 @@ function App() {
       localStorage.setItem('sentra_deepwiki_minimized', String(deepWikiMinimized));
       localStorage.setItem('sentra_redis_admin_open', String(redisAdminOpen));
       localStorage.setItem('sentra_redis_admin_minimized', String(redisAdminMinimized));
+      localStorage.setItem('sentra_model_providers_manager_open', String(modelProvidersManagerOpen));
+      localStorage.setItem('sentra_model_providers_manager_minimized', String(modelProvidersManagerMinimized));
       localStorage.setItem('sentra_presets_editor_open', String(presetsEditorOpen));
       localStorage.setItem('sentra_presets_editor_minimized', String(presetsEditorMinimized));
       localStorage.setItem('sentra_preset_importer_open', String(presetImporterOpen));
@@ -222,6 +226,8 @@ function App() {
     deepWikiMinimized,
     redisAdminOpen,
     redisAdminMinimized,
+    modelProvidersManagerOpen,
+    modelProvidersManagerMinimized,
     presetsEditorOpen,
     presetsEditorMinimized,
     presetImporterOpen,
@@ -266,6 +272,15 @@ function App() {
     setRedisAdminMinimized(false);
   };
 
+  const handleOpenModelProvidersManager = () => {
+    if (isMobile || isTablet) {
+      addToast('info', '暂不支持', '移动端暂未接入模型供应商管理，请使用桌面端 WebUI。');
+      return;
+    }
+    setModelProvidersManagerOpen(true);
+    setModelProvidersManagerMinimized(false);
+  };
+
   // terminal run handlers now provided by useTerminals
 
   // close/minimize handled by useTerminals
@@ -291,6 +306,7 @@ function App() {
       setDevCenterMinimized(false);
     },
     handleOpenPresetImporter,
+    handleOpenModelProvidersManager,
     handleOpenRedisAdmin,
   );
 
@@ -473,6 +489,17 @@ function App() {
       onClose: () => {
         setPresetImporterOpen(false);
         setPresetImporterMinimized(false);
+      }
+    },
+    {
+      id: 'model-providers-manager-app',
+      name: '模型供应商',
+      icon: getIconForType('model-providers-manager', 'module'),
+      isOpen: modelProvidersManagerOpen,
+      onClick: handleOpenModelProvidersManager,
+      onClose: () => {
+        setModelProvidersManagerOpen(false);
+        setModelProvidersManagerMinimized(false);
       }
     },
     {
@@ -698,6 +725,10 @@ function App() {
         setRedisAdminOpen={setRedisAdminOpen}
         redisAdminMinimized={redisAdminMinimized}
         setRedisAdminMinimized={setRedisAdminMinimized}
+        modelProvidersManagerOpen={modelProvidersManagerOpen}
+        setModelProvidersManagerOpen={setModelProvidersManagerOpen}
+        modelProvidersManagerMinimized={modelProvidersManagerMinimized}
+        setModelProvidersManagerMinimized={setModelProvidersManagerMinimized}
       />
     </Suspense>
   );

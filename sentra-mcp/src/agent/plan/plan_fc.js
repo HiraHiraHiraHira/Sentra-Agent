@@ -1,5 +1,5 @@
 import logger from '../../logger/index.js';
-import { config, getStageModel } from '../../config/index.js';
+import { config, getStageModel, getStageProvider } from '../../config/index.js';
 import { chatCompletion } from '../../openai/client.js';
 import { z } from 'zod';
 import { buildPlanningManifest, manifestToBulletedText, manifestToXmlToolsCatalog } from './manifest.js';
@@ -111,12 +111,13 @@ async function generateSinglePlan({
         ]);
 
     const planModel = model || getStageModel('plan');
+    const provider = getStageProvider('plan');
     const resp = await chatCompletion({
       messages: attemptMessages,
       temperature: planningTemp,
       top_p,
-      apiKey: fc.apiKey,
-      baseURL: fc.baseURL,
+      apiKey: provider.apiKey,
+      baseURL: provider.baseURL,
       model: planModel,
       ...(Number.isFinite(fc.maxTokens) && fc.maxTokens > 0 ? { max_tokens: fc.maxTokens } : { omitMaxTokens: true })
     });
@@ -251,11 +252,12 @@ async function selectBestPlan({ objective, manifest, candidates, context }) {
     const fc = config.fcLlm || {};
     const omit = !(Number.isFinite(fc.maxTokens) && fc.maxTokens > 0);
     const planModel = getStageModel('plan');
+    const provider = getStageProvider('plan');
     const resp = await chatCompletion({
       messages,
       temperature: Number.isFinite(fc.planTemperature) ? fc.planTemperature : Math.max(0.1, ((Number.isFinite(fc.temperature) ? fc.temperature : (config.llm.temperature ?? 0.2)) - 0.1)),
-      apiKey: fc.apiKey,
-      baseURL: fc.baseURL,
+      apiKey: provider.apiKey,
+      baseURL: provider.baseURL,
       model: planModel,
       ...(omit ? { omitMaxTokens: true } : { max_tokens: fc.maxTokens })
     });
@@ -539,13 +541,15 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
   if (steps.length === 0) {
     const raw = String(lastContent || '');
     const rawSlice = raw.length > 4000 ? `${raw.slice(0, 4000)}…[truncated ${raw.length - 4000}]` : raw;
-    logger.warn?.('规划生成(FC)为空，已达到最大重试次数', {
-      label: 'PLAN',
-      retries: maxRetries,
-      allowedCount: allowedAiNames.length,
-      provider: { baseURL: fc.baseURL, model: fc.model },
-      contentRaw: rawSlice,
-    });
+    if (config.flags.enableVerboseSteps || !selected) {
+      logger.info('FC 计划候选选择优（select_plan）结果', {
+        label: 'PLAN',
+        retries: maxRetries,
+        allowedCount: allowedAiNames.length,
+        provider: { baseURL: provider.baseURL, model: planModel },
+        contentRaw: rawSlice,
+      });
+    }
   }
   if (config.flags.enableVerboseSteps) {
     logger.info(`规划生成(FC): 共 ${steps.length} 步`, { label: 'PLAN', stepsPreview: clip(steps) });

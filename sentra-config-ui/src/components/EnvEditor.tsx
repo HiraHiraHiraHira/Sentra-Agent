@@ -137,6 +137,7 @@ export const EnvEditor: React.FC<EnvEditorProps> = ({
       .map((v, i) => ({ ...v, originalIndex: i }))
       .filter(v =>
         v.key.toLowerCase().includes(term) ||
+        (v.displayName && v.displayName.toLowerCase().includes(term)) ||
         (v.value && v.value.toLowerCase().includes(term)) ||
         (v.comment && v.comment.toLowerCase().includes(term))
       );
@@ -285,6 +286,7 @@ export const EnvEditor: React.FC<EnvEditorProps> = ({
                 const meta = parseEnvMeta(v.comment);
                 const type: EnvValueType = meta?.type || 'string';
                 const description = meta?.description || firstNonMetaLine(v.comment) || '';
+                const displayName = String(v.displayName ?? '').trim();
                 const rawValue = v.value ?? '';
                 const lowerValue = rawValue.toLowerCase();
                 const boolValue = rawValue === 'true' || rawValue === '1' || lowerValue === 'yes' || lowerValue === 'on';
@@ -310,6 +312,9 @@ export const EnvEditor: React.FC<EnvEditorProps> = ({
                   <div key={v.originalIndex} className={styles.settingsRow}>
                     <div className={styles.rowTop}>
                       <div className={styles.keyBlock}>
+                        {displayName && !v.isNew ? (
+                          <div className={styles.displayName}>{displayName}</div>
+                        ) : null}
                         <div className={styles.keyLine}>
                           {v.isNew ? (
                             <SafeInput

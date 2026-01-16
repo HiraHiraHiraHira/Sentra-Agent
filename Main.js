@@ -224,6 +224,26 @@ const agent = new Agent({
   timeout: getEnvInt('TIMEOUT', 60000)
 });
 
+onEnvReload(() => {
+  try {
+    const nextBaseUrl = getEnv('API_BASE_URL', 'https://yuanplus.chat/v1');
+    const nextApiKey = getEnv('API_KEY');
+    const nextModel = getEnv('MAIN_AI_MODEL', 'gpt-3.5-turbo');
+    const nextTemperature = parseFloat(getEnv('TEMPERATURE', '0.7'));
+    const nextMaxTokens = getEnvInt('MAX_TOKENS', 4096);
+    const nextMaxRetries = getEnvInt('MAX_RETRIES', 3);
+    const nextTimeout = getEnvInt('TIMEOUT', 60000);
+
+    if (nextBaseUrl && nextBaseUrl !== agent.config.apiBaseUrl) agent.config.apiBaseUrl = nextBaseUrl;
+    if (nextApiKey && nextApiKey !== agent.config.apiKey) agent.config.apiKey = nextApiKey;
+    if (nextModel && nextModel !== agent.config.defaultModel) agent.config.defaultModel = nextModel;
+    if (Number.isFinite(nextTemperature) && nextTemperature !== agent.config.temperature) agent.config.temperature = nextTemperature;
+    if (Number.isFinite(nextMaxTokens) && nextMaxTokens !== agent.config.maxTokens) agent.config.maxTokens = nextMaxTokens;
+    if (Number.isFinite(nextMaxRetries) && nextMaxRetries !== agent.config.maxRetries) agent.config.maxRetries = nextMaxRetries;
+    if (Number.isFinite(nextTimeout) && nextTimeout !== agent.config.timeout) agent.config.timeout = nextTimeout;
+  } catch {}
+});
+
 let AGENT_PRESET_RAW_TEXT = '';
 let AGENT_PRESET_JSON = null;
 let AGENT_PRESET_XML = '';
@@ -348,6 +368,8 @@ const personaManager = new UserPersonaManager({
   minMessagesForUpdate: getEnvInt('PERSONA_MIN_MESSAGES', 10),
   maxHistorySize: getEnvInt('PERSONA_MAX_HISTORY', 100),
   model: getEnv('PERSONA_MODEL', 'gpt-4.1-mini'),
+  baseUrl: getEnv('PERSONA_BASE_URL', getEnv('API_BASE_URL', 'https://yuanplus.chat/v1')),
+  apiKey: getEnv('PERSONA_API_KEY', getEnv('API_KEY')),
   recentMessagesCount: getEnvInt('PERSONA_RECENT_MESSAGES', 40),
   halfLifeMs: getEnvInt('PERSONA_HALFLIFE_MS', 172800000),
   maxTraits: getEnvInt('PERSONA_MAX_TRAITS', 6),

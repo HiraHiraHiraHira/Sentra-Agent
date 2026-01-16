@@ -62,6 +62,11 @@ function buildConfigFromEnv() {
   const judgeModels = parseCsv(judgeModelEnv);
   const primaryJudgeModel = judgeModels[0] || 'gpt-4.1-mini';
 
+  // Plan 阶段 native 模型列表（支持逗号分隔多模型；第一个为主模型）
+  const planModelEnv = process.env.PLAN_MODEL || process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+  const planModels = parseCsv(planModelEnv);
+  const primaryPlanModel = planModels[0] || 'gpt-4.1-mini';
+
   // FC Judge 模型列表（仅在 TOOL_STRATEGY=fc 时使用，留空则回退到 FC_MODEL / JUDGE_MODEL）
   const judgeFcModels = parseCsv(process.env.JUDGE_FC_MODEL || '');
   const primaryJudgeFcModel = judgeFcModels[0] || '';
@@ -109,6 +114,19 @@ function buildConfigFromEnv() {
     evalModel: process.env.EVAL_FC_MODEL || '',
     summaryModel: process.env.SUMMARY_FC_MODEL || '',
     reflectionModel: process.env.REFLECTION_FC_MODEL || '',
+    // Stage-specific providers (optional; fall back to FC_BASE_URL/FC_API_KEY)
+    judgeBaseURL: process.env.JUDGE_FC_BASE_URL || process.env.FC_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
+    judgeApiKey: process.env.JUDGE_FC_API_KEY || process.env.FC_API_KEY || process.env.OPENAI_API_KEY || '',
+    planBaseURL: process.env.PLAN_FC_BASE_URL || process.env.FC_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
+    planApiKey: process.env.PLAN_FC_API_KEY || process.env.FC_API_KEY || process.env.OPENAI_API_KEY || '',
+    argBaseURL: process.env.ARG_FC_BASE_URL || process.env.FC_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
+    argApiKey: process.env.ARG_FC_API_KEY || process.env.FC_API_KEY || process.env.OPENAI_API_KEY || '',
+    evalBaseURL: process.env.EVAL_FC_BASE_URL || process.env.FC_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
+    evalApiKey: process.env.EVAL_FC_API_KEY || process.env.FC_API_KEY || process.env.OPENAI_API_KEY || '',
+    summaryBaseURL: process.env.SUMMARY_FC_BASE_URL || process.env.FC_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
+    summaryApiKey: process.env.SUMMARY_FC_API_KEY || process.env.FC_API_KEY || process.env.OPENAI_API_KEY || '',
+    reflectionBaseURL: process.env.REFLECTION_FC_BASE_URL || process.env.FC_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
+    reflectionApiKey: process.env.REFLECTION_FC_API_KEY || process.env.FC_API_KEY || process.env.OPENAI_API_KEY || '',
     // Stage-specific sampling controls (optional; fall back to temperature/top_p defaults)
     planTemperature: Number(process.env.FC_PLAN_TEMPERATURE || 'NaN'),
     planTopP: Number(process.env.FC_PLAN_TOP_P || 'NaN'),
@@ -187,6 +205,12 @@ function buildConfigFromEnv() {
     temperature: Number(process.env.JUDGE_TEMPERATURE || 0.1),
     maxTokens: int(process.env.JUDGE_MAX_TOKENS, -1),
     raceTimeoutMs: int(process.env.JUDGE_RACE_TIMEOUT_MS, 12000),
+  },
+
+  // 规划阶段（native/auto 模式使用）模型配置
+  plan: {
+    model: primaryPlanModel,
+    models: planModels,
   },
   // 中文：思考/预推演专用模型（与工具调用的 LLM 分离，避免相互覆盖）
   reasoner: {
@@ -328,7 +352,7 @@ export function getStageModel(stage) {
   // Native 模式或兜底：使用对应阶段的 native model
   const nativeModelMap = {
     judge: config.judge?.model,
-    plan: config.llm?.model,
+    plan: config.plan?.model || config.llm?.model,
     arg: config.llm?.model,
     eval: config.llm?.model,
     summary: config.summarizer?.model,
@@ -336,4 +360,38 @@ export function getStageModel(stage) {
   };
   
   return nativeModelMap[stage] || config.llm?.model || 'gpt-4.1-mini';
+}
+
+export function getStageProvider(stage) {
+  const strategy = config.llm?.toolStrategy || 'auto';
+  const fc = config.fcLlm || {};
+
+  if (strategy === 'fc' || strategy === 'auto') {
+    const stageProviderMap = {
+      judge: { baseURL: fc.judgeBaseURL, apiKey: fc.judgeApiKey },
+      plan: { baseURL: fc.planBaseURL, apiKey: fc.planApiKey },
+      arg: { baseURL: fc.argBaseURL, apiKey: fc.argApiKey },
+      eval: { baseURL: fc.evalBaseURL, apiKey: fc.evalApiKey },
+      summary: { baseURL: fc.summaryBaseURL, apiKey: fc.summaryApiKey },
+      reflection: { baseURL: fc.reflectionBaseURL, apiKey: fc.reflectionApiKey },
+    };
+    const pick = stageProviderMap[stage];
+    if (pick?.baseURL || pick?.apiKey) {
+      return {
+        baseURL: pick.baseURL || fc.baseURL,
+        apiKey: pick.apiKey || fc.apiKey,
+      };
+    }
+    return { baseURL: fc.baseURL, apiKey: fc.apiKey };
+  }
+
+  const nativeProviderMap = {
+    judge: { baseURL: config.judge?.baseURL, apiKey: config.judge?.apiKey },
+    plan: { baseURL: config.llm?.baseURL, apiKey: config.llm?.apiKey },
+    arg: { baseURL: config.llm?.baseURL, apiKey: config.llm?.apiKey },
+    eval: { baseURL: config.llm?.baseURL, apiKey: config.llm?.apiKey },
+    summary: { baseURL: config.summarizer?.baseURL, apiKey: config.summarizer?.apiKey },
+    reflection: { baseURL: config.llm?.baseURL, apiKey: config.llm?.apiKey },
+  };
+  return nativeProviderMap[stage] || { baseURL: config.llm?.baseURL, apiKey: config.llm?.apiKey };
 }

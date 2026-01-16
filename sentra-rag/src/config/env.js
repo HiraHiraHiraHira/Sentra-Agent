@@ -1,5 +1,5 @@
 function pickEnv(baseName) {
-  const candidates = [`RAG_${baseName}`, `rag_${baseName}`, baseName];
+  const candidates = [`RAG_${baseName}`, `rag_${baseName}`];
   for (const key of candidates) {
     const v = process.env[key];
     if (v != null && String(v).length > 0) return { key, value: v };

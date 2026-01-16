@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 interface ScriptProcess {
     id: string;
     name: 'bootstrap' | 'start' | 'napcat' | 'update' | 'sentiment';
+    dedupeKey: string;
     process: ReturnType<typeof spawn>;
     output: string[];
     exitCode: number | null;
@@ -45,16 +46,38 @@ function resolveSentimentRunner(runtimeEnv: Record<string, string>): 'uv' | 'pyt
 export class ScriptRunner {
     private processes: Map<string, ScriptProcess> = new Map();
 
-    private findRunningByName(name: ScriptProcess['name']): ScriptProcess | undefined {
+    private computeDedupeKey(name: ScriptProcess['name'], args: string[]): string {
+        // Some scripts accept sub-commands; they must not share the same running instance.
+        // Otherwise UI actions like "napcat build" and "napcat start" will reuse the same processId
+        // and appear as the wrong app with identical logs.
+        const first = (Array.isArray(args) && args.length ? String(args[0]) : '').toLowerCase();
+
+        if (name === 'napcat') {
+            // napcat.mjs supports: start | build
+            return `napcat:${first || 'start'}`;
+        }
+
+        if (name === 'update') {
+            // update.mjs supports optional: force
+            const isForce = args.some((a) => String(a).toLowerCase() === 'force');
+            return `update:${isForce ? 'force' : 'normal'}`;
+        }
+
+        // Default: single instance per script name
+        return name;
+    }
+
+    private findRunningByDedupeKey(dedupeKey: string): ScriptProcess | undefined {
         for (const p of this.processes.values()) {
-            if (p.name === name && p.exitCode === null) return p;
+            if (p.dedupeKey === dedupeKey && p.exitCode === null) return p;
         }
         return undefined;
     }
 
     executeScript(scriptName: 'bootstrap' | 'start' | 'napcat' | 'update' | 'sentiment', args: string[] = []): string {
-        // Enforce single instance per script
-        const running = this.findRunningByName(scriptName);
+        // Enforce single instance per dedupeKey (script + relevant args)
+        const dedupeKey = this.computeDedupeKey(scriptName, args);
+        const running = this.findRunningByDedupeKey(dedupeKey);
         if (running) {
             return running.id; // Return existing running id
         }
@@ -134,6 +157,7 @@ export class ScriptRunner {
         const scriptProcess: ScriptProcess = {
             id,
             name: scriptName,
+            dedupeKey,
             process: proc,
             output: [],
             exitCode: null,

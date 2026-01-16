@@ -614,7 +614,7 @@ function parseEditPlanXml(text, nodeIndex) {
   return { operations, error: null };
 }
 
-async function runEditPlanWithRetry({ agent, model, messages, nodeIndex, groupId, userId }) {
+async function runEditPlanWithRetry({ agent, model, messages, nodeIndex, groupId, userId, apiBaseUrl, apiKey }) {
   const maxAttempts = 2;
   let lastError = '';
   let lastRaw = '';
@@ -625,7 +625,9 @@ async function runEditPlanWithRetry({ agent, model, messages, nodeIndex, groupId
     try {
       reply = await agent.chat(messages, {
         model,
-        temperature: 0
+        temperature: 0,
+        apiBaseUrl,
+        apiKey
       });
     } catch (e) {
       return { operations: null, error: `chat_failed: ${String(e)}`, raw: '' };
@@ -701,6 +703,8 @@ export async function maybeTeachPreset(options = {}) {
   }
 
   const model = getEnv('AGENT_PRESET_TEACHING_MODEL', getEnv('MAIN_AI_MODEL'));
+  const teachingBaseUrl = getEnv('AGENT_PRESET_TEACHING_BASE_URL', getEnv('API_BASE_URL', 'https://yuanplus.chat/v1'));
+  const teachingApiKey = getEnv('AGENT_PRESET_TEACHING_API_KEY', getEnv('API_KEY'));
   const historyText = typeof conversationText === 'string' ? conversationText : '';
 
   const { nodes, indexById } = buildTeachingNodesFromPreset(presetJson);
@@ -761,7 +765,9 @@ export async function maybeTeachPreset(options = {}) {
     messages,
     nodeIndex: indexById,
     groupId,
-    userId
+    userId,
+    apiBaseUrl: teachingBaseUrl,
+    apiKey: teachingApiKey
   });
 
   if (error) {
