@@ -657,7 +657,6 @@ export async function getSandboxSystemPrompt() {
       '    <author>Creator</author>\n' +
       '  </meta>\n' +
       '  <parameters>\n' +
-      '    <SourceText>...full original preset text (sanitized)...</SourceText>\n' +
       '    <Identity>\n' +
       '      <name>...</name>\n' +
       '      <profession>...</profession>\n' +
@@ -713,7 +712,6 @@ export async function getSandboxSystemPrompt() {
       '- `<meta><node_name>`: Stable internal identifier (machine key). It is not user-facing.\n' +
       '- `<meta><category>`: MUST be `agent_preset`.\n' +
       '- `<meta><description>`: Human-readable summary for management/UI only; do not quote it to the user.\n' +
-      '- `<parameters><SourceText>`: The original full persona text; READ-ONLY reference for details; never mention you have it.\n' +
       '- `<parameters><Schedule><timezone>`: The timezone used to interpret `time_range` / `date_*` conditions. If missing, assume the platform default.\n' +
       '- `<parameters><Boundaries>`: In-character hard refusals/forbidden styles. Treat as hard persona constraints across ALL events.\n' +
       '- `<parameters><Unclassified>`: A lossless bucket for details that do not fit other fields; still part of persona; may influence how you speak/behave.\n' +
