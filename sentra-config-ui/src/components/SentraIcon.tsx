@@ -2,35 +2,15 @@ import React from 'react';
 
 export const SentraIcon: React.FC<{ size?: number; color?: string }> = ({ size = 24, color = 'currentColor' }) => {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path
-        d="M12 2L2 7L12 12L22 7L12 2Z"
-        fill={color}
-        stroke={color}
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M2 17L12 22L22 17"
-        stroke={color}
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M2 12L12 17L22 12"
-        stroke={color}
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <span
+      style={{
+        width: size,
+        height: size,
+        display: 'inline-block',
+        backgroundColor: color,
+        WebkitMask: 'url(/icons/sentra.svg) center / contain no-repeat',
+        mask: 'url(/icons/sentra.svg) center / contain no-repeat',
+      }}
+    />
   );
 };

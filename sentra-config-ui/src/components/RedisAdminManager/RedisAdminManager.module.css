@@ -8,9 +8,9 @@
   --redis-border-soft: rgba(15, 23, 42, 0.10);
   --redis-text: #0f172a;
   --redis-muted: #64748b;
-  --redis-accent: rgba(2, 132, 199, 0.10);
-  --redis-accent-border: rgba(2, 132, 199, 0.28);
-  --redis-accent-text: #075985;
+  --redis-accent: var(--sentra-accent-tint-12);
+  --redis-accent-border: rgba(var(--sentra-accent-rgb), 0.28);
+  --redis-accent-text: var(--sentra-accent);
   --redis-danger: rgba(239, 68, 68, 0.10);
   --redis-danger-border: rgba(239, 68, 68, 0.28);
   --redis-danger-text: #991b1b;
@@ -35,8 +35,8 @@
   --redis-border-soft: rgba(255, 255, 255, 0.10);
   --redis-text: rgba(255, 255, 255, 0.92);
   --redis-muted: rgba(255, 255, 255, 0.68);
-  --redis-accent: rgba(255, 255, 255, 0.08);
-  --redis-accent-border: rgba(255, 255, 255, 0.22);
+  --redis-accent: rgba(var(--sentra-accent-rgb), 0.18);
+  --redis-accent-border: rgba(var(--sentra-accent-rgb), 0.34);
   --redis-accent-text: rgba(255, 255, 255, 0.92);
   --redis-danger: rgba(239, 68, 68, 0.18);
   --redis-danger-border: rgba(239, 68, 68, 0.32);
@@ -258,21 +258,22 @@
   height: 30px;
   padding: 0 10px;
   border-radius: 10px;
-  border: 1px solid var(--redis-border);
-  background: var(--redis-panel-bg-strong);
+  border: 1px solid var(--redis-border-soft);
+  background: var(--redis-panel-bg);
   cursor: pointer;
   font-size: 12px;
   color: var(--redis-text);
-  transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease, border-color 120ms ease;
 }
 
 .btn:hover {
-  background: var(--redis-panel-bg-strong);
-  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+  background: var(--redis-muted-bg);
+  border-color: var(--redis-border);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
 }
 
 .btn:active {
-  transform: scale(0.98);
+  transform: translateY(1px) scale(0.99);
 }
 
 .btn:disabled {
@@ -665,11 +666,59 @@
 .pairHeader {
   padding: 10px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 10px;
   border-bottom: 1px solid var(--redis-border-soft);
   background: var(--redis-panel-bg-strong);
+}
+
+.pairHeaderTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pairHeaderBottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pairHeaderLeft {
+  min-width: 0;
+}
+
+.pairHeaderRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pairHeaderGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pairHeaderGroupRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pairHeaderDivider {
+  width: 1px;
+  height: 18px;
+  background: var(--redis-border-soft);
+  border-radius: 999px;
+  opacity: 0.9;
 }
 
 .pairHeaderSelect {
@@ -686,6 +735,22 @@
 
 .pairHeaderSelect:focus {
   border-color: var(--redis-border);
+}
+
+.pairSearchInput {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--redis-border-soft);
+  background: var(--redis-panel-bg);
+  color: var(--redis-text);
+  outline: none;
+  min-width: 220px;
+}
+
+.pairSearchInput:focus {
+  border-color: var(--redis-accent-border);
+  box-shadow: 0 0 0 3px rgba(var(--sentra-accent-rgb), 0.16);
 }
 
 .pairList {
@@ -712,7 +777,13 @@
 
 .pairRowActive {
   border-color: var(--redis-accent-border);
-  background: var(--redis-accent);
+  background: var(--redis-selected-bg);
+}
+
+.pairRowActive .pairSnippetLabel {
+  border-color: rgba(var(--sentra-accent-rgb), 0.28);
+  background: rgba(var(--sentra-accent-rgb), 0.10);
+  color: var(--redis-text);
 }
 
 .pairRowTop {
@@ -720,6 +791,25 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+}
+
+.pairCheck {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1px solid var(--redis-border-soft);
+  background: var(--redis-panel-bg);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.pairCheck input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--sentra-accent);
 }
 
 .pairId {
@@ -948,19 +1038,29 @@
   flex: 1;
   height: 30px;
   border-radius: 10px;
-  border: 1px solid var(--redis-border);
+  border: 1px solid var(--redis-border-soft);
   padding: 0 10px;
   font-size: 12px;
-  background: rgba(255, 255, 255, 0.86);
-  color: #0f172a;
+  background: var(--redis-panel-bg-strong);
+  color: var(--redis-text);
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--redis-accent-border);
+  box-shadow: 0 0 0 3px rgba(var(--sentra-accent-rgb), 0.16);
 }
 
 :global(:root[data-theme='dark']) .root .input {
   background: rgba(2, 6, 23, 0.48);
   color: rgba(226, 232, 240, 0.92);
+}
+
+:global(:root[data-theme='dark']) .root .input:focus {
+  box-shadow: 0 0 0 3px rgba(var(--sentra-accent-rgb), 0.22);
 }
 
 .list {
@@ -995,8 +1095,8 @@
 }
 
 .tableRow:hover {
-  background: rgba(2, 132, 199, 0.06);
-  border-color: rgba(2, 132, 199, 0.18);
+  background: rgba(var(--sentra-accent-rgb), 0.08);
+  border-color: rgba(var(--sentra-accent-rgb), 0.22);
   transform: translateY(-1px);
 }
 

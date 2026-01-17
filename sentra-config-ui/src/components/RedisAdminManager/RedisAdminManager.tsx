@@ -200,10 +200,22 @@ export function RedisAdminManager(props: { addToast: ToastFn }) {
   const [pairExpandAll, setPairExpandAll] = useState<boolean>(false);
   const [pairExpandedMap, setPairExpandedMap] = useState<Record<string, boolean>>({});
   const [pairListLimit, setPairListLimit] = useState<number>(200);
+  const [pairSearchText, setPairSearchText] = useState<string>('');
+  const [pairSearchMode, setPairSearchMode] = useState<'auto' | 'pairId' | 'keyword'>('auto');
+  const [pairSelectedMap, setPairSelectedMap] = useState<Record<string, boolean>>({});
   const [pairDeletePreview, setPairDeletePreview] = useState<{
     groupId: string;
     pairId: string;
     shortId: string;
+    dryRun: boolean;
+    stats: any;
+    ts: number;
+  } | null>(null);
+  const [pairBulkConfirmOpen, setPairBulkConfirmOpen] = useState(false);
+  const [pairBulkConfirmText, setPairBulkConfirmText] = useState('');
+  const [pairBulkDeletePreview, setPairBulkDeletePreview] = useState<{
+    groupId: string;
+    pairIds: string[];
     dryRun: boolean;
     stats: any;
     ts: number;
@@ -400,6 +412,13 @@ export function RedisAdminManager(props: { addToast: ToastFn }) {
     setPairSelectedId('');
     setPairExpandAll(false);
     setPairExpandedMap({});
+    setPairSearchText('');
+    setPairSearchMode('auto');
+    setPairSelectedMap({});
+    setPairDeletePreview(null);
+    setPairBulkDeletePreview(null);
+    setPairBulkConfirmOpen(false);
+    setPairBulkConfirmText('');
   }, [selectedKey]);
 
   const openPreview = useCallback((k: string) => {
@@ -550,6 +569,15 @@ export function RedisAdminManager(props: { addToast: ToastFn }) {
     addToast('info', '已生成预览', `pairId=${shortId} deleted.conversations=${payload?.stats?.deleted?.conversations ?? '-'}`);
   }, [addToast, profile]);
 
+  const runPairBulkDeleteDry = useCallback(async (groupId: string, pairIds: string[]) => {
+    const gid = String(groupId || '').trim();
+    const uniq = Array.from(new Set((pairIds || []).map((x) => String(x || '').trim()).filter(Boolean)));
+    if (!gid || !uniq.length) return;
+    const payload = await deleteRedisAdminGroupStatePairs({ profile, groupId: gid, pairIds: uniq, dryRun: true });
+    setPairBulkDeletePreview({ groupId: gid, pairIds: uniq, dryRun: true, stats: payload?.stats, ts: Date.now() });
+    addToast('info', '已生成批量预览', `pairs=${uniq.length} deleted.conversations=${payload?.stats?.deleted?.conversations ?? '-'}`);
+  }, [addToast, profile]);
+
   const openPairConfirm = useCallback((groupId: string, pairId: string) => {
     const gid = String(groupId || '').trim();
     const pid = String(pairId || '').trim();
@@ -562,6 +590,19 @@ export function RedisAdminManager(props: { addToast: ToastFn }) {
     setPairConfirmText('');
     setPairConfirmOpen(true);
   }, [addToast, pairDeletePreview]);
+
+  const openPairBulkConfirm = useCallback((groupId: string, pairIds: string[]) => {
+    const gid = String(groupId || '').trim();
+    const uniq = Array.from(new Set((pairIds || []).map((x) => String(x || '').trim()).filter(Boolean)));
+    if (!gid || !uniq.length) return;
+    const same = pairBulkDeletePreview && pairBulkDeletePreview.groupId === gid && Array.isArray(pairBulkDeletePreview.pairIds) && pairBulkDeletePreview.pairIds.length === uniq.length && uniq.every((x) => pairBulkDeletePreview.pairIds.includes(x));
+    if (!same) {
+      addToast('info', '请先预览批量移除', `先点击“批量预览移除”，再确认删除（pairs=${uniq.length}）`);
+      return;
+    }
+    setPairBulkConfirmText('');
+    setPairBulkConfirmOpen(true);
+  }, [addToast, pairBulkDeletePreview]);
 
   const runPairDeleteConfirm = useCallback(async () => {
     if (!pairDeletePreview) return;
@@ -580,6 +621,24 @@ export function RedisAdminManager(props: { addToast: ToastFn }) {
       await runList();
     } catch {}
   }, [pairDeletePreview, profile, addToast, runInspect, selectedKey, runList]);
+
+  const runPairBulkDeleteConfirm = useCallback(async () => {
+    if (!pairBulkDeletePreview) return;
+    const gid = pairBulkDeletePreview.groupId;
+    const pairIds = pairBulkDeletePreview.pairIds;
+    const payload = await deleteRedisAdminGroupStatePairs({ profile, groupId: gid, pairIds, dryRun: false });
+    setPairBulkDeletePreview({ groupId: gid, pairIds, dryRun: false, stats: payload?.stats, ts: Date.now() });
+    addToast('success', '已批量移除对话对', `pairs=${pairIds.length}`);
+    setPairBulkConfirmOpen(false);
+    setPairBulkConfirmText('');
+    setPairSelectedMap({});
+    try {
+      await runInspect(String(selectedKey || ''));
+    } catch {}
+    try {
+      await runList();
+    } catch {}
+  }, [pairBulkDeletePreview, profile, addToast, runInspect, selectedKey, runList]);
 
   const resetFilters = useCallback(() => {
     setScopeFilter('all');
@@ -1273,9 +1332,36 @@ export function RedisAdminManager(props: { addToast: ToastFn }) {
                         }
                         const allRows = Array.from(byPair.values()).sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0));
                         const totalPairs = allRows.length;
-                        const rows = pairListLimit > 0 ? allRows.slice(0, pairListLimit) : allRows;
+                        const query = pairSearchText.trim();
+                        const qLower = query.toLowerCase();
+                        const isPairIdLike = /^[-_a-zA-Z0-9]{6,}$/.test(query);
+                        const mode = pairSearchMode === 'auto' ? (isPairIdLike ? 'pairId' : 'keyword') : pairSearchMode;
 
-                        if (!rows.length) {
+                        const matchedAllRows = !query ? allRows : allRows.filter((r) => {
+                          if (mode === 'pairId') {
+                            const pid = String(r.pairId || '');
+                            const shortId = pid.substring(0, 8);
+                            return pid.toLowerCase().includes(qLower) || shortId.toLowerCase().includes(qLower);
+                          }
+                          const pid = String(r.pairId || '');
+                          const shortId = pid.substring(0, 8);
+                          const sn = snippetByPair.get(pid) || { user: '', assistant: '' };
+                          const full = fullByPair.get(pid);
+                          const hay = [
+                            pid,
+                            shortId,
+                            sn.user,
+                            sn.assistant,
+                            full?.userText,
+                            full?.assistantText,
+                          ].filter(Boolean).join(' ').toLowerCase();
+                          return hay.includes(qLower);
+                        });
+
+                        const rows = pairListLimit > 0 ? matchedAllRows.slice(0, pairListLimit) : matchedAllRows;
+                        const selectedIds = Object.entries(pairSelectedMap).filter(([, v]) => !!v).map(([k]) => k);
+
+                        if (totalPairs === 0) {
                           return (
                             <div className={styles.emptyHint}>
                               该群会话状态未发现可按 pairId 管理的对话记录（conversations 为空）。
@@ -1292,29 +1378,96 @@ export function RedisAdminManager(props: { addToast: ToastFn }) {
                             {detailFocus === 'preview' ? null : (
                               <div className={styles.pairSection} style={{ maxHeight: detailFocus === 'pairs' ? 540 : 320 }}>
                               <div className={styles.pairHeader}>
-                                <div className={styles.small}>显示 {rows.length} / {totalPairs} 个（可滚动，支持展开查看全部内容，预览后可删除）</div>
-                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                                  <select className={styles.pairHeaderSelect} value={String(pairListLimit)} onChange={(e) => setPairListLimit(Number(e.target.value) || 0)}>
-                                    <option value="24">24</option>
-                                    <option value="100">100</option>
-                                    <option value="200">200</option>
-                                    <option value="500">500</option>
-                                    <option value="0">全部</option>
-                                  </select>
-                                  <button className={styles.btn} onClick={() => { setPairExpandAll(true); setPairExpandedMap({}); }} type="button">展开全部</button>
-                                  <button className={styles.btn} onClick={() => { setPairExpandAll(false); setPairExpandedMap({}); }} type="button">收起全部</button>
-                                  <button className={styles.btn} onClick={() => setPairSectionCollapsed((v) => !v)} type="button">
-                                    {pairSectionCollapsed ? '展开' : '收起'}
-                                  </button>
+                                <div className={styles.pairHeaderTop}>
+                                  <div className={styles.pairHeaderLeft}>
+                                    <div className={styles.small}>
+                                      显示 {rows.length} / {matchedAllRows.length}（总 {totalPairs}）
+                                      {selectedIds.length ? ` · 已选 ${selectedIds.length}` : ''}
+                                    </div>
+                                  </div>
+                                  <div className={styles.pairHeaderRight}>
+                                    <select className={styles.pairHeaderSelect} value={pairSearchMode} onChange={(e) => setPairSearchMode(e.target.value as any)}>
+                                      <option value="auto">自动</option>
+                                      <option value="pairId">pairId</option>
+                                      <option value="keyword">关键词</option>
+                                    </select>
+                                    <input
+                                      className={styles.pairSearchInput}
+                                      value={pairSearchText}
+                                      onChange={(e) => setPairSearchText(e.target.value)}
+                                      placeholder="检索：pairId 或关键词（U/A 文本）"
+                                    />
+                                    <select className={styles.pairHeaderSelect} value={String(pairListLimit)} onChange={(e) => setPairListLimit(Number(e.target.value) || 0)}>
+                                      <option value="24">24</option>
+                                      <option value="100">100</option>
+                                      <option value="200">200</option>
+                                      <option value="500">500</option>
+                                      <option value="0">全部</option>
+                                    </select>
+                                  </div>
+                                </div>
+
+                                <div className={styles.pairHeaderBottom}>
+                                  <div className={styles.pairHeaderGroup}>
+                                    <button
+                                      className={styles.btn}
+                                      onClick={() => {
+                                        const next: Record<string, boolean> = {};
+                                        for (const r of matchedAllRows) next[r.pairId] = true;
+                                        setPairSelectedMap(next);
+                                      }}
+                                      type="button"
+                                    >
+                                      全选筛选
+                                    </button>
+                                    <button className={styles.btn} onClick={() => setPairSelectedMap({})} type="button">清空选择</button>
+                                  </div>
+
+                                  <div className={styles.pairHeaderGroupRight}>
+                                    <button
+                                      className={styles.btn}
+                                      onClick={() => {
+                                        if (!selectedItem.groupId) return;
+                                        runPairBulkDeleteDry(selectedItem.groupId, selectedIds);
+                                      }}
+                                      disabled={!selectedIds.length}
+                                      type="button"
+                                    >
+                                      批量预览移除
+                                    </button>
+                                    <button
+                                      className={`${styles.btn} ${styles.btnDanger}`}
+                                      onClick={() => {
+                                        if (!selectedItem.groupId) return;
+                                        openPairBulkConfirm(selectedItem.groupId, selectedIds);
+                                      }}
+                                      disabled={!selectedIds.length || !pairBulkDeletePreview || !pairBulkDeletePreview.dryRun}
+                                      type="button"
+                                    >
+                                      批量确认移除
+                                    </button>
+                                    <div className={styles.pairHeaderDivider} />
+                                    <button className={styles.btn} onClick={() => { setPairExpandAll(true); setPairExpandedMap({}); }} type="button">展开全部</button>
+                                    <button className={styles.btn} onClick={() => { setPairExpandAll(false); setPairExpandedMap({}); }} type="button">收起全部</button>
+                                    <button className={styles.btn} onClick={() => setPairSectionCollapsed((v) => !v)} type="button">
+                                      {pairSectionCollapsed ? '展开' : '收起'}
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
 
                               {!pairSectionCollapsed ? (
                                 <div className={styles.pairList}>
+                                  {!rows.length ? (
+                                    <div className={styles.emptyHint} style={{ marginTop: 0 }}>
+                                      未命中检索条件。请调整 pairId/关键词检索，或点击“清空选择”后重新筛选。
+                                    </div>
+                                  ) : null}
                                   {rows.map((r) => {
                                     const shortId = r.pairId.substring(0, 8);
                                     const isPreview = pairDeletePreview && pairDeletePreview.groupId === selectedItem.groupId && pairDeletePreview.pairId === r.pairId && pairDeletePreview.dryRun;
                                     const isActive = pairSelectedId === r.pairId;
+                                    const isChecked = !!pairSelectedMap[r.pairId];
                                     const sn = snippetByPair.get(r.pairId) || { user: '', assistant: '' };
                                     const userLine = sn.user;
                                     const assistantLine = sn.assistant;
@@ -1335,9 +1488,28 @@ export function RedisAdminManager(props: { addToast: ToastFn }) {
                                         }}
                                       >
                                         <div className={styles.pairRowTop}>
-                                          <div style={{ minWidth: 0 }}>
-                                            <div className={styles.pairId}>{shortId}</div>
-                                            <div className={styles.pairMeta}>messages={r.count}{r.ts ? ` · ${new Date(r.ts).toLocaleString()}` : ''}</div>
+                                          <div style={{ minWidth: 0, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                                            <label
+                                              className={styles.pairCheck}
+                                              onClick={(e) => e.stopPropagation()}
+                                              title={isChecked ? '取消选择' : '选择'}
+                                            >
+                                              <input
+                                                type="checkbox"
+                                                checked={isChecked}
+                                                onChange={(e) => {
+                                                  const checked = e.target.checked;
+                                                  setPairSelectedMap((prev) => ({
+                                                    ...prev,
+                                                    [r.pairId]: checked,
+                                                  }));
+                                                }}
+                                              />
+                                            </label>
+                                            <div>
+                                              <div className={styles.pairId}>{shortId}</div>
+                                              <div className={styles.pairMeta}>messages={r.count}{r.ts ? ` · ${new Date(r.ts).toLocaleString()}` : ''}</div>
+                                            </div>
                                           </div>
                                           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                                             <button className={styles.btn} onClick={(e) => { e.stopPropagation(); runPairDeleteDry(selectedItem.groupId!, r.pairId); }} type="button">预览移除</button>
@@ -1589,6 +1761,55 @@ export function RedisAdminManager(props: { addToast: ToastFn }) {
                   }}
                 >
                   移除
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pairBulkConfirmOpen && pairBulkDeletePreview ? (
+        <div className={styles.modalOverlay} onClick={() => { setPairBulkConfirmOpen(false); setPairBulkConfirmText(''); }}>
+          <div className={styles.modal} onClick={(e) => e.stopPropagation()} style={{ width: 'min(760px, 96vw)' }}>
+            <div className={styles.modalHeader}>
+              <div>
+                <div className={styles.modalTitle}>确认批量移除对话对</div>
+                <div className={styles.small}>此操作会修改群会话状态 JSON，仅移除选中的 pairId 历史消息。</div>
+              </div>
+              <div className={styles.modalActions}>
+                <button className={styles.btn} onClick={() => { setPairBulkConfirmOpen(false); setPairBulkConfirmText(''); }} type="button">关闭</button>
+              </div>
+            </div>
+            <div className={styles.modalBody}>
+              <div className={styles.warning} style={{ margin: 0 }}>
+                groupId={pairBulkDeletePreview.groupId}，pairs={pairBulkDeletePreview.pairIds.length}
+              </div>
+              <div className={styles.small} style={{ marginTop: 8 }}>
+                预览结果：deleted.conversations={pairBulkDeletePreview?.stats?.deleted?.conversations ?? '-'}，deleted.activePairs={pairBulkDeletePreview?.stats?.deleted?.activePairs ?? '-'}
+              </div>
+              <div className={styles.small} style={{ marginTop: 10 }}>
+                请输入移除数量以确认：
+              </div>
+              <div className={styles.inputRow} style={{ padding: '10px 0', borderBottom: 'none' }}>
+                <input
+                  className={styles.input}
+                  value={pairBulkConfirmText}
+                  onChange={(e) => setPairBulkConfirmText(e.target.value)}
+                  placeholder={String(pairBulkDeletePreview.pairIds.length)}
+                />
+                <button
+                  className={`${styles.btn} ${styles.btnDanger}`}
+                  disabled={busy || pairBulkConfirmText.trim() !== String(pairBulkDeletePreview.pairIds.length)}
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await runPairBulkDeleteConfirm();
+                    } catch (e: any) {
+                      addToast('error', '批量移除失败', String(e?.message || e));
+                    }
+                  }}
+                >
+                  批量移除
                 </button>
               </div>
             </div>

@@ -119,7 +119,9 @@ export const TopTaskbar: React.FC<TopTaskbarProps> = ({
                                 boxShadow: tab.isActive
                                     ? '0 2px 8px rgba(0,0,0,0.15)'
                                     : '0 1px 2px rgba(0,0,0,0.05)',
-                                border: '1px solid rgba(255,255,255,0.2)',
+                                border: tab.isActive
+                                    ? '1px solid rgba(var(--sentra-accent-rgb), 0.35)'
+                                    : '1px solid rgba(255,255,255,0.2)',
                                 transition: 'all 0.2s',
                                 flex: '0 1 auto', // Allow growing/shrinking
                                 minWidth: 0, // Allow shrinking below content size

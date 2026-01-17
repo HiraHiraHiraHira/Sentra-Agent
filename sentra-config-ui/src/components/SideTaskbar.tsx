@@ -63,13 +63,23 @@ export const SideTaskbar: React.FC<SideTaskbarProps> = memo(({
       >
         <div
           className={styles.collapseHandle}
+          role="button"
+          tabIndex={0}
+          aria-label="展开标签栏"
           onClick={(e) => {
             e.stopPropagation();
             onCollapsedChange(false);
           }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              e.stopPropagation();
+              onCollapsedChange(false);
+            }
+          }}
           title="展开标签栏"
         >
-          <IoChevronForwardOutline size={16} />
+          <IoChevronForwardOutline size={14} />
         </div>
       </div>
     );
@@ -117,13 +127,23 @@ export const SideTaskbar: React.FC<SideTaskbarProps> = memo(({
     >
       <div
         className={styles.collapseHandleEdge}
+        role="button"
+        tabIndex={0}
+        aria-label="收起标签栏"
         onClick={(e) => {
           e.stopPropagation();
           onCollapsedChange(true);
         }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            e.stopPropagation();
+            onCollapsedChange(true);
+          }
+        }}
         title="收起标签栏"
       >
-        <IoChevronBackOutline size={16} />
+        <IoChevronBackOutline size={14} />
       </div>
 
       <div className={styles.inner}>

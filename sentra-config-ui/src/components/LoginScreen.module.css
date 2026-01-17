@@ -75,7 +75,7 @@
     height: 40px;
     border-radius: 50%;
     border: 4px solid rgba(0, 0, 0, 0.08);
-    border-top-color: #007AFF;
+    border-top-color: var(--sentra-accent);
     margin-bottom: 20px;
     animation: spin 1s linear infinite;
 }
@@ -155,10 +155,11 @@
 }
 
 .avatarImg {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
+    width: 78%;
+    height: 78%;
+    object-fit: contain;
     opacity: 0.95;
+    filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.25));
 }
 
 .loadingSpinner {

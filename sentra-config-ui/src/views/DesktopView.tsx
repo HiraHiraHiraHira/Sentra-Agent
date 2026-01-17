@@ -53,7 +53,8 @@ export type DesktopViewProps = {
   brightness: number;
   setBrightness: (val: number) => void;
   theme: 'light' | 'dark';
-  toggleTheme: () => void;
+  accentColor: string;
+  setAccentColor: (val: string) => void;
   showDock: boolean;
   toggleDock: () => void;
 
@@ -281,7 +282,8 @@ export function DesktopView(props: DesktopViewProps) {
     brightness,
     setBrightness,
     theme,
-    toggleTheme,
+    accentColor,
+    setAccentColor,
     showDock,
     toggleDock,
     openWindows,
@@ -796,8 +798,8 @@ export function DesktopView(props: DesktopViewProps) {
       <MenuBar
         brightness={brightness}
         setBrightness={setBrightness}
-        theme={theme}
-        onToggleTheme={toggleTheme}
+        accentColor={accentColor}
+        setAccentColor={setAccentColor}
         showDock={showDock}
         onToggleDock={toggleDock}
         performanceMode={performanceMode}

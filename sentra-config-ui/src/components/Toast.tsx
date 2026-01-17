@@ -41,7 +41,7 @@ const ToastItem: React.FC<{ toast: ToastMessage; onRemove: (id: string) => void 
     switch (toast.type) {
       case 'success': return <IoCheckmarkCircle className={styles.icon} style={{ color: '#34C759' }} />;
       case 'error': return <IoAlertCircle className={styles.icon} style={{ color: '#FF3B30' }} />;
-      default: return <IoInformationCircle className={styles.icon} style={{ color: '#007AFF' }} />;
+      default: return <IoInformationCircle className={styles.icon} style={{ color: 'var(--sentra-accent)' }} />;
     }
   };
 

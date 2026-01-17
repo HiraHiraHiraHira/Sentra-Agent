@@ -30,17 +30,17 @@
   --mpm-danger-border: rgba(239, 68, 68, 0.25);
   --mpm-danger-bg-hover: rgba(239, 68, 68, 0.12);
 
-  --mpm-focus-border: rgba(37, 99, 235, 0.35);
-  --mpm-focus-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+  --mpm-focus-border: rgba(var(--sentra-accent-rgb), 0.45);
+  --mpm-focus-shadow: 0 0 0 4px rgba(var(--sentra-accent-rgb), 0.14);
 
-  --mpm-primary-border: rgba(37, 99, 235, 0.35);
-  --mpm-primary-bg: rgba(37, 99, 235, 0.10);
-  --mpm-primary-bg-hover: rgba(37, 99, 235, 0.14);
-  --mpm-primary-fg: rgba(29, 78, 216, 1);
-  --mpm-env-name-fg: var(--mpm-primary-fg);
+  --mpm-primary-border: rgba(var(--sentra-accent-rgb), 0.35);
+  --mpm-primary-bg: rgba(var(--sentra-accent-rgb), 0.10);
+  --mpm-primary-bg-hover: rgba(var(--sentra-accent-rgb), 0.14);
+  --mpm-primary-fg: var(--sentra-accent);
+  --mpm-env-name-fg: var(--sentra-accent);
 
-  --mpm-active-border: rgba(37, 99, 235, 0.45);
-  --mpm-active-bg: rgba(37, 99, 235, 0.12);
+  --mpm-active-border: rgba(var(--sentra-accent-rgb), 0.45);
+  --mpm-active-bg: rgba(var(--sentra-accent-rgb), 0.12);
 
   --mpm-badge-off-fg: rgba(100, 116, 139, 1);
   --mpm-badge-off-bg: rgba(148, 163, 184, 0.14);
@@ -53,8 +53,8 @@
   --mpm-shadow-1: 0 18px 48px rgba(0, 0, 0, 0.20);
   --mpm-modal-overlay: rgba(0, 0, 0, 0.22);
 
-  --mpm-switch-track: rgba(0, 0, 0, 0.20);
-  --mpm-switch-track-border: rgba(0, 0, 0, 0.10);
+  --mpm-switch-track: rgba(0, 0, 0, 0.26);
+  --mpm-switch-track-border: rgba(0, 0, 0, 0.14);
   --mpm-switch-thumb: rgba(255, 255, 255, 0.92);
   --mpm-switch-thumb-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 
@@ -109,8 +109,8 @@
   --mpm-shadow-1: 0 18px 48px rgba(0, 0, 0, 0.65);
   --mpm-modal-overlay: rgba(0, 0, 0, 0.65);
 
-  --mpm-switch-track: rgba(255, 255, 255, 0.16);
-  --mpm-switch-track-border: rgba(255, 255, 255, 0.12);
+  --mpm-switch-track: rgba(255, 255, 255, 0.22);
+  --mpm-switch-track-border: rgba(255, 255, 255, 0.16);
   --mpm-switch-thumb: rgba(255, 255, 255, 0.95);
   --mpm-switch-thumb-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
 
@@ -388,7 +388,7 @@
 
 .providerItemDragOver {
   border-color: var(--mpm-active-border);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: 0 0 0 3px rgba(var(--sentra-accent-rgb), 0.12);
 }
 
 .providerItem:hover {
@@ -658,6 +658,16 @@
   padding: 0;
 }
 
+.switch:focus-visible {
+  outline: none;
+}
+
+.switch:focus-visible .switchTrack {
+  box-shadow:
+    inset 0 0 0 1px var(--mpm-switch-track-border),
+    0 0 0 3px rgba(var(--sentra-accent-rgb), 0.18);
+}
+
 .switchTrack {
   position: absolute;
   inset: 0;
@@ -668,7 +678,7 @@
 }
 
 .switchTrackOn {
-  background: rgba(34, 197, 94, 0.90);
+  background: linear-gradient(180deg, rgba(var(--sentra-accent-rgb), 0.92), rgba(var(--sentra-accent-rgb), 1));
 }
 
 .switchThumb {
@@ -681,6 +691,7 @@
   background: var(--mpm-switch-thumb);
   box-shadow: var(--mpm-switch-thumb-shadow);
   transition: transform 150ms ease;
+  border: 1px solid rgba(0, 0, 0, 0.14);
 }
 
 .switchThumbOn {

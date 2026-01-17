@@ -390,7 +390,7 @@
   --dw-bubble-user: rgba(88, 101, 242, 0.95);
   --dw-bubble-error: rgba(237, 66, 69, 0.16);
 
-  --dw-accent: #5865f2;
+  --dw-accent: var(--sentra-accent);
   --dw-on-user: rgba(255, 255, 255, 0.95);
 
   --dw-md-quote-border: rgba(148, 163, 184, 0.60);
@@ -420,8 +420,8 @@
   --dw-user-code-border: rgba(255, 255, 255, 0.18);
   --dw-user-code-header-bg: rgba(255, 255, 255, 0.10);
 
-  --dw-surface-hover: rgba(255, 255, 255, 0.06);
-  --dw-surface-hover-light: rgba(17, 24, 39, 0.05);
+  --dw-surface-hover: var(--sentra-accent-tint-08);
+  --dw-surface-hover-light: var(--sentra-accent-tint-08);
   --dw-shadow: rgba(0, 0, 0, 0.45);
   --dw-shadow-soft: rgba(0, 0, 0, 0.12);
 
@@ -454,11 +454,11 @@
   --dw-muted: #6b7280;
   --dw-scrollbar-thumb: var(--scrollbar-thumb);
   --dw-bubble-assistant: #ffffff;
-  --dw-bubble-user: #2563eb;
+  --dw-bubble-user: var(--sentra-accent);
   --dw-bubble-error: rgba(220, 38, 38, 0.12);
 
-  --dw-accent: #2563eb;
-  --dw-on-user: rgba(255, 255, 255, 0.98);
+  --dw-accent: var(--sentra-accent);
+  --dw-on-user: var(--sentra-accent-contrast);
 
   --dw-md-quote-border: rgba(17, 24, 39, 0.18);
   --dw-md-quote-bg: rgba(17, 24, 39, 0.04);

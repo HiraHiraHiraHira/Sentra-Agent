@@ -433,6 +433,16 @@ async function start() {
       await fastify.register(fastifyStatic, {
         root: distPath,
         prefix: '/',
+        setHeaders: (res, filePath) => {
+          const p = String(filePath || '');
+          if (p.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+            return;
+          }
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        },
       });
 
       fastify.setNotFoundHandler((request, reply) => {

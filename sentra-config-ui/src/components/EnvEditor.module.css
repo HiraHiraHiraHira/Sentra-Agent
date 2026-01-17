@@ -10,41 +10,41 @@
 
 /* Theme Variables */
 .container[data-theme='dark'] {
-  --bg-primary: #0b1120;
-  --bg-secondary: #020617;
-  --bg-tertiary: #111827;
-  --text-primary: #e5e7eb;
-  --text-secondary: #9ca3af;
-  --border-color: #1f2937;
-  --accent-color: #38bdf8;
-  --hover-color: #111827;
-  --input-bg: #020617;
-  --input-border: #1f2937;
-  --panel-raised-bg: #020617;
-  --panel-subtle-border: rgba(148, 163, 184, 0.4);
+  --bg-primary: linear-gradient(var(--sentra-accent-tint-04), var(--sentra-accent-tint-04)), var(--sentra-panel-bg-strong);
+  --bg-secondary: linear-gradient(var(--sentra-accent-tint-04), var(--sentra-accent-tint-04)), var(--sentra-panel-bg-strong);
+  --bg-tertiary: var(--sentra-accent-tint-12);
+  --text-primary: var(--sentra-fg);
+  --text-secondary: var(--sentra-muted-fg);
+  --border-color: var(--sentra-border-strong);
+  --accent-color: var(--sentra-accent);
+  --hover-color: var(--sentra-accent-tint-08);
+  --input-bg: var(--sentra-panel-bg-strong);
+  --input-border: var(--sentra-border-strong);
+  --panel-raised-bg: var(--sentra-panel-bg-strong);
+  --panel-subtle-border: var(--sentra-border);
   --row-bg: transparent;
-  --row-hover-bg: rgba(148, 163, 184, 0.08);
-  --toggle-off-bg: linear-gradient(180deg, #111827, #020617);
-  --toggle-off-border: rgba(148, 163, 184, 0.5);
+  --row-hover-bg: var(--sentra-accent-tint-08);
+  --toggle-off-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.14));
+  --toggle-off-border: var(--sentra-border-strong);
 }
 
 .container[data-theme='light'] {
-  --bg-primary: #f9fafb;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #e5e7eb;
-  --text-primary: #111827;
-  --text-secondary: #6b7280;
-  --border-color: #d1d5db;
-  --accent-color: #0ea5e9;
-  --hover-color: #f3f4f6;
-  --input-bg: #ffffff;
-  --input-border: #d1d5db;
-  --panel-raised-bg: #ffffff;
-  --panel-subtle-border: rgba(148, 163, 184, 0.3);
+  --bg-primary: linear-gradient(var(--sentra-accent-tint-04), var(--sentra-accent-tint-04)), var(--sentra-panel-bg-strong);
+  --bg-secondary: linear-gradient(var(--sentra-accent-tint-04), var(--sentra-accent-tint-04)), var(--sentra-panel-bg-strong);
+  --bg-tertiary: var(--sentra-accent-tint-12);
+  --text-primary: var(--sentra-fg);
+  --text-secondary: var(--sentra-muted-fg);
+  --border-color: var(--sentra-border-strong);
+  --accent-color: var(--sentra-accent);
+  --hover-color: var(--sentra-accent-tint-08);
+  --input-bg: rgba(255, 255, 255, 0.92);
+  --input-border: var(--sentra-border-strong);
+  --panel-raised-bg: var(--sentra-panel-bg-strong);
+  --panel-subtle-border: var(--sentra-border);
   --row-bg: transparent;
-  --row-hover-bg: rgba(15, 23, 42, 0.02);
-   --toggle-off-bg: linear-gradient(180deg, #e5e7eb, #d1d5db);
-   --toggle-off-border: rgba(156, 163, 175, 0.9);
+  --row-hover-bg: var(--sentra-accent-tint-08);
+  --toggle-off-bg: linear-gradient(180deg, rgba(0, 0, 0, 0.14), rgba(0, 0, 0, 0.10));
+  --toggle-off-border: var(--sentra-border-strong);
 }
 
 .sidebar {
@@ -140,7 +140,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
-  background: var(--bg-secondary);
+  background: linear-gradient(var(--sentra-accent-tint-08), var(--sentra-accent-tint-08)), var(--sentra-glass-bg-strong);
   border-bottom: 1px solid var(--border-color);
   border-radius: 6px 6px 0 0;
   box-shadow: none;
@@ -148,11 +148,11 @@
 }
 
 .container[data-theme='dark'] .toolbar {
-  background: linear-gradient(120deg, rgba(15, 23, 42, 0.98), rgba(15, 23, 42, 1));
+  background: linear-gradient(var(--sentra-accent-tint-08), var(--sentra-accent-tint-08)), var(--sentra-glass-bg-strong);
 }
 
 .container[data-theme='light'] .toolbar {
-  background: linear-gradient(120deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 1));
+  background: linear-gradient(var(--sentra-accent-tint-08), var(--sentra-accent-tint-08)), var(--sentra-glass-bg-strong);
 }
 
 .breadcrumb {
@@ -177,8 +177,8 @@
 }
 
 .macBtn {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
+  background: var(--sentra-glass-bg-strong);
+  border: 1px solid var(--sentra-border);
   color: var(--text-primary);
   padding: 4px 10px;
   border-radius: 4px;
@@ -190,12 +190,12 @@
 }
 
 .macBtn:hover {
-  background: var(--hover-color);
+  background: linear-gradient(var(--sentra-accent-tint-08), var(--sentra-accent-tint-08)), var(--sentra-glass-bg-strong);
 }
 
 .macBtn.primary {
   background: var(--accent-color);
-  color: white;
+  color: var(--sentra-accent-contrast);
   border-color: var(--accent-color);
 }
 
@@ -268,7 +268,7 @@
 }
 
 .settingsRow:hover {
-  background: rgba(148, 163, 184, 0.08);
+  background: var(--row-hover-bg);
 }
 
 .rowHeader {
@@ -313,9 +313,9 @@
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 11px;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.16), rgba(56, 189, 248, 0.14));
+  background: linear-gradient(135deg, rgba(var(--sentra-accent-rgb), 0.18), rgba(var(--sentra-accent-rgb), 0.10));
   color: var(--text-primary);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(var(--sentra-accent-rgb), 0.22);
   gap: 6px;
 }
 
@@ -362,9 +362,9 @@
 
 /* 柔和容器：用于布尔 / 枚举 / 数组等非纯文本输入，弱化边框，靠近 macOS 设置面板风格 */
 .editorWrapperSoft {
-  background: linear-gradient(145deg, rgba(15, 23, 42, 0.55), rgba(15, 23, 42, 0.75));
+  background: linear-gradient(var(--sentra-accent-tint-08), var(--sentra-accent-tint-08)), var(--sentra-glass-bg-strong);
   border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
+  border: 1px solid var(--sentra-border);
   padding: 6px 10px;
 }
 
@@ -420,6 +420,15 @@
   color: var(--text-secondary);
 }
 
+.toggle[data-checked='true'] + .toggleLabel {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.toggle[data-checked='false'] + .toggleLabel {
+  color: var(--text-secondary);
+}
+
 .rowTop {
   display: flex;
   align-items: flex-start;
@@ -469,7 +478,7 @@
 }
 
 .chipSoft {
-  background: rgba(148, 163, 184, 0.12);
+  background: var(--sentra-accent-tint-08);
   color: var(--text-primary);
 }
 
@@ -480,12 +489,12 @@
 }
 
 .optionChip {
-  background: rgba(99, 102, 241, 0.12);
+  background: rgba(var(--sentra-accent-rgb), 0.12);
   color: var(--text-primary);
   padding: 4px 10px;
   border-radius: 10px;
   font-size: 12px;
-  border: 1px solid rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(var(--sentra-accent-rgb), 0.22);
 }
 
 /* 自定义 mac 风格下拉菜单，用于枚举选择，避免浏览器原生下拉样式 */
@@ -511,8 +520,8 @@
 }
 
 .macSelectButton:hover {
-  border-color: #38bdf8;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.6);
+  border-color: rgba(var(--sentra-accent-rgb), 0.70);
+  box-shadow: 0 0 0 3px rgba(var(--sentra-accent-rgb), 0.16);
 }
 
 .macSelectLabel {
@@ -550,13 +559,13 @@
 }
 
 .macSelectOption:hover {
-  background: rgba(55, 65, 81, 0.9);
+  background: var(--sentra-accent-tint-12);
   color: var(--text-primary);
 }
 
 .macSelectOptionActive {
-  background: #38bdf8;
-  color: #0b1120;
+  background: var(--sentra-accent);
+  color: var(--sentra-accent-contrast);
 }
 
 .selectShell {
@@ -580,8 +589,8 @@
 }
 
 .toggle {
-  width: 40px;
-  height: 22px;
+  width: 44px;
+  height: 24px;
   border-radius: 999px;
   border: 1px solid var(--toggle-off-border);
   background: var(--toggle-off-bg);
@@ -591,25 +600,36 @@
   position: relative;
   cursor: pointer;
   transition: background-color 0.2s ease, border-color 0.2s ease;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10);
+}
+
+.toggle:hover {
+  border-color: rgba(var(--sentra-accent-rgb), 0.40);
+}
+
+.toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(var(--sentra-accent-rgb), 0.18), inset 0 0 0 1px rgba(255, 255, 255, 0.10);
 }
 
 .toggle[data-checked='true'] {
-  background: linear-gradient(180deg, #22c55e, #16a34a);
-  border-color: rgba(34, 197, 94, 0.9);
+  background: linear-gradient(180deg, rgba(var(--sentra-accent-rgb), 0.92), rgba(var(--sentra-accent-rgb), 1));
+  border-color: rgba(var(--sentra-accent-rgb), 0.80);
 }
 
 .toggleKnob {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.16);
   transform: translateX(0);
   transition: transform 0.2s ease;
 }
 
 .toggle[data-checked='true'] .toggleKnob {
-  transform: translateX(16px);
+  transform: translateX(20px);
 }
 
 .toggleText {
@@ -644,9 +664,9 @@
 .enumSegmentGroup {
   display: inline-flex;
   padding: 2px;
-  background: rgba(15, 23, 42, 0.8);
+  background: linear-gradient(var(--sentra-accent-tint-08), var(--sentra-accent-tint-08)), var(--sentra-glass-bg-strong);
   border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
+  border: 1px solid var(--sentra-border);
 }
 
 .enumSegment {
@@ -661,13 +681,13 @@
 }
 
 .enumSegment:hover {
-  background: rgba(148, 163, 184, 0.25);
+  background: var(--sentra-accent-tint-12);
   color: var(--text-primary);
 }
 
 .enumSegmentActive {
-  background: #38bdf8;
-  color: #0b1120;
+  background: var(--sentra-accent);
+  color: var(--sentra-accent-contrast);
 }
 
 .enumCustomInput {

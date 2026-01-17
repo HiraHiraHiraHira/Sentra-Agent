@@ -39,6 +39,35 @@ function App() {
   const [configData, setConfigData] = useState<ConfigData | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const normalizeHexColor = (v: string) => {
+    const s = String(v || '').trim();
+    if (!s) return '';
+    if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toUpperCase();
+    const m = s.match(/^#([0-9a-fA-F]{3})$/);
+    if (m) {
+      const [r, g, b] = m[1].split('');
+      return (`#${r}${r}${g}${g}${b}${b}`).toUpperCase();
+    }
+    return '';
+  };
+
+  const hexToRgb = (hex: string) => {
+    const v = normalizeHexColor(hex);
+    if (!v) return null;
+    const n = parseInt(v.slice(1), 16);
+    if (!Number.isFinite(n)) return null;
+    return {
+      r: (n >> 16) & 255,
+      g: (n >> 8) & 255,
+      b: n & 255,
+    };
+  };
+
+  const getContrastColor = (rgb: { r: number; g: number; b: number }) => {
+    const l = (0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b) / 255;
+    return l > 0.65 ? '#000000' : '#FFFFFF';
+  };
+
   const readBool = (key: string, fallback = false) => {
     try {
       const v = localStorage.getItem(key);
@@ -79,8 +108,11 @@ function App() {
   const [launchpadOpen, setLaunchpadOpen] = useState(false);
 
   // Theme state
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    return (localStorage.getItem('sentra_theme') as 'light' | 'dark') || 'dark';
+  const theme: 'light' = 'light';
+
+  const [accentColor, setAccentColor] = useState<string>(() => {
+    const saved = normalizeHexColor(localStorage.getItem('sentra_accent_color') || '');
+    return saved || '#007AFF';
   });
 
   // Desktop Dock visibility
@@ -131,22 +163,40 @@ function App() {
   // Dock favorites via hook
   const { dockFavorites, setDockFavorites } = useDockFavorites();
 
-  const toggleTheme = () => {
-    setTheme(prev => {
-      const newTheme = prev === 'dark' ? 'light' : 'dark';
-      localStorage.setItem('sentra_theme', newTheme);
-      return newTheme;
-    });
-  };
-
   useEffect(() => {
     try {
+      localStorage.setItem('sentra_theme', 'light');
       document.documentElement.setAttribute('data-theme', theme);
       document.body.setAttribute('data-theme', theme);
     } catch {
       // ignore
     }
   }, [theme]);
+
+  useEffect(() => {
+    const next = normalizeHexColor(accentColor) || '#007AFF';
+    const rgb = hexToRgb(next);
+    if (!rgb) return;
+    const contrast = getContrastColor(rgb);
+
+    try {
+      localStorage.setItem('sentra_accent_color', next);
+    } catch {
+      // ignore
+    }
+
+    try {
+      const rgbStr = `${rgb.r}, ${rgb.g}, ${rgb.b}`;
+      document.documentElement.style.setProperty('--sentra-accent', next);
+      document.documentElement.style.setProperty('--sentra-accent-rgb', rgbStr);
+      document.documentElement.style.setProperty('--sentra-accent-contrast', contrast);
+      document.body.style.setProperty('--sentra-accent', next);
+      document.body.style.setProperty('--sentra-accent-rgb', rgbStr);
+      document.body.style.setProperty('--sentra-accent-contrast', contrast);
+    } catch {
+      // ignore
+    }
+  }, [accentColor]);
 
   // Terminal windows state via hook
   const {
@@ -651,7 +701,8 @@ function App() {
         brightness={brightness}
         setBrightness={setBrightness}
         theme={theme}
-        toggleTheme={toggleTheme}
+        accentColor={accentColor}
+        setAccentColor={setAccentColor}
         showDock={showDock}
         toggleDock={toggleDock}
         openWindows={openWindows}

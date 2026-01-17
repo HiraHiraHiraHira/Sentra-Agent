@@ -5,72 +5,92 @@
   height: calc(100vh - var(--side-taskbar-top, 30px));
   z-index: 9950;
   pointer-events: none;
+  --side-handle-bg: linear-gradient(var(--sentra-accent-tint-08), var(--sentra-accent-tint-08)), var(--sentra-panel-bg-strong);
+  --side-handle-bg-hover: linear-gradient(var(--sentra-accent-tint-12), var(--sentra-accent-tint-12)), var(--sentra-panel-bg-strong);
+  --side-handle-bg-active: linear-gradient(var(--sentra-accent-tint-16), var(--sentra-accent-tint-16)), var(--sentra-panel-bg-strong);
+  --side-handle-border: var(--sentra-border-strong);
+  --side-handle-border-hover: rgba(var(--sentra-accent-rgb), 0.32);
+  --side-handle-fg: rgba(15, 23, 42, 0.82);
+  --side-handle-grip: rgba(var(--sentra-accent-rgb), 0.26);
 }
 
 .collapseHandleEdge {
   position: absolute;
-  right: -14px;
-  top: 8px;
-  width: 34px;
-  height: 44px;
+  right: 0;
+  bottom: 92px;
+  width: 16px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   pointer-events: auto;
   color: var(--side-handle-fg, rgba(15, 23, 42, 0.85));
-  background: transparent;
-}
-
-.collapseHandleEdge::before {
-  content: '';
-  position: absolute;
-  right: 0;
-  top: 0;
-  width: 14px;
-  height: 44px;
-  border-radius: 10px 0 0 10px;
   background: var(--side-handle-bg, rgba(255, 255, 255, 0.78));
   border: 1px solid var(--side-handle-border, rgba(0, 0, 0, 0.10));
   border-right: none;
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
+  border-radius: 10px 0 0 10px;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(10px);
 }
 
 .collapseHandleEdge::after {
   content: '';
   position: absolute;
-  right: 4px;
-  top: 11px;
-  bottom: 11px;
+  left: 5px;
+  top: 10px;
+  bottom: 10px;
   width: 2px;
   border-radius: 999px;
-  background: var(--side-handle-accent, rgba(15, 23, 42, 0.18));
+  background: var(--side-handle-grip, rgba(15, 23, 42, 0.18));
 }
 
 .collapseHandleEdge :global(svg) {
-  opacity: 0;
-  transform: translateX(2px);
+  position: relative;
+  z-index: 1;
+  opacity: 0.78;
+  transform: translateX(-1px);
   transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.collapseHandleEdge:hover {
+  background: var(--side-handle-bg-hover, rgba(255, 255, 255, 0.86));
+  border-color: var(--side-handle-border-hover, rgba(0, 0, 0, 0.12));
+}
+
+.collapseHandleEdge:active {
+  background: var(--side-handle-bg-active, rgba(255, 255, 255, 0.90));
 }
 
 .collapseHandleEdge:hover :global(svg) {
   opacity: 1;
-  transform: translateX(0);
+  transform: translateX(-2px);
+}
+
+.collapseHandleEdge:focus-visible {
+  outline: none;
+  box-shadow:
+    0 10px 22px rgba(0, 0, 0, 0.12),
+    0 0 0 3px rgba(var(--sentra-accent-rgb), 0.18);
 }
 
 .floatingToggle {
   position: fixed;
   left: 0;
-  top: var(--side-taskbar-top, 30px);
+  top: auto;
+  bottom: 92px;
   z-index: 9950;
   pointer-events: auto;
-  width: 34px;
-  height: 44px;
+  width: 16px;
+  height: 34px;
   background: transparent;
-}
-
-.floatingTogglePerformance .collapseHandle::before {
-  box-shadow: none;
+  --side-handle-bg: linear-gradient(var(--sentra-accent-tint-08), var(--sentra-accent-tint-08)), var(--sentra-panel-bg-strong);
+  --side-handle-bg-hover: linear-gradient(var(--sentra-accent-tint-12), var(--sentra-accent-tint-12)), var(--sentra-panel-bg-strong);
+  --side-handle-bg-active: linear-gradient(var(--sentra-accent-tint-16), var(--sentra-accent-tint-16)), var(--sentra-panel-bg-strong);
+  --side-handle-border: var(--sentra-border-strong);
+  --side-handle-border-hover: rgba(var(--sentra-accent-rgb), 0.32);
+  --side-handle-fg: rgba(15, 23, 42, 0.82);
+  --side-handle-grip: rgba(var(--sentra-accent-rgb), 0.26);
 }
 
 .floatingTogglePerformance .collapseHandle :global(svg) {
@@ -80,45 +100,38 @@
 }
 
 .collapseHandle {
-  width: 34px;
-  height: 44px;
+  width: 16px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   color: var(--side-handle-fg, rgba(15, 23, 42, 0.85));
-  background: transparent;
-  position: relative;
-}
-
-.collapseHandle::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 14px;
-  height: 44px;
-  border-radius: 0 10px 10px 0;
   background: var(--side-handle-bg, rgba(255, 255, 255, 0.78));
   border: 1px solid var(--side-handle-border, rgba(0, 0, 0, 0.10));
   border-left: none;
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
+  border-radius: 0 10px 10px 0;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(10px);
+  position: relative;
 }
 
 .collapseHandle::after {
   content: '';
   position: absolute;
-  left: 4px;
-  top: 11px;
-  bottom: 11px;
+  right: 5px;
+  top: 10px;
+  bottom: 10px;
   width: 2px;
   border-radius: 999px;
-  background: var(--side-handle-accent, rgba(15, 23, 42, 0.18));
+  background: var(--side-handle-grip, rgba(15, 23, 42, 0.18));
 }
 
 .collapseHandle :global(svg) {
-  opacity: 0;
-  transform: translateX(-2px);
+  position: relative;
+  z-index: 1;
+  opacity: 0.82;
+  transform: translateX(1px);
   transition: opacity 0.12s ease, transform 0.12s ease;
 }
 
@@ -128,7 +141,23 @@
 
 .collapseHandle:hover :global(svg) {
   opacity: 1;
-  transform: translateX(0);
+  transform: translateX(2px);
+}
+
+.collapseHandle:hover {
+  background: var(--side-handle-bg-hover, rgba(255, 255, 255, 0.86));
+  border-color: var(--side-handle-border-hover, rgba(0, 0, 0, 0.12));
+}
+
+.collapseHandle:active {
+  background: var(--side-handle-bg-active, rgba(255, 255, 255, 0.90));
+}
+
+.collapseHandle:focus-visible {
+  outline: none;
+  box-shadow:
+    0 10px 22px rgba(0, 0, 0, 0.12),
+    0 0 0 3px rgba(var(--sentra-accent-rgb), 0.18);
 }
 
 .inner {
@@ -139,8 +168,8 @@
   flex-direction: column;
   padding: 8px 6px;
   gap: 8px;
-  background: rgba(255, 255, 255, 0.85);
-  border-right: 1px solid rgba(255, 255, 255, 0.25);
+  background: linear-gradient(var(--sentra-accent-tint-12), var(--sentra-accent-tint-12)), var(--sentra-panel-bg);
+  border-right: 1px solid var(--sentra-border-strong);
   box-shadow: 1px 0 8px rgba(0, 0, 0, 0.05);
   transition: width 0.16s ease;
 }
@@ -148,10 +177,6 @@
 .performance .inner {
   box-shadow: none;
   transition: none;
-}
-
-.performance .collapseHandleEdge::before {
-  box-shadow: none;
 }
 
 .performance .collapseHandleEdge :global(svg) {
@@ -168,15 +193,15 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: rgba(0, 0, 0, 0.82);
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  color: var(--sentra-fg);
+  background: var(--sentra-panel-bg-strong);
+  border: 1px solid var(--sentra-border-strong);
   border-left: none;
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.16);
 }
 
 .toggle:hover {
-  background: rgba(255, 255, 255, 1);
+  background: var(--sentra-panel-bg-strong);
 }
 
 .tabs {
@@ -199,9 +224,9 @@
   gap: 10px;
   padding: 0 10px;
   cursor: pointer;
-  color: rgba(0, 0, 0, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.28);
+  color: var(--sentra-fg);
+  border: 1px solid var(--sentra-border);
+  background: var(--sentra-glass-bg);
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -210,12 +235,24 @@
 }
 
 .tab:hover {
-  background: rgba(255, 255, 255, 0.5);
+  background: linear-gradient(var(--sentra-accent-tint-16), var(--sentra-accent-tint-16)), var(--sentra-glass-bg-strong);
 }
 
 .tabActive {
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--sentra-panel-bg-strong);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  border-color: rgba(var(--sentra-accent-rgb), 0.55);
+}
+
+.tabActive::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--sentra-accent);
 }
 
 .performance .tabActive {

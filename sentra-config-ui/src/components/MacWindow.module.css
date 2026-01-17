@@ -1,6 +1,6 @@
 .window {
     /* Position is handled by inline styles for Draggable/Maximized logic */
-    background: var(--mac-window-bg);
+    background: linear-gradient(var(--sentra-accent-tint-08), var(--sentra-accent-tint-08)), var(--mac-window-bg);
     /* 适当降低模糊半径，减少 GPU 压力 */
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
@@ -10,7 +10,7 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--sentra-border-strong);
     /* Transition removed to avoid conflict with Draggable/Framer Motion */
 }
 
@@ -41,7 +41,7 @@
 
 .window.active {
     box-shadow: var(--mac-window-shadow-active, var(--mac-window-shadow));
-    border-color: rgba(0, 0, 0, 0.12);
+    border-color: rgba(var(--sentra-accent-rgb), 0.35);
 }
 
 .window.performance.active {
@@ -50,8 +50,8 @@
 
 .titleBar {
     height: 32px;
-    background: #f0f0f0;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    background: linear-gradient(var(--sentra-accent-tint-12), var(--sentra-accent-tint-12)), var(--sentra-panel-bg-strong);
+    border-bottom: 1px solid var(--sentra-border-strong);
     display: flex;
     align-items: center;
     padding: 0 0 0 12px;
@@ -81,12 +81,12 @@
     justify-content: center;
     cursor: pointer;
     transition: background 0.2s;
-    color: #333;
+    color: var(--sentra-fg);
     font-size: 14px;
 }
 
 .btn:hover {
-    background: rgba(0, 0, 0, 0.1);
+    background: rgba(0, 0, 0, 0.08);
 }
 
 .close:hover {
@@ -98,7 +98,7 @@
     flex: 1;
     text-align: left;
     font-size: 12px;
-    color: #333;
+    color: var(--sentra-fg);
     display: flex;
     align-items: center;
     gap: 6px;
@@ -140,13 +140,17 @@
     overflow: hidden;
     /* Let child handle scrolling */
     position: relative;
-    background: rgba(255, 255, 255, 0.92);
+    background: linear-gradient(var(--sentra-accent-tint-12), var(--sentra-accent-tint-12)), var(--sentra-panel-bg-strong);
     display: flex;
     flex-direction: column;
 }
 
 .window.maximized .content {
-    background: rgba(255, 255, 255, 0.98);
+    background: linear-gradient(var(--sentra-accent-tint-08), var(--sentra-accent-tint-08)), var(--sentra-panel-bg-strong);
+}
+
+:root[data-theme='dark'] .btn:hover {
+    background: rgba(255, 255, 255, 0.10);
 }
 
 /* Resize handles */

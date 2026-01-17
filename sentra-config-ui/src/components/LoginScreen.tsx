@@ -118,8 +118,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, wallpaper }) 
                 {/* Avatar */}
                 <div className={styles.avatarContainer}>
                     <img
-                        src="/sentra.png"
-                        alt="User"
+                        src="/icons/sentra.svg"
+                        alt="Sentra"
                         className={styles.avatarImg}
                     />
                     {loading && <div className={styles.loadingSpinner} />}

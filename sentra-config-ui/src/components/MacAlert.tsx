@@ -116,16 +116,16 @@ export const MacAlert: React.FC<MacAlertProps> = ({
                                     padding: '6px 12px',
                                     borderRadius: '6px',
                                     border: 'none',
-                                    background: isDanger ? '#FF3B30' : '#007AFF',
+                                    background: isDanger ? '#FF3B30' : 'var(--sentra-accent)',
                                     fontSize: '13px',
                                     fontWeight: 600,
-                                    color: 'white',
+                                    color: isDanger ? 'white' : 'var(--sentra-accent-contrast)',
                                     cursor: 'pointer',
                                     outline: 'none',
                                     boxShadow: '0 1px 2px rgba(0,0,0,0.15)',
                                 }}
-                                onMouseOver={e => e.currentTarget.style.background = isDanger ? '#FF2D55' : '#0066D6'}
-                                onMouseOut={e => e.currentTarget.style.background = isDanger ? '#FF3B30' : '#007AFF'}
+                                onMouseOver={e => e.currentTarget.style.background = isDanger ? '#FF2D55' : 'rgba(var(--sentra-accent-rgb), 0.90)'}
+                                onMouseOut={e => e.currentTarget.style.background = isDanger ? '#FF3B30' : 'var(--sentra-accent)'}
                             >
                                 {confirmText}
                             </button>

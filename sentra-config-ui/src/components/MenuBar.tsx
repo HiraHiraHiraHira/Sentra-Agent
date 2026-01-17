@@ -9,10 +9,10 @@ import {
   IoBluetooth,
   IoVolumeHigh,
   IoSunny,
-  IoMoon,
   IoApps,
   IoReload,
   IoBookOutline,
+  IoChevronDown,
 } from 'react-icons/io5';
 import { BsController } from 'react-icons/bs';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -25,8 +25,8 @@ interface MenuBarProps {
   onAppleClick?: () => void;
   brightness: number;
   setBrightness: (val: number) => void;
-  theme: 'light' | 'dark';
-  onToggleTheme: () => void;
+  accentColor: string;
+  setAccentColor: (val: string) => void;
   showDock: boolean;
   onToggleDock: () => void;
   onOpenDeepWiki: () => void;
@@ -54,8 +54,8 @@ export const MenuBar: React.FC<MenuBarProps> = ({
   onAppleClick,
   brightness,
   setBrightness,
-  theme,
-  onToggleTheme,
+  accentColor,
+  setAccentColor,
   showDock,
   onToggleDock,
   onOpenDeepWiki,
@@ -64,7 +64,23 @@ export const MenuBar: React.FC<MenuBarProps> = ({
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
   const [showControlCenter, setShowControlCenter] = useState(false);
   const [showSpotlight, setShowSpotlight] = useState(false);
+  const [showAccentPicker, setShowAccentPicker] = useState(false);
   const [spotlightQuery, setSpotlightQuery] = useState('');
+
+  const accentPresets = [
+    '#007AFF',
+    '#34C759',
+    '#FF9500',
+    '#FF3B30',
+    '#AF52DE',
+    '#FF2D55',
+    '#00C7BE',
+    '#5AC8FA',
+    '#5856D6',
+    '#A2845E',
+    '#8E8E93',
+    '#111827',
+  ];
 
   // Restart State
   const [showRestartAlert, setShowRestartAlert] = useState(false);
@@ -89,6 +105,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
       setActiveMenu(null);
       setShowControlCenter(false);
       setShowSpotlight(false);
+      setShowAccentPicker(false);
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
@@ -139,22 +156,54 @@ export const MenuBar: React.FC<MenuBarProps> = ({
         <div className={styles.right}>
           <div
             className={styles.menuItem}
-            onClick={(e) => { e.stopPropagation(); onToggleDock(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleDock();
+            }}
             title={showDock ? '隐藏常用应用' : '显示常用应用'}
             style={{ opacity: showDock ? 1 : 0.5 }}
           >
             <IoApps size={18} />
           </div>
-          <div className={styles.menuItem} onClick={onToggleTheme} title={theme === 'dark' ? '切换到日间模式' : '切换到夜间模式'}>
-            {theme === 'dark' ? <IoMoon size={18} /> : <IoSunny size={18} />}
+          <div
+            className={`${styles.menuItem} ${styles.accentMenuItem} ${showAccentPicker ? styles.active : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveMenu(null);
+              setShowControlCenter(false);
+              setShowSpotlight(false);
+              setShowAccentPicker(v => !v);
+            }}
+            title="切换应用主题颜色（Accent）"
+          >
+            <div className={styles.accentButton}>
+              <span className={styles.accentDot} />
+              <IoChevronDown className={styles.accentChevron} size={14} />
+            </div>
           </div>
           <div className={styles.menuItem}>
             <IoWifi size={18} />
           </div>
-          <div className={styles.menuItem} onClick={() => setShowSpotlight(!showSpotlight)}>
+          <div
+            className={styles.menuItem}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowControlCenter(false);
+              setShowAccentPicker(false);
+              setShowSpotlight(v => !v);
+            }}
+          >
             <IoSearch size={18} />
           </div>
-          <div className={styles.menuItem} onClick={() => setShowControlCenter(!showControlCenter)}>
+          <div
+            className={styles.menuItem}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowSpotlight(false);
+              setShowAccentPicker(false);
+              setShowControlCenter(v => !v);
+            }}
+          >
             <BsController size={18} />
           </div>
           <div
@@ -198,7 +247,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
               left: 0,
               width: '100vw',
               height: '100vh',
-              background: 'rgba(255, 255, 255, 0.95)', // Solid background instead of blur
+              background: 'rgba(255, 255, 255, 0.95)',
               zIndex: 99999,
               display: 'flex',
               flexDirection: 'column',
@@ -213,7 +262,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
               width: 40,
               height: 40,
               border: '4px solid rgba(0,0,0,0.1)',
-              borderTop: '4px solid #007AFF',
+              borderTop: '4px solid var(--sentra-accent)',
               borderRadius: '50%',
               marginBottom: 20,
               animation: 'spin 1s linear infinite'
@@ -236,7 +285,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
             onClick={e => e.stopPropagation()}
           >
             <div className={styles.spotlightBar}>
-              <IoSearch size={24} color="#999" />
+              <IoSearch size={24} color="var(--sentra-muted-fg)" />
               <form onSubmit={handleSpotlightSearch} style={{ width: '100%' }}>
                 <input
                   type="text"
@@ -249,7 +298,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
               </form>
             </div>
             {spotlightQuery && (
-              <div className={styles.spotlightResults} style={{ background: 'rgba(255, 255, 255, 0.95)', borderRadius: '0 0 12px 12px' }}>
+              <div className={styles.spotlightResults} style={{ borderRadius: '0 0 12px 12px' }}>
                 <iframe
                   src={`https://www.bing.com/search?q=${encodeURIComponent(spotlightQuery)}&igu=1`}
                   title="Bing Search"
@@ -309,6 +358,69 @@ export const MenuBar: React.FC<MenuBarProps> = ({
                   <div className={styles.ccIcon}><IoVolumeHigh /></div>
                   <div className={styles.ccSlider}><div className={styles.ccSliderFill} style={{ width: '50%' }} /></div>
                 </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Accent Picker */}
+      <AnimatePresence>
+        {showAccentPicker && (
+          <motion.div
+            className={styles.accentPicker}
+            initial={{ opacity: 0, scale: 0.96, x: 10, y: -10 }}
+            animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96 }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className={styles.accentHeader}>
+              <div className={styles.accentTitle}>应用主题颜色（Accent）</div>
+              <div className={styles.accentPreview}>
+                <span className={styles.accentPreviewDot} />
+                <span className={styles.accentPreviewHex}>{String(accentColor || '').toUpperCase()}</span>
+              </div>
+            </div>
+
+            <div className={styles.swatchGrid}>
+              {accentPresets.map((c) => {
+                const isActive = String(accentColor || '').toUpperCase() === c;
+                return (
+                  <div
+                    key={c}
+                    className={`${styles.swatch} ${isActive ? styles.swatchActive : ''}`}
+                    style={{ background: c }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setAccentColor(c);
+                    }}
+                    title={c}
+                  />
+                );
+              })}
+            </div>
+
+            <div className={styles.customRow}>
+              <div className={styles.customLabel}>自定义</div>
+              <div className={styles.customControls}>
+                <input
+                  className={styles.colorInput}
+                  type="color"
+                  value={String(accentColor || '#007AFF')}
+                  onChange={(e) => setAccentColor(e.target.value)}
+                  title="打开系统调色盘"
+                />
+                <button
+                  className={styles.resetBtn}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAccentColor('#007AFF');
+                  }}
+                  type="button"
+                  title="重置为默认"
+                >
+                  重置
+                </button>
               </div>
             </div>
           </motion.div>
