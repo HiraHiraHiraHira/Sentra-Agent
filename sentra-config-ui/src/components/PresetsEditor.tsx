@@ -273,6 +273,7 @@ export const PresetsEditor: React.FC<PresetsEditorProps> = ({ theme, state, perf
                                                 if (performanceMode && next) {
                                                     const ok = confirm('性能模式已开启，启用高级编辑器会增加内存占用并可能引发卡顿，仍要启用吗？');
                                                     if (!ok) return v;
+                                                    addToast('info', '性能模式已开启', '已启用高级编辑器（Monaco），可能增加内存占用并引发卡顿');
                                                 }
                                                 return next;
                                             });
