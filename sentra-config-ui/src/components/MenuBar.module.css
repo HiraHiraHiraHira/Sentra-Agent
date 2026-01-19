@@ -12,7 +12,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 0 12px;
-  z-index: 9999;
+  z-index: 1000000001;
   font-size: 13px;
   color: var(--sentra-fg);
   user-select: none;

@@ -556,6 +556,16 @@ async function update() {
             }
         }
 
+        if (!isForce) {
+            const uiDir = path.resolve(ROOT_DIR, 'sentra-config-ui');
+            const uiLabel = path.relative(ROOT_DIR, uiDir) || 'sentra-config-ui';
+            const alreadyQueued = installQueue.some((x) => x && x.type === 'node' && x.dir === uiDir);
+            if (!alreadyQueued && isNodeProject(uiDir)) {
+                console.log(chalk.yellow(`  [Node] ${uiLabel}: post-update safeguard → install needed`));
+                installQueue.push({ dir: uiDir, label: uiLabel, type: 'node', reason: 'post-update safeguard' });
+            }
+        }
+
         // Step 4: Execute Installations
         if (installQueue.length > 0) {
             console.log(chalk.cyan(`\n📥 Installing dependencies for ${installQueue.length} targets...\n`));

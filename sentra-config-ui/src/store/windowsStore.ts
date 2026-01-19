@@ -79,6 +79,14 @@ function normalizePersistedWindows(raw: any): DeskWindow[] {
   });
 }
 
+function filterVarsByExample(file: FileItem, vars: FileItem['variables']) {
+  if (!file.hasEnv || !file.hasExample) return vars;
+  const example = file.exampleVariables || [];
+  if (!Array.isArray(example) || example.length === 0) return vars;
+  const exampleKeys = new Set(example.map(v => String(v.key || '')));
+  return (vars || []).filter(v => exampleKeys.has(String(v.key || '')));
+}
+
 export const useWindowsStore = create<WindowsStore>((set, get) => {
   ensurePersistenceHooks();
 
@@ -137,7 +145,7 @@ export const useWindowsStore = create<WindowsStore>((set, get) => {
       file,
       z: zNext,
       minimized: false,
-      editedVars: file.variables ? [...file.variables] : [],
+      editedVars: filterVarsByExample(file, file.variables ? [...file.variables] : []),
       pos: c,
       maximized: !!opts?.maximize,
     };
@@ -172,10 +180,11 @@ export const useWindowsStore = create<WindowsStore>((set, get) => {
 
         if (!found) return w;
 
+        const nextFile = { ...(found as any), type: w.file.type } as FileItem;
         return {
           ...w,
-          file: { ...(found as any), type: w.file.type },
-          editedVars: found.variables ? [...found.variables] : [],
+          file: nextFile,
+          editedVars: filterVarsByExample(nextFile, found.variables ? [...found.variables] : []),
         };
       });
       return { ...prev, openWindows: next };

@@ -11,6 +11,14 @@ export type UseIOSEditorParams = {
   loadConfigs: (silent?: boolean) => Promise<void> | void;
 };
 
+function filterVarsByExample(file: FileItem, vars: EnvVariable[]) {
+  if (!file.hasEnv || !file.hasExample) return vars;
+  const example = file.exampleVariables || [];
+  if (!Array.isArray(example) || example.length === 0) return vars;
+  const exampleKeys = new Set(example.map(v => String(v.key || '')));
+  return (vars || []).filter(v => exampleKeys.has(String(v.key || '')));
+}
+
 export function useIOSEditor({ setSaving, addToast, loadConfigs }: UseIOSEditorParams) {
   const [iosEditorWindows, setIosEditorWindows] = useState<IOSEditorWin[]>([]);
   const [activeIOSEditorId, setActiveIOSEditorId] = useState<string | null>(null);
@@ -31,7 +39,7 @@ export function useIOSEditor({ setSaving, addToast, loadConfigs }: UseIOSEditorP
     const win: IOSEditorWin = {
       id,
       file,
-      editedVars: file.variables ? [...file.variables] : [],
+      editedVars: filterVarsByExample(file, file.variables ? [...file.variables] : []),
       minimized: false,
     };
     setIosEditorWindows(prev => [...prev, win]);
