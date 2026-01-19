@@ -135,19 +135,37 @@ function hasMarkdownImage(s) {
   return /!\[[^\]]*\]\([^)]+\)/i.test(String(s || ''));
 }
 
+function isDataImageBase64(url) {
+  return /^data:image\/[a-z0-9.+-]+;base64,/i.test(String(url || '').trim());
+}
+
+function sanitizeDetailText(text, maxLen = 4000) {
+  let s = String(text || '');
+  s = s.replace(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi, 'data:image/...;base64,(omitted)');
+  if (s.length > maxLen) s = `${s.slice(0, maxLen)}...(truncated)`;
+  return s;
+}
+
 async function downloadImagesAndRewrite(md) {
   const re = /!\[([^\]]*)\]\(([^)]+)\)/g;
   const urls = new Set();
+  const dataUrls = new Set();
   let m;
   while ((m = re.exec(md)) !== null) {
     const url = String(m[2] || '').trim();
+    if (!url) continue;
+    if (isDataImageBase64(url)) {
+      dataUrls.add(url);
+      continue;
+    }
     if (isHttpUrl(url)) urls.add(url);
   }
-  if (urls.size === 0) return md;
+  if (urls.size === 0 && dataUrls.size === 0) return md;
   const baseDir = 'artifacts';
   await fs.mkdir(baseDir, { recursive: true });
 
   const map = new Map();
+  const dataMap = new Map();
   let idx = 0;
   for (const url of urls) {
     try {
@@ -182,9 +200,35 @@ async function downloadImagesAndRewrite(md) {
       // ignore this url; keep original link
     }
   }
+
+  for (const dataUrl of dataUrls) {
+    try {
+      const match = dataUrl.match(/^data:([^;]+);base64,(.*)$/i);
+      if (!match) continue;
+      const mimeType = (match[1] || '').trim() || 'image/png';
+      const b64 = String(match[2] || '').trim().replace(/\s+/g, '');
+      if (!b64) continue;
+      const buf = Buffer.from(b64, 'base64');
+      let ext = '';
+      if (mimeType && mimeType.toLowerCase().startsWith('image/')) {
+        const e = mime.extension(mimeType);
+        if (e) ext = `.${e}`;
+      }
+      if (!ext) ext = '.png';
+      const name = `edit_${Date.now()}_${idx++}${ext}`;
+      const abs = path.resolve(baseDir, name);
+      await fs.writeFile(abs, buf);
+      const absMd = String(abs).replace(/\\/g, '/');
+      dataMap.set(dataUrl, absMd);
+    } catch {
+      // ignore decode errors; keep original data URL
+    }
+  }
+
   return md.replace(re, (full, alt, url) => {
     const key = String(url || '').trim();
     if (map.has(key)) return `![${alt}](${map.get(key)})`;
+    if (dataMap.has(key)) return `![${alt}](${dataMap.get(key)})`;
     return full;
   });
 }
@@ -235,7 +279,7 @@ export default async function handler(args = {}, options = {}) {
     }
     return fail('response has no markdown image', 'NO_MD_IMAGE', {
       advice: buildAdvice('NO_MD_IMAGE', { tool: 'image_vision_edit', prompt }),
-      detail: { prompt, content },
+      detail: { prompt, content: sanitizeDetailText(content) },
     });
   } catch (e) {
     logger.warn?.('image_vision_edit:request_failed', { label: 'PLUGIN', error: String(e?.message || e) });

@@ -89,6 +89,13 @@ function htmlUnescapeBasic(s) {
     .replace(/&gt;/g, '>');
 }
 
+function sanitizeDetailText(text, maxLen = 4000) {
+  let s = String(text || '');
+  s = s.replace(/data:[^;]+;base64,[a-z0-9+/=\s]+/gi, 'data:...;base64,(omitted)');
+  if (s.length > maxLen) s = `${s.slice(0, maxLen)}...(truncated)`;
+  return s;
+}
+
 function isLikelyVideoUrl(url) {
   if (!isHttpUrl(url)) return false;
   try {
@@ -292,7 +299,7 @@ export default async function handler(args = {}, options = {}) {
     if (!hasVideoLink(content)) {
       return fail('response has no usable video link', 'NO_VIDEO_LINK', {
         advice: buildAdvice('NO_VIDEO_LINK', { tool: 'video_generate', prompt }),
-        detail: { prompt, content },
+        detail: { prompt, content: sanitizeDetailText(content) },
       });
     }
     const rewritten = await downloadVideosAndRewrite(content, 'video');
@@ -300,7 +307,7 @@ export default async function handler(args = {}, options = {}) {
     if (!localMarkdown) {
       return fail('unable to download video to local markdown', 'NO_LOCAL_VIDEO', {
         advice: buildAdvice('NO_LOCAL_VIDEO', { tool: 'video_generate', prompt }),
-        detail: { prompt, content: rewritten },
+        detail: { prompt, content: sanitizeDetailText(rewritten) },
       });
     }
     return ok({ prompt, content: localMarkdown });
