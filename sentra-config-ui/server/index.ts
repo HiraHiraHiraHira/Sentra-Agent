@@ -72,11 +72,15 @@ async function start() {
     })(),
   });
 
-  await fastify.register(compress, {
-    global: true,
-    encodings: ['br', 'gzip', 'deflate'],
-    threshold: 1024,
-  });
+  try {
+    await fastify.register(compress, {
+      global: true,
+      encodings: ['br', 'gzip', 'deflate'],
+      threshold: 1024,
+    });
+  } catch (err) {
+    fastify.log.warn({ err }, '[Compress] Failed to register @fastify/compress (version mismatch?).');
+  }
 
   // Authentication Middleware
   fastify.addHook('onRequest', async (request, reply) => {
