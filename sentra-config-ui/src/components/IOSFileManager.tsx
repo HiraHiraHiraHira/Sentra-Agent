@@ -16,6 +16,7 @@ import {
     FileNode
 } from '../services/fileApi';
 import { ToastMessage } from './Toast';
+import { SentraInlineLoading } from './SentraInlineLoading';
 
 interface IOSFileManagerProps {
     onClose: () => void;
@@ -276,7 +277,7 @@ export const IOSFileManager: React.FC<IOSFileManagerProps> = ({ onClose, addToas
                 {viewMode === 'list' ? (
                     <div style={{ height: '100%', overflowY: 'auto' }}>
                         {loading && !fileTree.length ? (
-                            <div style={{ padding: 20, textAlign: 'center', color: '#666' }}>加载中...</div>
+                            <SentraInlineLoading text="加载中..." />
                         ) : (
                             currentNodes.map(node => (
                                 <div

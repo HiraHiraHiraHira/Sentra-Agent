@@ -75,8 +75,9 @@ async function start() {
   try {
     await fastify.register(compress, {
       global: true,
-      encodings: ['br', 'gzip', 'deflate'],
-      threshold: 1024,
+      encodings: ['gzip', 'deflate'],
+      threshold: 2048,
+      customTypes: /^(application\/json|text\/plain|text\/html)(;|$)/i,
     });
   } catch (err) {
     fastify.log.warn({ err }, '[Compress] Failed to register @fastify/compress (version mismatch?).');
@@ -444,6 +445,7 @@ async function start() {
       await fastify.register(fastifyStatic, {
         root: distPath,
         prefix: '/',
+        preCompressed: true,
         setHeaders: (res, filePath) => {
           const p = String(filePath || '');
           const n = p.replace(/\\/g, '/');

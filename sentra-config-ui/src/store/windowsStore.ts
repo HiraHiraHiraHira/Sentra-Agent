@@ -22,6 +22,9 @@ type WindowsStore = {
   syncWindowsFromConfigData: (data: ConfigData) => void;
 };
 
+const WINDOW_Z_START = 1000;
+const WINDOW_Z_MAX = 999_999_900;
+
 let persistTimer: number | null = null;
 let persisted = false;
 
@@ -32,7 +35,8 @@ function schedulePersist() {
   persistTimer = window.setTimeout(() => {
     const st = useWindowsStore.getState();
     storage.setJson('sentra_open_windows', st.openWindows);
-    storage.setNumber('sentra_z_next', Number(st.openWindows.reduce((m, w) => Math.max(m, Number(w.z || 0)), 0) + 1));
+    const next = Number(st.openWindows.reduce((m, w) => Math.max(m, Number(w.z || 0)), 0) + 1);
+    storage.setNumber('sentra_z_next', Math.min(next, WINDOW_Z_MAX));
   }, 1000);
 }
 
@@ -44,7 +48,9 @@ function flushPersist() {
   const st = useWindowsStore.getState();
   storage.setJson('sentra_open_windows', st.openWindows);
   const maxZ = st.openWindows.reduce((m, w) => Math.max(m, Number(w.z || 0)), 0);
-  storage.setNumber('sentra_z_next', Math.max(storage.getNumber('sentra_z_next', { fallback: 0 }), maxZ + 1));
+  const saved = storage.getNumber('sentra_z_next', { fallback: 0 });
+  const next = Math.max(saved, maxZ + 1);
+  storage.setNumber('sentra_z_next', Math.min(next, WINDOW_Z_MAX));
 }
 
 function ensurePersistenceHooks() {
@@ -79,6 +85,16 @@ function normalizePersistedWindows(raw: any): DeskWindow[] {
   });
 }
 
+function normalizeWindowZ(windows: DeskWindow[]) {
+  const ordered = [...windows].sort((a, b) => Number(a.z || WINDOW_Z_START) - Number(b.z || WINDOW_Z_START));
+  let z = WINDOW_Z_START;
+  const mapped = ordered.map(w => {
+    z += 1;
+    return { ...w, z };
+  });
+  return { windows: mapped, zNext: z };
+}
+
 function filterVarsByExample(file: FileItem, vars: FileItem['variables']) {
   if (!file.hasEnv || !file.hasExample) return vars;
   const example = file.exampleVariables || [];
@@ -90,19 +106,40 @@ function filterVarsByExample(file: FileItem, vars: FileItem['variables']) {
 export const useWindowsStore = create<WindowsStore>((set, get) => {
   ensurePersistenceHooks();
 
-  const openWindows = normalizePersistedWindows(storage.getJson<any>('sentra_open_windows', { fallback: [] }));
+  let openWindows = normalizePersistedWindows(storage.getJson<any>('sentra_open_windows', { fallback: [] }));
+  const persistedMaxZ = openWindows.reduce((m, w) => Math.max(m, Number(w.z || WINDOW_Z_START)), WINDOW_Z_START);
+  if (persistedMaxZ >= WINDOW_Z_MAX) {
+    const normalized = normalizeWindowZ(openWindows);
+    openWindows = normalized.windows;
+    storage.setJson('sentra_open_windows', openWindows);
+    storage.setNumber('sentra_z_next', normalized.zNext);
+  }
+
   const savedZ = storage.getNumber('sentra_z_next', { fallback: 0 });
-  const maxZ = openWindows.reduce((m, w) => Math.max(m, Number(w.z || 1000)), 1000) + 1;
-  let zNext = Math.max(savedZ, maxZ);
+  const maxZ = openWindows.reduce((m, w) => Math.max(m, Number(w.z || WINDOW_Z_START)), WINDOW_Z_START) + 1;
+  let zNext = Math.min(Math.max(savedZ, maxZ), WINDOW_Z_MAX);
+
+  const ensureZCapacity = () => {
+    if (zNext < WINDOW_Z_MAX) return;
+    const normalized = normalizeWindowZ(get().openWindows);
+    zNext = normalized.zNext;
+    set(prev => ({ ...prev, openWindows: normalized.windows }));
+    storage.setJson('sentra_open_windows', normalized.windows);
+    storage.setNumber('sentra_z_next', zNext);
+  };
 
   const allocateZ = () => {
+    ensureZCapacity();
     zNext += 1;
+    if (zNext >= WINDOW_Z_MAX) ensureZCapacity();
     storage.setNumber('sentra_z_next', zNext);
     return zNext;
   };
 
   const bringToFront = (id: string) => {
+    ensureZCapacity();
     zNext += 1;
+    if (zNext >= WINDOW_Z_MAX) ensureZCapacity();
     storage.setNumber('sentra_z_next', zNext);
     set(prev => ({
       ...prev,
@@ -137,7 +174,9 @@ export const useWindowsStore = create<WindowsStore>((set, get) => {
 
     const id = `w_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const c = centerPos();
+    ensureZCapacity();
     zNext += 1;
+    if (zNext >= WINDOW_Z_MAX) ensureZCapacity();
     storage.setNumber('sentra_z_next', zNext);
 
     const win: DeskWindow = {

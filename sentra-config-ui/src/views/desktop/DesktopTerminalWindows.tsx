@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react';
 import { IoCubeOutline, IoTerminalOutline } from 'react-icons/io5';
 import { MacWindow } from '../../components/MacWindow';
+import { SentraLoading } from '../../components/SentraLoading';
 import type { TerminalWin } from '../../types/ui';
 
 const TerminalWindow = lazy(() => import('../../components/TerminalWindow').then(module => ({ default: module.TerminalWindow })));
@@ -62,7 +63,7 @@ export function DesktopTerminalWindows(props: DesktopTerminalWindowsProps) {
             setTerminalWindows(prev => prev.map(w => w.id === terminal.id ? { ...w, pos: { x, y } } : w));
           }}
         >
-          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载中...</div>}>
+          <Suspense fallback={<SentraLoading title="加载终端" subtitle="首次打开可能较慢，请稍等..." />}>
             <TerminalWindow
               processId={terminal.processId}
               theme={terminal.theme}

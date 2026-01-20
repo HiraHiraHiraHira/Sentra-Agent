@@ -32,7 +32,7 @@ export const MacAlert: React.FC<MacAlertProps> = ({
                     left: 0,
                     width: '100vw',
                     height: '100vh',
-                    zIndex: 9999,
+                    zIndex: 1000000002,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',

@@ -1,8 +1,8 @@
-import React, { Suspense, lazy, useState, useEffect, useCallback } from 'react';
+import React, { Suspense, useState, useEffect, useCallback } from 'react';
 import styles from './FileManager.module.css';
 import {
     IoRefresh, IoFolderOpen, IoDocumentText,
-    IoImage, IoCodeSlash, IoChevronForward, IoChevronDown,
+    IoImage, IoChevronForward, IoChevronDown,
     IoFolder, IoSettings, IoLogoMarkdown, IoClose
 } from 'react-icons/io5';
 import {
@@ -19,16 +19,12 @@ import {
 } from '../services/fileApi';
 import { ToastMessage } from './Toast';
 import { storage } from '../utils/storage';
+import { SentraInlineLoading } from './SentraInlineLoading';
 
-const MonacoEditor = lazy(async () => {
-    await import('../utils/monacoSetup');
+const MonacoEditor = React.lazy(async () => {
     const mod = await import('@monaco-editor/react');
     return { default: mod.default };
 });
-
-const readUseMonaco = () => {
-    return storage.getBool('sentra_file_manager_use_monaco', { fallback: false });
-};
 
 interface FileManagerProps {
     onClose: () => void;
@@ -170,12 +166,6 @@ export const FileManager: React.FC<FileManagerProps> = ({ onClose, addToast, the
     const [modalOpen, setModalOpen] = useState(false);
     const [modalType, setModalType] = useState<'createFile' | 'createFolder' | 'rename'>('createFile');
     const [modalInput, setModalInput] = useState('');
-
-    const [useMonaco, setUseMonaco] = useState(() => readUseMonaco());
-
-    useEffect(() => {
-        storage.setBool('sentra_file_manager_use_monaco', useMonaco);
-    }, [useMonaco]);
     const [targetNode, setTargetNode] = useState<FileNode | null>(null);
 
     const activeFilePathRef = React.useRef<string | null>(null);
@@ -599,37 +589,13 @@ export const FileManager: React.FC<FileManagerProps> = ({ onClose, addToast, the
                             </div>
                         )}
 
-                        {/* Editor Toggle */}
-                        <div
-                            className={styles.tab}
-                            onClick={() => {
-                                setUseMonaco((v: boolean) => {
-                                    const next = !v;
-                                    if (performanceMode && next) {
-                                        const ok = confirm('性能模式已开启，启用高级编辑器会增加内存占用并可能引发卡顿，仍要启用吗？');
-                                        if (!ok) return v;
-                                    }
-                                    return next;
-                                });
-                            }}
-                            style={{
-                                marginLeft: activeFile && activeFile.node.name.endsWith('.md') ? 0 : 'auto',
-                                borderLeft: '1px solid #333',
-                                minWidth: 'auto',
-                                borderRight: 'none'
-                            }}
-                            title={useMonaco ? '已启用高级编辑器（占用更高）' : '轻量编辑器（更省内存）'}
-                        >
-                            <IoCodeSlash />
-                            <span style={{ marginLeft: 6 }}>{useMonaco ? '高级' : '轻量'}</span>
-                        </div>
                     </div>
                 )}
 
                 <div className={styles.editorContainer}>
                     {activeFile ? (
                         (loading && loadingPathRef.current === activeFile.node.path) ? (
-                            <div className={styles.emptyState}>加载中...</div>
+                            <SentraInlineLoading text="加载中..." style={{ height: '100%', padding: 0 }} />
                         ) : activeFile.isBinary ? (
                             <div className={styles.imagePreview}>
                                 <img src={activeFile.content} alt={activeFile.node.name} />
@@ -672,8 +638,6 @@ export const FileManager: React.FC<FileManagerProps> = ({ onClose, addToast, the
                                         }}
                                     />
                                 );
-
-                                if (!useMonaco) return fallback;
 
                                 return (
                                     <Suspense fallback={fallback}>

@@ -16,7 +16,7 @@ import {
 } from '@ant-design/icons';
 import { PresetsEditorState } from '../hooks/usePresetsEditor';
 import type { ToastMessage } from './Toast';
-import { storage } from '../utils/storage';
+import { SentraInlineLoading } from './SentraInlineLoading';
 
 const MonacoEditor = lazy(async () => {
     await import('../utils/monacoSetup');
@@ -60,11 +60,7 @@ interface PresetsEditorProps {
     onOpenPresetImporter?: () => void;
 }
 
-const readUseMonaco = () => {
-    return storage.getBool('sentra_presets_use_monaco', { fallback: false });
-};
-
-export const PresetsEditor: React.FC<PresetsEditorProps> = ({ theme, state, performanceMode = false, onOpenPresetImporter, addToast }) => {
+export const PresetsEditor: React.FC<PresetsEditorProps> = ({ theme, state, performanceMode = false, onOpenPresetImporter }) => {
     const {
         folders,
         selectedFile,
@@ -86,12 +82,6 @@ export const PresetsEditor: React.FC<PresetsEditorProps> = ({ theme, state, perf
     const [showNewFileModal, setShowNewFileModal] = useState(false);
     const [newFileName, setNewFileName] = useState('');
     const [showDeleteModal, setShowDeleteModal] = useState(false);
-
-    const [useMonaco, setUseMonaco] = useState(() => readUseMonaco());
-
-    useEffect(() => {
-        storage.setBool('sentra_presets_use_monaco', useMonaco);
-    }, [useMonaco]);
 
     const editorContainerRef = useRef<HTMLDivElement | null>(null);
     const editorRef = useRef<import('monaco-editor').editor.IStandaloneCodeEditor | null>(null);
@@ -158,7 +148,7 @@ export const PresetsEditor: React.FC<PresetsEditorProps> = ({ theme, state, perf
                 rafId = null;
             }
         };
-    }, [selectedFile?.path, useMonaco]);
+    }, [selectedFile?.path]);
 
     // Filter folders and files based on search term
     const filteredFolders = searchTerm
@@ -221,7 +211,7 @@ export const PresetsEditor: React.FC<PresetsEditorProps> = ({ theme, state, perf
                 </div>
                 <div className={styles.fileList}>
                     {loading ? (
-                        <div style={{ padding: 20, textAlign: 'center', color: '#888' }}>加载中...</div>
+                        <SentraInlineLoading text="加载中..." />
                     ) : (
                         filteredFolders.map(folder => (
                             <div key={folder.name} className={styles.folderGroup}>
@@ -286,19 +276,6 @@ export const PresetsEditor: React.FC<PresetsEditorProps> = ({ theme, state, perf
 
                                     <Button
                                         size="small"
-                                        onClick={() => {
-                                            setUseMonaco((v) => {
-                                                const next = !v;
-                                                if (performanceMode && next) addToast('info', '性能模式已开启', '已启用高级编辑器（Monaco），可能增加内存占用并引发卡顿');
-                                                return next;
-                                            });
-                                        }}
-                                        title={useMonaco ? '已启用高级编辑器（占用更高）' : '轻量编辑器（更省内存）'}
-                                    >
-                                        {useMonaco ? '高级' : '轻量'}
-                                    </Button>
-                                    <Button
-                                        size="small"
                                         icon={<ReloadOutlined />}
                                         onClick={() => selectFile(selectedFile)}
                                     />
@@ -349,8 +326,6 @@ export const PresetsEditor: React.FC<PresetsEditorProps> = ({ theme, state, perf
                                                         }}
                                                     />
                                                 );
-
-                                                if (!useMonaco) return fallback;
 
                                                 return (
                                                     <Suspense fallback={fallback}>

@@ -3,6 +3,7 @@ import styles from './DeepWikiChat.module.css';
 import { getAuthHeaders } from '../services/api';
 import { createFile, fetchFileContent, fetchFileTree, grepFiles, searchSymbols, type FileNode, type GrepMatch, type SymbolMatch } from '../services/fileApi';
 import { IoAttachOutline, IoChevronDown, IoChevronForward, IoClose, IoDocumentText, IoFolder, IoFolderOpen, IoSearch } from 'react-icons/io5';
+import { SentraInlineLoading } from './SentraInlineLoading';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { v4 as uuidv4 } from 'uuid';
@@ -2449,7 +2450,7 @@ export const DeepWikiChat: React.FC<DeepWikiChatProps> = ({ theme }) => {
 
             <div className={styles.refList}>
               {refLoading ? (
-                <div className={styles.refEmpty}>加载中...</div>
+                <SentraInlineLoading text="加载中..." />
               ) : refSearch.trim() ? (
                 filteredRefFiles.length === 0 ? (
                   <div className={styles.refEmpty}>未找到匹配文件</div>
@@ -2565,7 +2566,7 @@ export const DeepWikiChat: React.FC<DeepWikiChatProps> = ({ theme }) => {
 
                   <div className={styles.toolsList}>
                     {refLoading ? (
-                      <div className={styles.refEmpty}>加载中...</div>
+                      <SentraInlineLoading text="加载中..." />
                     ) : (
                       (() => {
                         const q = fileKeyword.trim().toLowerCase();

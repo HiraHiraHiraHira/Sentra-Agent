@@ -485,13 +485,9 @@ export const EnvEditor: React.FC<EnvEditorProps> = ({
                                 placement="topLeft"
                                 title={<span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}>{row.key}</span>}
                               >
-                                <div className={styles.envMetaCnName}>{hasCnName ? displayName : '未提供中文名称'}</div>
+                                <div className={styles.envMetaCnName}>{hasCnName ? displayName : String(row.key || '未命名')}</div>
                               </Tooltip>
                             )}
-
-                            {!row.isNew ? (
-                              <div className={styles.envMetaKeyMuted}>{String(row.key || '')}</div>
-                            ) : null}
                           </div>
                           <div className={styles.envMetaTags}>
                             <Tag color="blue">{typeLabelMap[type]}</Tag>

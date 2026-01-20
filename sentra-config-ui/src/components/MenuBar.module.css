@@ -36,7 +36,7 @@
 
 .left {
   flex: 1 1 auto;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .right {
@@ -124,7 +124,7 @@
   left: 50%;
   transform: translateX(-50%);
   width: 600px;
-  z-index: 10000;
+  z-index: 1000000002;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -179,7 +179,7 @@
   backdrop-filter: blur(30px);
   border-radius: 16px;
   padding: 12px;
-  z-index: 10000;
+  z-index: 1000000002;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 20px 40px rgba(0, 0, 0, 0.15);
 }
 
@@ -267,13 +267,13 @@
 .accentPicker {
   position: fixed;
   top: 38px;
-  right: 12px;
+  left: 12px;
   width: 244px;
   background: linear-gradient(var(--sentra-accent-tint-16), var(--sentra-accent-tint-16)), var(--sentra-panel-bg);
   backdrop-filter: blur(30px);
   border-radius: 16px;
   padding: 10px;
-  z-index: 10000;
+  z-index: 1000000002;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 20px 40px rgba(0, 0, 0, 0.15);
   color: var(--sentra-fg);
 }
@@ -443,7 +443,7 @@
   backdrop-filter: blur(30px);
   border-radius: 16px;
   padding: 10px;
-  z-index: 10000;
+  z-index: 1000000002;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 20px 40px rgba(0, 0, 0, 0.15);
   color: var(--sentra-fg);
 }

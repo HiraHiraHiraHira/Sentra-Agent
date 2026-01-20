@@ -3,6 +3,7 @@ import { IoChevronBack, IoAdd, IoSave, IoSearch, IoDocumentText, IoTrash, IoChev
 import Editor from '@monaco-editor/react';
 import { PresetsEditorState } from '../hooks/usePresetsEditor';
 import '../utils/monacoSetup';
+import { SentraInlineLoading } from './SentraInlineLoading';
 
 
 interface IOSPresetsEditorProps {
@@ -103,9 +104,7 @@ export const IOSPresetsEditor: React.FC<IOSPresetsEditorProps> = ({ onClose, sta
                     // Editor View
                     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                         {loadingFile ? (
-                            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
-                                加载中...
-                            </div>
+                            <SentraInlineLoading text="加载中..." style={{ height: '100%', padding: 0 }} />
                         ) : (
                             <>
                                 <Editor
@@ -178,7 +177,7 @@ export const IOSPresetsEditor: React.FC<IOSPresetsEditorProps> = ({ onClose, sta
                         {/* List with folders */}
                         <div style={{ flex: 1, overflowY: 'auto' }}>
                             {loading ? (
-                                <div style={{ padding: 20, textAlign: 'center', color: '#666' }}>加载中...</div>
+                                <SentraInlineLoading text="加载中..." />
                             ) : filteredFolders.length === 0 ? (
                                 <div style={{ padding: 40, textAlign: 'center', color: '#666' }}>
                                     {searchTerm ? '未找到匹配文件' : '暂无预设文件'}

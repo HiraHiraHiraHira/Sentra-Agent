@@ -6,6 +6,7 @@ import { PresetImporter } from '../components/PresetImporter';
 import { Launchpad } from '../components/Launchpad';
 import { ToastContainer } from '../components/Toast';
 import { IoChevronBack } from 'react-icons/io5';
+import { SentraLoading } from '../components/SentraLoading';
 import { getDisplayName, getIconForType } from '../utils/icons';
 import { FileItem, DesktopIcon, AppFolder } from '../types/ui';
 import { PresetsEditorState } from '../hooks/usePresetsEditor';
@@ -224,7 +225,7 @@ export function MobileView(props: MobileViewProps) {
               关闭
             </div>
           </div>
-          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载中...</div>}>
+          <Suspense fallback={<SentraLoading title="加载终端" subtitle="首次打开可能较慢，请稍等..." />}>
             <TerminalWindow processId={term.processId} onProcessNotFound={() => handleCloseTerminal(term.id)} />
           </Suspense>
         </div>
@@ -404,7 +405,7 @@ export function MobileView(props: MobileViewProps) {
               </div>
             </div>
             <div className="ios-app-content">
-              <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载中...</div>}>
+              <Suspense fallback={<SentraLoading title="加载 模型供应商" subtitle="首次打开可能较慢，请稍等..." />}>
                 <ModelProvidersManager addToast={addToast as any} />
               </Suspense>
             </div>
@@ -431,7 +432,7 @@ export function MobileView(props: MobileViewProps) {
               </div>
             </div>
             <div className="ios-app-content">
-              <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载中...</div>}>
+              <Suspense fallback={<SentraLoading title="加载 Redis 管理器" subtitle="首次打开可能较慢，请稍等..." />}>
                 <RedisAdminManager addToast={addToast as any} />
               </Suspense>
             </div>

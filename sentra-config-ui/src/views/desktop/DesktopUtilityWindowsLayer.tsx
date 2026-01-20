@@ -1,7 +1,7 @@
 import { Component, Suspense, lazy, memo, type ReactNode } from 'react';
-import { Spin } from 'antd';
 import { IoBookOutline } from 'react-icons/io5';
 import { MacWindow } from '../../components/MacWindow';
+import { SentraLoading } from '../../components/SentraLoading';
 import { getIconForType } from '../../utils/icons';
 import type { FileItem } from '../../types/ui';
 import type { PresetsEditorState } from '../../hooks/usePresetsEditor';
@@ -16,23 +16,10 @@ const RedisAdminManager = lazy(() => import('../../components/RedisAdminManager/
 
 const LazyWindowFallback = memo((props: { title: string }) => {
   return (
-    <div
-      style={{
-        height: '100%',
-        width: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 10,
-        color: 'rgba(0,0,0,0.55)',
-        fontSize: 13,
-      }}
-    >
-      <Spin size="large" />
-      <div style={{ fontWeight: 700 }}>{props.title}</div>
-      <div style={{ opacity: 0.75 }}>首次打开可能较慢，请稍等...</div>
-    </div>
+    <SentraLoading
+      title={props.title}
+      subtitle="首次打开可能较慢，请稍等..."
+    />
   );
 });
 
@@ -183,7 +170,7 @@ export function DesktopUtilityWindowsLayer(props: DesktopUtilityWindowsLayerProp
           onFocus={() => { bringUtilityToFront('dev-center'); }}
           onMove={() => { }}
         >
-          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载中...</div>}>
+          <Suspense fallback={<SentraLoading title="加载 开发中心" subtitle="首次打开可能较慢，请稍等..." />}>
             <DevCenterV2
               allItems={allItems}
               tools={[
@@ -343,7 +330,7 @@ export function DesktopUtilityWindowsLayer(props: DesktopUtilityWindowsLayerProp
           onFocus={() => { bringUtilityToFront('preset-importer'); }}
           onMove={() => { }}
         >
-          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载中...</div>}>
+          <Suspense fallback={<SentraLoading title="加载 预设导入" subtitle="首次打开可能较慢，请稍等..." />}>
             <PresetImporter
               onClose={() => setPresetImporterOpen(false)}
               theme={theme}
@@ -379,7 +366,7 @@ export function DesktopUtilityWindowsLayer(props: DesktopUtilityWindowsLayerProp
           onFocus={() => { bringUtilityToFront('deepwiki'); }}
           onMove={() => { }}
         >
-          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载 DeepWiki 助手...</div>}>
+          <Suspense fallback={<SentraLoading title="加载 DeepWiki 助手" subtitle="首次打开可能较慢，请稍等..." />}>
             <DeepWikiChat theme={theme} />
           </Suspense>
         </MacWindow>
@@ -410,7 +397,7 @@ export function DesktopUtilityWindowsLayer(props: DesktopUtilityWindowsLayerProp
           onFocus={() => { bringUtilityToFront('presets-editor'); }}
           onMove={() => { }}
         >
-          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载中...</div>}>
+          <Suspense fallback={<SentraLoading title="加载 预设撰写" subtitle="首次打开可能较慢，请稍等..." />}>
             <PresetsEditor
               onClose={() => setPresetsEditorOpen(false)}
               theme={theme}
@@ -452,7 +439,7 @@ export function DesktopUtilityWindowsLayer(props: DesktopUtilityWindowsLayerProp
           onFocus={() => { bringUtilityToFront('file-manager'); }}
           onMove={() => { }}
         >
-          <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#888' }}>加载中...</div>}>
+          <Suspense fallback={<SentraLoading title="加载 文件管理" subtitle="首次打开可能较慢，请稍等..." />}>
             <WindowErrorBoundary
               resetKey={`file-manager:${performanceMode ? 'p' : 'n'}`}
               fallback={(err) => (
