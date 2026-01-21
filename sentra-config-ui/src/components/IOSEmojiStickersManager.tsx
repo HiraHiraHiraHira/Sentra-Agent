@@ -231,7 +231,6 @@ export const IOSEmojiStickersManager: React.FC<Props> = ({ addToast, onClose, ba
     try {
       await ensureEmojiStickers();
       addToast('success', '目录已就绪', '已确保 emoji-stickers 与 emoji 文件夹存在');
-      await loadAll();
     } catch (e: any) {
       addToast('error', '创建目录失败', e?.message ? String(e.message) : String(e));
     } finally {
@@ -256,7 +255,19 @@ export const IOSEmojiStickersManager: React.FC<Props> = ({ addToast, onClose, ba
           quality: compressQuality,
         });
         addToast('success', '上传成功', filename);
-        await loadAll();
+        setRows(prev => {
+          const exists = prev.some(r => r.filename === filename);
+          if (exists) return prev.map(r => (r.filename === filename ? { ...r, hasFile: true } : r));
+          return [
+            ...prev,
+            {
+              filename,
+              description: '',
+              enabled: true,
+              hasFile: true,
+            } as Row,
+          ];
+        });
       } catch (e: any) {
         addToast('error', '上传失败', e?.message ? String(e.message) : String(e));
       }
@@ -269,7 +280,7 @@ export const IOSEmojiStickersManager: React.FC<Props> = ({ addToast, onClose, ba
       try {
         await deleteEmojiStickerFile(filename);
         addToast('success', '已删除', filename);
-        await loadAll();
+        setRows(prev => prev.map(r => (r.filename === filename ? { ...r, hasFile: false } : r)));
       } catch (e: any) {
         addToast('error', '删除失败', e?.message ? String(e.message) : String(e));
       }
@@ -289,7 +300,8 @@ export const IOSEmojiStickersManager: React.FC<Props> = ({ addToast, onClose, ba
       addToast('success', '已重命名', `${from} -> ${to}`);
       setRenameOpen(false);
       setEditOpen(false);
-      await loadAll();
+      setRows(prev => prev.map(r => (r.filename === from ? { ...r, filename: to, hasFile: true } : r)));
+      setPreviewFilename(prev => (prev === from ? to : prev));
     } catch (e: any) {
       addToast('error', '重命名失败', e?.message ? String(e.message) : String(e));
     }

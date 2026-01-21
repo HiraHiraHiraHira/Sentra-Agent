@@ -212,7 +212,6 @@ export default function EmojiStickersManager(props: Props) {
       }));
       await saveEmojiStickersItems({ items, applyEnv: true });
       addToast('success', '已保存', '表情包配置已同步');
-      await loadAll(false);
     } catch (e: any) {
       addToast('error', '保存失败', e?.message ? String(e.message) : String(e));
     } finally {
@@ -224,7 +223,7 @@ export default function EmojiStickersManager(props: Props) {
     try {
       await deleteEmojiStickerFile(filename);
       addToast('success', '已删除文件', filename);
-      await loadAll(false);
+      setRows(prev => prev.map(r => (r.filename === filename ? { ...r, hasFile: false } : r)));
     } catch (e: any) {
       addToast('error', '删除失败', e?.message ? String(e.message) : String(e));
     }
@@ -282,7 +281,8 @@ export default function EmojiStickersManager(props: Props) {
       await renameEmojiStickerFile({ from, to });
       addToast('success', '已重命名', `${from} -> ${to}`);
       setRenameOpen(false);
-      await loadAll(false);
+      setRows(prev => prev.map(r => (r.filename === from ? { ...r, key: to, filename: to, hasFile: true } : r)));
+      setPreviewFilename(prev => (prev === from ? to : prev));
     } catch (e: any) {
       addToast('error', '重命名失败', e?.message ? String(e.message) : String(e));
     } finally {
@@ -432,7 +432,22 @@ export default function EmojiStickersManager(props: Props) {
             quality: compressQuality,
           });
           addToast('success', '上传成功', filename);
-          await loadAll(false);
+          setRows(prev => {
+            const exists = prev.some(r => r.filename === filename);
+            if (exists) {
+              return prev.map(r => (r.filename === filename ? { ...r, hasFile: true } : r));
+            }
+            return [
+              ...prev,
+              {
+                key: String(filename),
+                filename: String(filename),
+                description: '',
+                enabled: true,
+                hasFile: true,
+              } as Row,
+            ];
+          });
         } catch (e: any) {
           addToast('error', '上传失败', e?.message ? String(e.message) : String(e));
         }
@@ -446,7 +461,6 @@ export default function EmojiStickersManager(props: Props) {
     try {
       await ensureEmojiStickers();
       addToast('success', '目录已就绪', '已确保 emoji-stickers 与 emoji 文件夹存在');
-      await loadAll(false);
     } catch (e: any) {
       addToast('error', '创建目录失败', e?.message ? String(e.message) : String(e));
     } finally {
