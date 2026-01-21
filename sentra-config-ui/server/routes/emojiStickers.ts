@@ -12,6 +12,13 @@ import {
 } from 'fs';
 import dotenv from 'dotenv';
 
+function clampInt(v: any, min: number, max: number, fallback: number) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  const x = Math.round(n);
+  return Math.min(max, Math.max(min, x));
+}
+
 type StickerItem = {
   filename: string;
   description: string;
@@ -28,6 +35,32 @@ type StickersJson = {
 
 function getRootDir(): string {
   return resolve(process.cwd(), process.env.SENTRA_ROOT || '..');
+}
+
+function mimeFromExt(ext: string) {
+  const e = String(ext || '').toLowerCase();
+  if (e === 'png') return 'image/png';
+  if (e === 'jpg' || e === 'jpeg') return 'image/jpeg';
+  if (e === 'gif') return 'image/gif';
+  if (e === 'webp') return 'image/webp';
+  if (e === 'bmp') return 'image/bmp';
+  if (e === 'svg') return 'image/svg+xml';
+  if (e === 'ico') return 'image/x-icon';
+  if (e === 'tif' || e === 'tiff') return 'image/tiff';
+  if (e === 'avif') return 'image/avif';
+  if (e === 'heic') return 'image/heic';
+  if (e === 'heif') return 'image/heif';
+  return 'application/octet-stream';
+}
+
+async function makeThumbWebp(buf: Buffer, maxDim: number, quality: number) {
+  const mod: any = await import('@napi-rs/image');
+  const Transformer = mod?.Transformer;
+  if (!Transformer) throw new Error('Transformer not found');
+  const t = new Transformer(buf).rotate().resize(maxDim, maxDim);
+  const out = await t.webp(quality);
+  if (!out || !Buffer.isBuffer(out)) throw new Error('Invalid thumb output');
+  return out;
 }
 
 function safeString(v: any) {
@@ -65,13 +98,6 @@ function parseDataUrl(dataUrl: string) {
   } catch {
     return null;
   }
-}
-
-function clampInt(v: any, min: number, max: number, fallback: number) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return fallback;
-  const x = Math.round(n);
-  return Math.min(max, Math.max(min, x));
 }
 
 function getExtLower(filename: string) {
@@ -318,6 +344,55 @@ function listEmojiFiles() {
 }
 
 export async function emojiStickersRoutes(fastify: FastifyInstance) {
+  fastify.get('/api/emoji-stickers/image', async (request, reply) => {
+    const q: any = (request as any).query || {};
+    const filename = normalizeFilename(safeString(q.filename));
+    if (!filename) {
+      reply.code(400).send({ success: false, error: 'Invalid filename' });
+      return;
+    }
+
+    const abs = join(emojiDirAbs(), filename);
+    if (!existsSync(abs)) {
+      reply.code(404).send({ success: false, error: 'File not found' });
+      return;
+    }
+
+    const ext = getExtLower(filename);
+    const wantThumb = String(q.thumb || '').trim() === '1' || String(q.thumb || '').trim().toLowerCase() === 'true';
+    const maxDim = clampInt(q.maxDim, 16, 512, 64);
+    const quality = clampInt(q.quality, 1, 100, 75);
+
+    const st = statSync(abs);
+    const etag = `W/\"emoji-${st.size}-${st.mtimeMs}\"`;
+    reply.header('Cache-Control', 'private, max-age=60');
+    reply.header('ETag', etag);
+    if (String(request.headers['if-none-match'] || '') === etag) {
+      reply.code(304).send();
+      return;
+    }
+
+    if (!wantThumb || ext === 'gif' || ext === 'svg' || ext === 'ico') {
+      if (ext === 'svg') {
+        const text = readFileSync(abs, 'utf-8');
+        reply.type(mimeFromExt(ext)).send(text);
+        return;
+      }
+      const buf = readFileSync(abs);
+      reply.type(mimeFromExt(ext)).send(buf);
+      return;
+    }
+
+    try {
+      const buf = readFileSync(abs);
+      const out = await makeThumbWebp(buf, maxDim, quality);
+      reply.type('image/webp').send(out);
+    } catch {
+      const buf = readFileSync(abs);
+      reply.type(mimeFromExt(ext)).send(buf);
+    }
+  });
+
   fastify.get('/api/emoji-stickers/status', async () => {
     const baseDir = emojiBaseDirAbs();
     const emojiDir = emojiDirAbs();

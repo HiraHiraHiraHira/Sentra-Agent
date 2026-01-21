@@ -114,6 +114,29 @@ export function useTerminals({ addToast, allocateZ }: UseTerminalsParams) {
     }
   });
 
+  const handleRunShell = async (shellType: 'powershell' | 'cmd' | 'bash', title?: string) => {
+    const appKey = `shell:${shellType}:${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const safeTitle = String(title || '').trim() || (shellType === 'cmd' ? 'CMD' : shellType === 'bash' ? 'Bash' : 'PowerShell');
+    try {
+      const response = await fetch('/api/scripts/shell', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ args: [shellType] }),
+      });
+
+      const data: any = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.success || !data?.processId) {
+        const msg = String(data?.message || data?.error || `HTTP ${response.status}`);
+        addToast('error', '启动终端失败', msg);
+        return;
+      }
+
+      spawnTerminal(safeTitle, appKey, String(data.processId));
+    } catch (error) {
+      addToast('error', '启动终端失败', error instanceof Error ? error.message : undefined);
+    }
+  };
+
   const handleCloseTerminal = async (id: string) => {
     const st = useTerminalStore.getState();
     const terminal = st.terminalWindows.find(t => t.id === id);
@@ -149,6 +172,7 @@ export function useTerminals({ addToast, allocateZ }: UseTerminalsParams) {
     handleRunUpdate,
     handleRunForceUpdate,
     handleRunSentiment,
+    handleRunShell,
     handleCloseTerminal,
     handleMinimizeTerminal,
   } as const;

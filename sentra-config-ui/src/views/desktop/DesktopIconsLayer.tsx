@@ -80,6 +80,22 @@ export function DesktopIconsLayer(props: DesktopIconsLayerProps) {
               icon.onClick();
             });
           })()}
+
+          {desktopIcons?.find(i => i.id === 'desktop-emoji-stickers-manager') && (() => {
+            const icon = desktopIcons.find(i => i.id === 'desktop-emoji-stickers-manager')!;
+            return renderTopTile(icon.id, icon.name, icon.icon, (e) => {
+              e.stopPropagation();
+              icon.onClick();
+            });
+          })()}
+
+          {desktopIcons?.find(i => i.id === 'desktop-terminal-manager') && (() => {
+            const icon = desktopIcons.find(i => i.id === 'desktop-terminal-manager')!;
+            return renderTopTile(icon.id, icon.name, icon.icon, (e) => {
+              e.stopPropagation();
+              icon.onClick();
+            });
+          })()}
         </div>
       </>
     );

@@ -15,6 +15,7 @@ const ModelProvidersManager = lazy(() => import('../../components/ModelProviders
 const EmojiStickersManager = lazy(() => import('../../components/EmojiStickersManager/EmojiStickersManager').then(module => ({ default: module.default })));
 const DevCenterV2 = lazy(() => import('../../components/DevCenterV2').then(module => ({ default: module.DevCenterV2 })));
 const RedisAdminManager = lazy(() => import('../../components/RedisAdminManager/RedisAdminManager').then(module => ({ default: module.RedisAdminManager })));
+const TerminalManager = lazy(() => import('../../components/TerminalManager/TerminalManager').then(module => ({ default: module.default })));
 
 const LazyWindowFallback = memo((props: { title: string }) => {
   return (
@@ -103,6 +104,11 @@ type DesktopUtilityWindowsLayerProps = {
   setFileManagerOpen: (v: boolean) => void;
   fileManagerMinimized: boolean;
   setFileManagerMinimized: (v: boolean) => void;
+
+  terminalManagerOpen: boolean;
+  setTerminalManagerOpen: (v: boolean) => void;
+  terminalManagerMinimized: boolean;
+  setTerminalManagerMinimized: (v: boolean) => void;
 };
 
 export function DesktopUtilityWindowsLayer(props: DesktopUtilityWindowsLayerProps) {
@@ -152,6 +158,10 @@ export function DesktopUtilityWindowsLayer(props: DesktopUtilityWindowsLayerProp
     setFileManagerOpen,
     fileManagerMinimized,
     setFileManagerMinimized,
+    terminalManagerOpen,
+    setTerminalManagerOpen,
+    terminalManagerMinimized,
+    setTerminalManagerMinimized,
   } = props;
 
   const LAYOUT_KEY = 'sentra_utility_window_layouts_v1';
@@ -275,6 +285,16 @@ export function DesktopUtilityWindowsLayer(props: DesktopUtilityWindowsLayerProp
                     setEmojiStickersManagerOpen(true);
                     setEmojiStickersManagerMinimized(false);
                     bringUtilityToFront('emoji-stickers-manager');
+                  },
+                },
+                {
+                  id: 'terminal-manager',
+                  name: 'terminal-manager',
+                  subtitle: '终端执行器（新建会话 / 运行命令）',
+                  onOpen: () => {
+                    setTerminalManagerOpen(true);
+                    setTerminalManagerMinimized(false);
+                    bringUtilityToFront('terminal-manager');
                   },
                 },
                 {
@@ -598,6 +618,41 @@ export function DesktopUtilityWindowsLayer(props: DesktopUtilityWindowsLayerProp
                 performanceMode={performanceMode}
               />
             </WindowErrorBoundary>
+          </Suspense>
+        </MacWindow>
+      )}
+
+      {terminalManagerOpen && (
+        <MacWindow
+          id="terminal-manager"
+          title="终端执行器"
+          icon={getIconForType('terminal-manager', 'module')}
+          initialPos={getInitialPos('terminal-manager')}
+          safeArea={desktopSafeArea}
+          zIndex={utilityZMap['terminal-manager'] ?? 2009}
+          isActive={activeUtilityId === 'terminal-manager'}
+          isMinimized={terminalManagerMinimized}
+          performanceMode={performanceMode}
+          initialSize={getInitialSize('terminal-manager', { width: 960, height: 680 })}
+          initialMaximized={getInitialMaximized('terminal-manager')}
+          onClose={() => {
+            handleWindowMaximize('terminal-manager', false);
+            updateLayout('terminal-manager', { maximized: false });
+            setTerminalManagerOpen(false);
+            setTerminalManagerMinimized(false);
+          }}
+          onMinimize={() => {
+            handleWindowMaximize('terminal-manager', false);
+            setTerminalManagerMinimized(true);
+            setActiveUtilityId(null);
+          }}
+          onMaximize={handleMaximizePersist('terminal-manager')}
+          onFocus={() => { bringUtilityToFront('terminal-manager'); }}
+          onMove={handleMove('terminal-manager')}
+          onResize={handleResize('terminal-manager')}
+        >
+          <Suspense fallback={<LazyWindowFallback title="加载 终端执行器" />}>
+            <TerminalManager addToast={addToast as any} />
           </Suspense>
         </MacWindow>
       )}

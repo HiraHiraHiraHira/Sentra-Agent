@@ -6,6 +6,19 @@ import { ensureLocalFile, isLocalPath } from './utils/fileCache';
 
 const log = createLogger('info');
 
+function formatEventTimeStr(timeSec: number | undefined): string {
+  if (!timeSec || !Number.isFinite(timeSec)) return '';
+  const d = new Date(timeSec * 1000);
+  const pad = (n: number, len = 2) => String(n).padStart(len, '0');
+  const yyyy = d.getFullYear();
+  const MM = pad(d.getMonth() + 1);
+  const dd = pad(d.getDate());
+  const HH = pad(d.getHours());
+  const mm = pad(d.getMinutes());
+  const ss = pad(d.getSeconds());
+  return `${yyyy}-${MM}-${dd} ${HH}:${mm}:${ss}`;
+}
+
 /**
  * 格式化的消息结构
  */
@@ -253,15 +266,7 @@ export class MessageStream {
 
   private async formatPoke(ev: NoticeEvent): Promise<PokeNotice> {
     const time = ev.time ?? Math.floor(Date.now() / 1000);
-    const timeStr = new Date(time * 1000).toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
+    const timeStr = formatEventTimeStr(time);
 
     const isGroup = !!(ev as any).group_id;
     const msgType: 'group' | 'private' = isGroup ? 'group' : 'private';
@@ -835,15 +840,7 @@ export class MessageStream {
    */
   private async formatMessage(ev: MessageEvent, replyContext?: any): Promise<FormattedMessage> {
     const time = ev.time ?? Math.floor(Date.now() / 1000);
-    const timeStr = new Date(time * 1000).toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
+    const timeStr = formatEventTimeStr(time);
 
     // 提取纯文本
     const text = ev.message

@@ -85,6 +85,10 @@ export function useDesktopShortcuts(params: UseDesktopShortcutsParams) {
     requestUtilityFocus('emoji-stickers-manager');
   };
 
+  const handleOpenTerminalManager = () => {
+    requestUtilityFocus('terminal-manager');
+  };
+
   const {
     handleRunBootstrap,
     handleRunStart,
@@ -112,6 +116,7 @@ export function useDesktopShortcuts(params: UseDesktopShortcutsParams) {
       handleOpenModelProvidersManager,
       handleOpenEmojiStickersManager,
       handleOpenRedisAdmin,
+      handleOpenTerminalManager,
     );
   }, [
     handleOpenDevCenter,
@@ -121,6 +126,7 @@ export function useDesktopShortcuts(params: UseDesktopShortcutsParams) {
     handleOpenPresetImporter,
     handleOpenPresets,
     handleOpenRedisAdmin,
+    handleOpenTerminalManager,
     handleRunBootstrap,
     handleRunForceUpdate,
     handleRunNapcatBuild,

@@ -85,6 +85,11 @@ export type UIStore = {
   fileManagerMinimized: boolean;
   setFileManagerMinimized: (min: boolean) => void;
 
+  terminalManagerOpen: boolean;
+  setTerminalManagerOpen: (open: boolean) => void;
+  terminalManagerMinimized: boolean;
+  setTerminalManagerMinimized: (min: boolean) => void;
+
   utilityFocusRequestId: string | null;
   utilityFocusRequestNonce: number;
   requestUtilityFocus: (id: string) => void;
@@ -100,6 +105,8 @@ export type UIStore = {
   setIosModelProvidersManagerOpen: (open: boolean) => void;
   iosEmojiStickersManagerOpen: boolean;
   setIosEmojiStickersManagerOpen: (open: boolean) => void;
+  iosTerminalManagerOpen: boolean;
+  setIosTerminalManagerOpen: (open: boolean) => void;
   iosRedisAdminOpen: boolean;
   setIosRedisAdminOpen: (open: boolean) => void;
 };
@@ -280,6 +287,17 @@ export const useUIStore = create<UIStore>((set: SetState<UIStore>) => {
       set({ fileManagerMinimized: min });
     },
 
+    terminalManagerOpen: readBool('sentra_terminal_manager_open', false),
+    setTerminalManagerOpen: (open: boolean) => {
+      storage.setBool('sentra_terminal_manager_open', open);
+      set({ terminalManagerOpen: open });
+    },
+    terminalManagerMinimized: readBool('sentra_terminal_manager_minimized', false),
+    setTerminalManagerMinimized: (min: boolean) => {
+      storage.setBool('sentra_terminal_manager_minimized', min);
+      set({ terminalManagerMinimized: min });
+    },
+
     utilityFocusRequestId: null,
     utilityFocusRequestNonce: 0,
     requestUtilityFocus: (id: string) => {
@@ -300,6 +318,8 @@ export const useUIStore = create<UIStore>((set: SetState<UIStore>) => {
     setIosModelProvidersManagerOpen: (open: boolean) => set({ iosModelProvidersManagerOpen: open }),
     iosEmojiStickersManagerOpen: false,
     setIosEmojiStickersManagerOpen: (open: boolean) => set({ iosEmojiStickersManagerOpen: open }),
+    iosTerminalManagerOpen: false,
+    setIosTerminalManagerOpen: (open: boolean) => set({ iosTerminalManagerOpen: open }),
     iosRedisAdminOpen: false,
     setIosRedisAdminOpen: (open: boolean) => set({ iosRedisAdminOpen: open }),
   };

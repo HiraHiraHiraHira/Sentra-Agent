@@ -3,6 +3,8 @@
     --ios-icon-size: 60px;
     --ios-dock-height: 90px;
     --ios-dock-icon-size: clamp(44px, 12vw, 54px);
+    --ios-overlay-fg: rgba(255, 255, 255, 0.92);
+    --ios-overlay-muted-fg: rgba(255, 255, 255, 0.78);
 }
 
 .ios-container {
@@ -45,7 +47,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
+    color: var(--ios-overlay-fg);
     font-size: 30px;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
     transition: transform 0.1s;
@@ -58,7 +60,7 @@
 
 .ios-label {
     font-size: 12px;
-    color: white;
+    color: var(--ios-overlay-fg);
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     text-align: center;
     width: 70px;
@@ -74,7 +76,7 @@
     left: 20px;
     right: 20px;
     height: var(--ios-dock-height);
-    background: rgba(255, 255, 255, 0.2);
+    background: var(--sentra-glass-bg-strong);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border-radius: 24px;
@@ -103,7 +105,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 0 20px;
-    color: white;
+    color: var(--ios-overlay-fg);
     font-size: 14px;
     font-weight: 600;
     z-index: 1000;
@@ -130,7 +132,7 @@
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: #000;
+    background: var(--mac-bg);
     z-index: 2000;
     animation: appOpen 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
     display: flex;
@@ -142,10 +144,10 @@
     display: flex;
     align-items: center;
     padding: 0 16px;
-    background: rgba(28, 28, 30, 0.9);
+    background: var(--sentra-panel-bg-strong);
     backdrop-filter: blur(10px);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    color: white;
+    border-bottom: 1px solid var(--sentra-border);
+    color: var(--sentra-fg);
     font-weight: 600;
     justify-content: space-between;
 }
@@ -161,10 +163,33 @@
 }
 
 .ios-back-btn {
-    color: #0a84ff;
+    color: var(--sentra-accent);
     font-size: 16px;
     display: flex;
     align-items: center;
     gap: 4px;
     cursor: pointer;
+}
+
+.ios-pagination-dark.ant-pagination,
+.ios-pagination-dark .ant-pagination {
+    color: var(--sentra-fg);
+}
+
+.ios-pagination-dark .ant-pagination-item {
+    background: var(--sentra-panel-bg);
+    border-color: var(--sentra-border);
+}
+
+.ios-pagination-dark .ant-pagination-item-active {
+    background: rgba(var(--sentra-accent-rgb), 0.22);
+    border-color: rgba(var(--sentra-accent-rgb), 0.55);
+}
+
+.ios-pagination-dark .ant-pagination-item-active a {
+    color: var(--sentra-accent-contrast);
+}
+
+.ios-pagination-dark .ant-pagination-disabled .ant-pagination-item-link {
+    color: var(--sentra-disabled-fg);
 }

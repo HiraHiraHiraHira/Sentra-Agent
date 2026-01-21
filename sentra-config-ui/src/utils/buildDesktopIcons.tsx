@@ -223,6 +223,7 @@ export function buildDesktopIcons(
     handleOpenPresetImporter: () => void,
     handleOpenModelProvidersManager?: () => void,
     handleOpenRedisAdmin?: () => void,
+    handleOpenTerminalManager?: () => void,
 ): DesktopIcon[];
 
 export function buildDesktopIcons(
@@ -241,6 +242,7 @@ export function buildDesktopIcons(
     handleOpenModelProvidersManager?: () => void,
     handleOpenEmojiStickersManager?: () => void,
     handleOpenRedisAdmin?: () => void,
+    handleOpenTerminalManager?: () => void,
 ): DesktopIcon[];
 
 export function buildDesktopIcons(
@@ -259,6 +261,7 @@ export function buildDesktopIcons(
     handleOpenModelProvidersManager?: () => void,
     handleOpenEmojiStickersManager?: () => void,
     handleOpenRedisAdmin?: () => void,
+    handleOpenTerminalManager?: () => void,
 ): DesktopIcon[] {
     const iconSize = 56;
     const gap = 100;
@@ -274,6 +277,17 @@ export function buildDesktopIcons(
             onClick: () => {
                 recordUsage('app:emoji-stickers-manager');
                 if (handleOpenEmojiStickersManager) handleOpenEmojiStickersManager();
+                else handleOpenDevCenter();
+            }
+        },
+        {
+            id: 'desktop-terminal-manager',
+            name: '终端执行器',
+            icon: getIconForType('terminal-manager', 'module'),
+            position: { x: startX + gap * 7, y: startY },
+            onClick: () => {
+                recordUsage('app:terminal-manager');
+                if (handleOpenTerminalManager) handleOpenTerminalManager();
                 else handleOpenDevCenter();
             }
         },

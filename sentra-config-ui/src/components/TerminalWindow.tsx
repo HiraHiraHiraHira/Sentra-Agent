@@ -19,6 +19,10 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
     const xtermInstance = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
     const eventSourceRef = useRef<EventSource | null>(null);
+
+    const openedRef = useRef(false);
+    const outputCursorRef = useRef(0);
+    const connectSeqRef = useRef(0);
     const [autoScroll, setAutoScroll] = useState(true);
     const autoScrollRef = useRef(true);
     const userScrolledRef = useRef(false);
@@ -27,6 +31,10 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
     const reconnectAttemptRef = useRef(0);
     const reconnectTimerRef = useRef<number | null>(null);
     const stoppedRef = useRef(false);
+    const inputQueueRef = useRef<string[]>([]);
+    const inputSendingRef = useRef(false);
+    const inputFlushTimerRef = useRef<number | null>(null);
+    const resizeSendTimerRef = useRef<number | null>(null);
 
     useEffect(() => {
         autoScrollRef.current = autoScroll;
@@ -36,9 +44,16 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
     useEffect(() => {
         if (!terminalRef.current) return;
 
+        let disposed = false;
+        let openRaf: number | null = null;
+        let mo: MutationObserver | null = null;
+
         stoppedRef.current = false;
+        openedRef.current = false;
+        outputCursorRef.current = 0;
         disconnectedRef.current = false;
         reconnectAttemptRef.current = 0;
+
         if (reconnectTimerRef.current) {
             window.clearTimeout(reconnectTimerRef.current);
             reconnectTimerRef.current = null;
@@ -52,18 +67,27 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             eventSourceRef.current.close();
         }
 
+        const fallbackTheme = {
+            background: '#0b1020',
+            foreground: '#e2e8f0',
+            cursor: '#e2e8f0',
+            selectionBackground: 'rgba(226, 232, 240, 0.20)',
+        };
+
+        const buildFontFamily = () => {
+            const cssFont = getComputedStyle(document.documentElement).getPropertyValue('--sentra-terminal-font').trim();
+            const base = cssFont || 'Menlo, Monaco, Consolas, "Courier New", monospace';
+            return `${base}, Consolas, "Cascadia Mono", "Cascadia Code", Menlo, Monaco, "Courier New", monospace`;
+        };
+
         const term = new Terminal({
             cursorBlink: true,
             fontSize: 14,
-            fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-            theme: theme || {
-                background: '#000000',
-                foreground: '#ffffff',
-                cursor: '#ffffff',
-                selectionBackground: 'rgba(255, 255, 255, 0.3)',
-            },
+            fontFamily: buildFontFamily(),
+            theme: theme || fallbackTheme,
             allowProposedApi: true,
-            convertEol: true,
+            convertEol: false,
+            scrollback: 50000,
         });
 
         const fitAddon = new FitAddon();
@@ -78,11 +102,79 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
         const searchAddon = new SearchAddon();
         term.loadAddon(searchAddon);
 
-        term.open(terminalRef.current);
         xtermInstance.current = term;
 
+        const applyFontFamily = () => {
+            try {
+                term.options.fontFamily = buildFontFamily();
+            } catch { }
+        };
+
+        const safeWrite = (data: string) => {
+            if (disposed || stoppedRef.current) return;
+            try {
+                term.write(data);
+            } catch (e) {
+                // Avoid crashing the whole app if xterm renderer is not ready / already disposed
+                try { console.error('xterm write failed', e); } catch { }
+            }
+        };
+
+        const canFitNow = () => {
+            const el = terminalRef.current;
+            if (!el) return false;
+            const rect = el.getBoundingClientRect();
+            if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return false;
+            return rect.width >= 2 && rect.height >= 2;
+        };
+
+        const tryOpen = () => {
+            if (disposed || stoppedRef.current) return;
+            const el = terminalRef.current;
+            if (!el) return;
+
+            // Wait until layout is settled; prevents xterm internal timers running after
+            // an early StrictMode cleanup (open->dispose race).
+            if (!canFitNow()) {
+                openRaf = requestAnimationFrame(tryOpen);
+                return;
+            }
+
+            try {
+                term.open(el);
+                openedRef.current = true;
+            } catch (e) {
+                try { console.error('xterm open failed', e); } catch { }
+                return;
+            }
+
+            // Initial fit (only after open)
+            requestAnimationFrame(() => {
+                try {
+                    if (!disposed && openedRef.current && canFitNow()) {
+                        fitAddon.fit();
+                        safeScrollToBottom();
+                        scheduleSendResize(term.cols, term.rows);
+                    }
+                } catch (e) { }
+            });
+        };
+
+        openRaf = requestAnimationFrame(tryOpen);
+
+        const safeScrollToBottom = () => {
+            if (disposed || stoppedRef.current) return;
+            if (!canFitNow()) return;
+            try {
+                if (!term.buffer || !term.buffer.active) return;
+                term.scrollToBottom();
+            } catch (e) {
+                try { console.error('xterm scrollToBottom failed', e); } catch { }
+            }
+        };
+
         if (headerText) {
-            term.write(`\x1b[1;36m${headerText}\x1b[0m\r\n\r\n`);
+            safeWrite(`\x1b[1;36m${headerText}\x1b[0m\r\n\r\n`);
         }
 
         // Auto-scroll logic: Monitor scroll position
@@ -115,12 +207,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             checkScrollPosition();
         });
 
-        // Function to scroll to bottom
-        const scrollToBottom = () => {
-            if (!term.buffer || !term.buffer.active) return;
-            term.scrollToBottom();
-        };
-
         // Auto-scroll after each write (if enabled)
         const originalWrite = term.write.bind(term);
         term.write = (data: string | Uint8Array, callback?: () => void) => {
@@ -128,27 +214,89 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
                 // Auto-scroll to bottom after write if user hasn't scrolled up
                 if (autoScrollRef.current && !userScrolledRef.current) {
                     requestAnimationFrame(() => {
-                        scrollToBottom();
+                        safeScrollToBottom();
                     });
                 }
                 callback?.();
             });
         };
 
-        // Handle input
-        term.onData((data) => {
+        const sendResize = async (cols: number, rows: number) => {
             const token =
                 storage.getString('sentra_auth_token', { backend: 'session', fallback: '' }) ||
                 storage.getString('sentra_auth_token', { backend: 'local', fallback: '' });
-            fetch(`/api/scripts/input/${processId}?token=${token}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ data }),
-            }).catch(err => {
-                console.error('Failed to send input:', err);
-            });
+
+            try {
+                await fetch(`/api/scripts/resize/${processId}?token=${encodeURIComponent(token || '')}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ cols, rows }),
+                });
+            } catch { }
+        };
+
+        const scheduleSendResize = (cols: number, rows: number) => {
+            if (resizeSendTimerRef.current != null) return;
+            resizeSendTimerRef.current = window.setTimeout(() => {
+                resizeSendTimerRef.current = null;
+                void sendResize(cols, rows);
+            }, 40);
+        };
+
+        mo = new MutationObserver(() => {
+            applyFontFamily();
+            try {
+                if (!disposed && openedRef.current && canFitNow()) {
+                    fitAddon.fit();
+                    scheduleSendResize(term.cols, term.rows);
+                }
+            } catch { }
+        });
+        try {
+            mo.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+        } catch { }
+
+        const flushInputQueue = async () => {
+            if (inputSendingRef.current) return;
+            inputSendingRef.current = true;
+            try {
+                while (inputQueueRef.current.length > 0) {
+                    const chunk = inputQueueRef.current.splice(0, Math.min(1024, inputQueueRef.current.length)).join('');
+
+                    const token =
+                        storage.getString('sentra_auth_token', { backend: 'session', fallback: '' }) ||
+                        storage.getString('sentra_auth_token', { backend: 'local', fallback: '' });
+                    try {
+                        await fetch(`/api/scripts/input/${processId}?token=${token}`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ data: chunk }),
+                        });
+                    } catch (err) {
+                        console.error('Failed to send input:', err);
+                        break;
+                    }
+                }
+            } finally {
+                inputSendingRef.current = false;
+                if (inputQueueRef.current.length > 0) {
+                    void flushInputQueue();
+                }
+            }
+        };
+
+        term.onData((data) => {
+            inputQueueRef.current.push(data);
+            if (inputSendingRef.current) return;
+            if (inputFlushTimerRef.current != null) return;
+            inputFlushTimerRef.current = window.setTimeout(() => {
+                inputFlushTimerRef.current = null;
+                void flushInputQueue();
+            }, 8);
         });
 
         // Enhanced keyboard handling
@@ -185,7 +333,7 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
 
             // Handle End key to jump to bottom and re-enable auto-scroll
             if (event.key === 'End') {
-                scrollToBottom();
+                safeScrollToBottom();
                 userScrolledRef.current = false;
                 setAutoScroll(true);
                 return false;
@@ -220,7 +368,10 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
         // Handle resize
         const handleResize = () => {
             try {
-                fitAddon.fit();
+                if (!disposed && openedRef.current && canFitNow()) {
+                    fitAddon.fit();
+                    scheduleSendResize(term.cols, term.rows);
+                }
             } catch (e) {
                 // Ignore resize errors if terminal is hidden
             }
@@ -271,7 +422,11 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
         };
 
         const connectEventSource = async (_reason?: string) => {
+            const mySeq = (connectSeqRef.current += 1);
             const alive = await checkProcessAlive();
+            if (disposed || stoppedRef.current) return;
+            if (mySeq !== connectSeqRef.current) return;
+
             if (alive === 'not_found') {
                 stoppedRef.current = true;
                 if (reconnectTimerRef.current) {
@@ -279,37 +434,50 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
                     reconnectTimerRef.current = null;
                 }
                 cleanupEventSource();
-                term.write(`\r\n\x1b[31m✗ Process not found (stale terminal window).\x1b[0m\r\n`);
+                safeWrite(`\r\n\x1b[31m✗ Process not found (stale terminal window).\x1b[0m\r\n`);
                 try { onProcessNotFound?.(); } catch { }
                 return;
             }
             cleanupEventSource();
+            if (disposed || stoppedRef.current) return;
+            if (mySeq !== connectSeqRef.current) return;
             const token =
                 storage.getString('sentra_auth_token', { backend: 'session', fallback: '' }) ||
                 storage.getString('sentra_auth_token', { backend: 'local', fallback: '' });
-            const es = new EventSource(`/api/scripts/stream/${processId}?token=${token}`);
+            if (disposed || stoppedRef.current) return;
+            const cursor = outputCursorRef.current;
+            const es = new EventSource(`/api/scripts/stream/${processId}?token=${token}&cursor=${cursor}`);
             eventSourceRef.current = es;
 
             es.onopen = () => {
+                if (mySeq !== connectSeqRef.current) return;
+                if (eventSourceRef.current !== es) return;
                 reconnectAttemptRef.current = 0;
+                if (reconnectTimerRef.current) {
+                    window.clearTimeout(reconnectTimerRef.current);
+                    reconnectTimerRef.current = null;
+                }
                 if (disconnectedRef.current) {
                     disconnectedRef.current = false;
-                    term.write('\r\n\x1b[32m✓ Reconnected.\x1b[0m\r\n');
+                    safeWrite('\r\n\x1b[32m✓ Reconnected.\x1b[0m\r\n');
                 }
             };
 
             es.onmessage = (event) => {
+                if (mySeq !== connectSeqRef.current) return;
+                if (eventSourceRef.current !== es) return;
                 try {
                     const data = JSON.parse(event.data);
                     if (data.type === 'output') {
-                        term.write(data.data);
+                        safeWrite(String(data.data || ''));
+                        outputCursorRef.current += 1;
                     } else if (data.type === 'exit') {
                         stoppedRef.current = true;
                         if (reconnectTimerRef.current) {
                             window.clearTimeout(reconnectTimerRef.current);
                             reconnectTimerRef.current = null;
                         }
-                        term.write(`\r\n\x1b[32m✓ Process exited with code ${data.code}\x1b[0m\r\n`);
+                        safeWrite(`\r\n\x1b[32m✓ Process exited with code ${data.code}\x1b[0m\r\n`);
                         cleanupEventSource();
                     }
                 } catch (e) {
@@ -318,11 +486,13 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             };
 
             es.onerror = () => {
+                if (mySeq !== connectSeqRef.current) return;
+                if (eventSourceRef.current !== es) return;
                 if (stoppedRef.current) return;
                 reconnectAttemptRef.current += 1;
                 if (!disconnectedRef.current) {
                     disconnectedRef.current = true;
-                    term.write('\r\n\x1b[31m✗ Connection lost, retrying...\x1b[0m\r\n');
+                    safeWrite('\r\n\x1b[31m✗ Connection lost, retrying...\x1b[0m\r\n');
                 }
                 scheduleReconnect('error');
             };
@@ -344,20 +514,35 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
 
         void connectEventSource('init');
 
-        // Initial fit
-        requestAnimationFrame(() => {
-            try {
-                fitAddon.fit();
-                scrollToBottom();
-            } catch (e) { }
-        });
-
         return () => {
+            disposed = true;
             stoppedRef.current = true;
+            openedRef.current = false;
+
+            if (mo) {
+                try { mo.disconnect(); } catch { }
+                mo = null;
+            }
+
+            if (openRaf != null) {
+                cancelAnimationFrame(openRaf);
+                openRaf = null;
+            }
+            if (inputFlushTimerRef.current != null) {
+                window.clearTimeout(inputFlushTimerRef.current);
+                inputFlushTimerRef.current = null;
+            }
+
+            if (resizeSendTimerRef.current != null) {
+                window.clearTimeout(resizeSendTimerRef.current);
+                resizeSendTimerRef.current = null;
+            }
+
             if (reconnectTimerRef.current) {
                 window.clearTimeout(reconnectTimerRef.current);
                 reconnectTimerRef.current = null;
             }
+
             window.removeEventListener('online', handleOnline);
             document.removeEventListener('visibilitychange', handleVisibility);
             window.removeEventListener('resize', handleResize);
@@ -365,7 +550,21 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             term.dispose();
             cleanupEventSource();
         };
-    }, [processId, theme, headerText]);
+    }, [processId, headerText]);
+
+    useEffect(() => {
+        const term = xtermInstance.current;
+        if (!term) return;
+        const fallbackTheme = {
+            background: '#0b1020',
+            foreground: '#e2e8f0',
+            cursor: '#e2e8f0',
+            selectionBackground: 'rgba(226, 232, 240, 0.20)',
+        };
+        try {
+            term.options.theme = theme || fallbackTheme;
+        } catch { }
+    }, [theme]);
 
     // Re-fit observer with requestAnimationFrame for smoothness
     useEffect(() => {
@@ -373,13 +572,34 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
 
         let animationFrameId: number;
         const ro = new ResizeObserver(() => {
+
             // Cancel any pending frame to avoid stacking
             cancelAnimationFrame(animationFrameId);
 
             // Schedule fit on next frame to ensure layout is settled
             animationFrameId = requestAnimationFrame(() => {
                 try {
+                    if (!openedRef.current) return;
+                    const el = terminalRef.current;
+                    if (!el) return;
+                    const rect = el.getBoundingClientRect();
+                    if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return;
+                    if (rect.width < 2 || rect.height < 2) return;
+
                     fitAddonRef.current?.fit();
+                    const term = xtermInstance.current;
+                    if (term) {
+                        const token =
+                            storage.getString('sentra_auth_token', { backend: 'session', fallback: '' }) ||
+                            storage.getString('sentra_auth_token', { backend: 'local', fallback: '' });
+                        fetch(`/api/scripts/resize/${processId}?token=${encodeURIComponent(token || '')}`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ cols: term.cols, rows: term.rows }),
+                        }).catch(() => { });
+                    }
                 } catch (e) { }
             });
         });
@@ -390,7 +610,7 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             cancelAnimationFrame(animationFrameId);
             ro.disconnect();
         };
-    }, []);
+    }, [processId]);
 
     return (
         <div className={styles.terminalContainer} style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', overflow: 'hidden' }}>
@@ -411,7 +631,18 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
                 <div
                     className={styles.scrollHint}
                     onClick={() => {
-                        xtermInstance.current?.scrollToBottom();
+                        try {
+                            const term = xtermInstance.current;
+                            if (!term) return;
+                            const el = terminalRef.current;
+                            if (!el) return;
+                            const rect = el.getBoundingClientRect();
+                            if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return;
+                            if (rect.width < 2 || rect.height < 2) return;
+                            term.scrollToBottom();
+                        } catch (e) {
+                            try { console.error('xterm scroll hint failed', e); } catch { }
+                        }
                         userScrolledRef.current = false;
                         setAutoScroll(true);
                     }}

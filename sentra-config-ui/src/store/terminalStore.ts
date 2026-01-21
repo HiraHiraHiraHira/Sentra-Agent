@@ -21,6 +21,17 @@ function ensureLegacyCleanup() {
   } catch {
     // ignore
   }
+
+  try {
+    const cleared = storage.getBool('sentra_terminal_cleared_this_session', { backend: 'session', fallback: false });
+    if (!cleared) {
+      storage.setBool('sentra_terminal_cleared_this_session', true, 'session');
+      storage.remove('sentra_terminal_windows_v2');
+      storage.remove('sentra_active_terminal_id_v2');
+    }
+  } catch {
+    // ignore
+  }
 }
 
 const TERMINAL_WINDOWS_KEY = 'sentra_terminal_windows_v2';

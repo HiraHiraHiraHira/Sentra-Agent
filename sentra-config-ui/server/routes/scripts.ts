@@ -19,6 +19,21 @@ export async function scriptRoutes(fastify: FastifyInstance) {
         }
     });
 
+    fastify.post<{
+        Body: { args?: string[] };
+    }>('/api/scripts/shell', async (request, reply) => {
+        try {
+            const { args = [] } = request.body || {};
+            const processId = scriptRunner.executeShell(args);
+            return { success: true, processId };
+        } catch (error) {
+            reply.code(500).send({
+                error: 'Failed to execute shell',
+                message: error instanceof Error ? error.message : String(error),
+            });
+        }
+    });
+
     // Execute start script
     fastify.post<{
         Body: { args?: string[] };
@@ -103,6 +118,7 @@ export async function scriptRoutes(fastify: FastifyInstance) {
             exitCode: process.exitCode,
             startTime: process.startTime,
             endTime: process.endTime,
+            isPty: Boolean((process as any).isPty),
             output: process.output,
         };
     });
@@ -110,6 +126,7 @@ export async function scriptRoutes(fastify: FastifyInstance) {
     // Stream script output via Server-Sent Events
     fastify.get<{
         Params: { id: string };
+        Querystring: { cursor?: string };
     }>('/api/scripts/stream/:id', async (request, reply) => {
         const { id } = request.params;
         const process = scriptRunner.getProcess(id);
@@ -140,8 +157,11 @@ export async function scriptRoutes(fastify: FastifyInstance) {
             } catch { }
         }, 15000);
 
+        const rawCursor = request.query?.cursor;
+        const cursor = Math.max(0, Math.min(process.output.length, Number.parseInt(String(rawCursor ?? '0'), 10) || 0));
+
         // Send existing output
-        for (const line of process.output) {
+        for (const line of process.output.slice(cursor)) {
             reply.raw.write(`data: ${JSON.stringify({ type: 'output', data: line })}\n\n`);
         }
 
@@ -194,6 +214,20 @@ export async function scriptRoutes(fastify: FastifyInstance) {
             return reply.code(400).send({ error: 'Failed to write input (process not found or exited)' });
         }
 
+        return { success: true };
+    });
+
+    fastify.post<{
+        Params: { id: string };
+        Body: { cols: number; rows: number };
+    }>('/api/scripts/resize/:id', async (request, reply) => {
+        const { id } = request.params;
+        const { cols, rows } = request.body || {};
+
+        const ok = scriptRunner.resizeProcess(id, cols, rows);
+        if (!ok) {
+            return reply.code(400).send({ error: 'Failed to resize (process not found, exited, or not PTY)' });
+        }
         return { success: true };
     });
 }

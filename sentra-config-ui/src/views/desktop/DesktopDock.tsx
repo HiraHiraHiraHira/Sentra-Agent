@@ -67,6 +67,10 @@ export function DesktopDock(props: DesktopDockProps) {
     setFileManagerOpen,
     setFileManagerMinimized,
 
+    terminalManagerOpen,
+    setTerminalManagerOpen,
+    setTerminalManagerMinimized,
+
     requestUtilityFocus,
   } = useUIStore();
 
@@ -76,6 +80,9 @@ export function DesktopDock(props: DesktopDockProps) {
       switch (id) {
         case 'file-manager':
           void import('../../components/FileManager');
+          break;
+        case 'terminal-manager':
+          void import('../../components/TerminalManager/TerminalManager');
           break;
         case 'presets-editor':
           void import('../../components/PresetsEditor');
@@ -128,6 +135,22 @@ export function DesktopDock(props: DesktopDockProps) {
         onClose: () => {
           setFileManagerOpen(false);
           setFileManagerMinimized(false);
+        },
+      },
+      {
+        id: 'terminal-manager-app',
+        name: '终端执行器',
+        icon: getIconForType('terminal-manager', 'module'),
+        isOpen: terminalManagerOpen,
+        onHover: () => prefetchUtilityChunk('terminal-manager'),
+        onClick: () => {
+          setTerminalManagerOpen(true);
+          setTerminalManagerMinimized(false);
+          requestUtilityFocus('terminal-manager');
+        },
+        onClose: () => {
+          setTerminalManagerOpen(false);
+          setTerminalManagerMinimized(false);
         },
       },
       {

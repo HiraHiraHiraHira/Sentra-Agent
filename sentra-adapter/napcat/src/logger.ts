@@ -80,13 +80,7 @@ function localTimestamp(): string {
   const HH = pad(d.getHours());
   const mm = pad(d.getMinutes());
   const ss = pad(d.getSeconds());
-  const SSS = pad(d.getMilliseconds(), 3);
-  const tz = -d.getTimezoneOffset(); // minutes east of UTC
-  const sign = tz >= 0 ? '+' : '-';
-  const absm = Math.abs(tz);
-  const tzh = pad(Math.floor(absm / 60));
-  const tzm = pad(absm % 60);
-  return `${yyyy}-${MM}-${dd} ${HH}:${mm}:${ss}.${SSS} ${sign}${tzh}:${tzm}`;
+  return `${yyyy}-${MM}-${dd} ${HH}:${mm}:${ss}`;
 }
 
 export function createLogger(level: LogLevel = 'info'): Logger {

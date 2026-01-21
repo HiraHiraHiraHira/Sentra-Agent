@@ -140,6 +140,11 @@ export const DesktopView = (props: DesktopViewProps) => {
     fileManagerMinimized,
     setFileManagerMinimized,
 
+    terminalManagerOpen,
+    setTerminalManagerOpen,
+    terminalManagerMinimized,
+    setTerminalManagerMinimized,
+
     utilityFocusRequestId,
     utilityFocusRequestNonce,
     clearUtilityFocusRequest,
@@ -209,7 +214,8 @@ export const DesktopView = (props: DesktopViewProps) => {
     (emojiStickersManagerOpen ? 1 : 0) +
     (presetsEditorOpen ? 1 : 0) +
     (presetImporterOpen ? 1 : 0) +
-    (fileManagerOpen ? 1 : 0);
+    (fileManagerOpen ? 1 : 0) +
+    (terminalManagerOpen ? 1 : 0);
 
   const lowEndDevice = useMemo(() => {
     try {
@@ -338,6 +344,9 @@ export const DesktopView = (props: DesktopViewProps) => {
     } else if (id === 'file-manager') {
       setFileManagerOpen(true);
       setFileManagerMinimized(false);
+    } else if (id === 'terminal-manager') {
+      setTerminalManagerOpen(true);
+      setTerminalManagerMinimized(false);
     }
 
     bringUtilityToFront(id);
@@ -363,6 +372,8 @@ export const DesktopView = (props: DesktopViewProps) => {
     setPresetImporterMinimized,
     setFileManagerOpen,
     setFileManagerMinimized,
+    setTerminalManagerOpen,
+    setTerminalManagerMinimized,
   ]);
 
   const handleOpenDeepWiki = useCallback(() => {
@@ -419,6 +430,12 @@ export const DesktopView = (props: DesktopViewProps) => {
       bringUtilityToFront('file-manager');
     }
   }, [fileManagerOpen, utilityZMap, bringUtilityToFront]);
+
+  useEffect(() => {
+    if (terminalManagerOpen && utilityZMap['terminal-manager'] == null) {
+      bringUtilityToFront('terminal-manager');
+    }
+  }, [terminalManagerOpen, utilityZMap, bringUtilityToFront]);
 
   const renderTopTile = useCallback((key: string, label: string, icon: ReactNode, onClick: (e: React.MouseEvent) => void) => {
     return (
@@ -485,6 +502,27 @@ export const DesktopView = (props: DesktopViewProps) => {
         setDevCenterOpen(false);
         setDevCenterMinimized(false);
         if (activeUtilityId === 'dev-center') {
+          setActiveUtilityId(null);
+        }
+      },
+    });
+  }
+
+  if (terminalManagerOpen) {
+    extraTabs.push({
+      id: 'terminal-manager',
+      title: '终端执行器',
+      icon: getIconForType('terminal-manager', 'module'),
+      isActive: activeUtilityId === 'terminal-manager',
+      onActivate: () => {
+        setTerminalManagerOpen(true);
+        setTerminalManagerMinimized(false);
+        bringUtilityToFront('terminal-manager');
+      },
+      onClose: () => {
+        setTerminalManagerOpen(false);
+        setTerminalManagerMinimized(false);
+        if (activeUtilityId === 'terminal-manager') {
           setActiveUtilityId(null);
         }
       },
@@ -717,6 +755,16 @@ export const DesktopView = (props: DesktopViewProps) => {
         bringUtilityToFront('emoji-stickers-manager');
       }
     },
+    {
+      name: 'terminal-manager',
+      type: 'module' as const,
+      onClick: () => {
+        recordUsage('app:terminal-manager');
+        setTerminalManagerOpen(true);
+        setTerminalManagerMinimized(false);
+        bringUtilityToFront('terminal-manager');
+      }
+    },
     ...allItems.filter(item => item.name !== 'utils/emoji-stickers').map(item => ({
       name: item.name,
       type: item.type,
@@ -871,6 +919,10 @@ export const DesktopView = (props: DesktopViewProps) => {
           setFileManagerOpen={setFileManagerOpen}
           fileManagerMinimized={fileManagerMinimized}
           setFileManagerMinimized={setFileManagerMinimized}
+          terminalManagerOpen={terminalManagerOpen}
+          setTerminalManagerOpen={setTerminalManagerOpen}
+          terminalManagerMinimized={terminalManagerMinimized}
+          setTerminalManagerMinimized={setTerminalManagerMinimized}
         />
 
         {/* 环境变量编辑窗口 */}

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { App, Button, Card, Collapse, Input, InputNumber, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tag, Tooltip, Upload } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { CheckCircleOutlined, FileImageOutlined, PictureOutlined, ReloadOutlined, SaveOutlined, SearchOutlined, TagsOutlined, UploadOutlined, WarningOutlined } from '@ant-design/icons';
 import styles from './EmojiStickersManager.module.css';
-import { fetchFileContent } from '../../services/api';
+import { storage } from '../../utils/storage';
+import { useDevice } from '../../hooks/useDevice';
 import {
   deleteEmojiStickerFile,
   ensureEmojiStickers,
@@ -58,6 +59,10 @@ async function fileToDataUrl(file: File) {
 export default function EmojiStickersManager(props: Props) {
   const addToast = props.addToast;
   const { modal } = App.useApp();
+  const { isMobile, isTablet } = useDevice();
+  const compact = isMobile || isTablet;
+
+  const defaultPageSize = compact ? 8 : 12;
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -68,21 +73,40 @@ export default function EmojiStickersManager(props: Props) {
   const [filterTags, setFilterTags] = useState<string[]>([]);
   const [filterQuery, setFilterQuery] = useState<string>('');
 
+  const [tablePage, setTablePage] = useState<number>(1);
+  const [tablePageSize, setTablePageSize] = useState<number>(defaultPageSize);
+
   const [autoCompress, setAutoCompress] = useState(true);
   const [compressMaxDim, setCompressMaxDim] = useState(160);
   const [compressQuality, setCompressQuality] = useState(80);
-
-  const [thumbs, setThumbs] = useState<Record<string, string>>({});
-  const thumbsRef = useRef<Record<string, string>>({});
-  useEffect(() => {
-    thumbsRef.current = thumbs;
-  }, [thumbs]);
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewFilename, setPreviewFilename] = useState<string>('');
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameFrom, setRenameFrom] = useState<string>('');
   const [renameTo, setRenameTo] = useState<string>('');
+
+  const [tagsEditOpen, setTagsEditOpen] = useState(false);
+  const [tagsEditKey, setTagsEditKey] = useState<string>('');
+  const [tagsEditValue, setTagsEditValue] = useState<string[]>([]);
+  const [tagsEditCategory, setTagsEditCategory] = useState<string>('');
+
+  const authToken = useMemo(() => {
+    return storage.getString('sentra_auth_token', { backend: 'session', fallback: '' })
+      || storage.getString('sentra_auth_token', { fallback: '' });
+  }, []);
+
+  const buildImageUrl = useCallback((filename: string, opts?: { thumb?: boolean; maxDim?: number }) => {
+    const fn = String(filename || '').trim();
+    if (!fn) return '';
+    const token = encodeURIComponent(String(authToken || ''));
+    const base = `/api/emoji-stickers/image?filename=${encodeURIComponent(fn)}&token=${token}`;
+    if (opts?.thumb) {
+      const maxDim = Number(opts.maxDim) || 64;
+      return `${base}&thumb=1&maxDim=${encodeURIComponent(String(maxDim))}`;
+    }
+    return base;
+  }, [authToken]);
 
   const loadAll = useCallback(async (ensureFirst = false) => {
     setLoading(true);
@@ -103,34 +127,6 @@ export default function EmojiStickersManager(props: Props) {
       }));
       setRows(nextRows);
       setTagChoices(uniqStrings(nextRows.flatMap(r => Array.isArray((r as any).tags) ? (r as any).tags : [])));
-
-      // Best-effort preload a limited number of thumbs.
-      const maxThumbs = 80;
-      const need = nextRows
-        .filter(r => r.hasFile)
-        .map(r => r.filename)
-        .filter(fn => !thumbsRef.current[fn])
-        .slice(0, maxThumbs);
-
-      if (need.length) {
-        const concurrency = 6;
-        let idx = 0;
-        const worker = async () => {
-          while (idx < need.length) {
-            const current = need[idx++];
-            try {
-              const p = `utils/emoji-stickers/emoji/${current}`;
-              const file = await fetchFileContent(p);
-              if (file?.isBinary && typeof file.content === 'string' && file.content.startsWith('data:')) {
-                setThumbs(prev => ({ ...prev, [current]: file.content }));
-              }
-            } catch {
-              // ignore
-            }
-          }
-        };
-        await Promise.all(Array.from({ length: concurrency }, () => worker()));
-      }
     } catch (e: any) {
       addToast('error', '加载表情包失败', e?.message ? String(e.message) : String(e));
     } finally {
@@ -162,17 +158,24 @@ export default function EmojiStickersManager(props: Props) {
     const q = String(filterQuery || '').trim().toLowerCase();
     const tags = normalizeTagList(filterTags);
     return rows.filter(r => {
+      if (!r.hasFile) return false;
       if (q) {
-        const hay = `${r.filename} ${r.description || ''}`.toLowerCase();
+        const hay = `${r.filename} ${r.description || ''} ${(r.category || '')} ${(normalizeTagList(r.tags) || []).join(' ')}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       if (tags.length) {
-        const rt = normalizeTagList((r as any).tags);
-        if (!rt.some(t => tags.includes(t))) return false;
+        const rowTags = new Set(normalizeTagList(r.tags));
+        for (const t of tags) {
+          if (!rowTags.has(t)) return false;
+        }
       }
       return true;
     });
   }, [filterQuery, filterTags, rows]);
+
+  useEffect(() => {
+    setTablePage(1);
+  }, [filterQuery, filterTags]);
 
   const tagDist = useMemo(() => {
     const counts = new Map<string, number>();
@@ -230,17 +233,6 @@ export default function EmojiStickersManager(props: Props) {
   const openPreview = useCallback(async (filename: string) => {
     const fn = String(filename || '').trim();
     if (!fn) return;
-    try {
-      if (!thumbsRef.current[fn]) {
-        const p = `utils/emoji-stickers/emoji/${fn}`;
-        const file = await fetchFileContent(p);
-        if (file?.isBinary && typeof file.content === 'string' && file.content.startsWith('data:')) {
-          setThumbs(prev => ({ ...prev, [fn]: file.content }));
-        }
-      }
-    } catch {
-      // ignore
-    }
     setPreviewFilename(fn);
     setPreviewOpen(true);
   }, []);
@@ -252,6 +244,26 @@ export default function EmojiStickersManager(props: Props) {
     setRenameTo(fn);
     setRenameOpen(true);
   }, []);
+
+  const openTagsEditor = useCallback((row: Row) => {
+    setTagsEditKey(String(row.key || row.filename || ''));
+    setTagsEditCategory(String((row as any).category || ''));
+    setTagsEditValue(normalizeTagList((row as any).tags));
+    setTagsEditOpen(true);
+  }, []);
+
+  const handleConfirmTags = useCallback(() => {
+    const key = String(tagsEditKey || '').trim();
+    if (!key) {
+      setTagsEditOpen(false);
+      return;
+    }
+    handleRowChange(key, {
+      category: String(tagsEditCategory || '').trim() || undefined,
+      tags: normalizeTagList(tagsEditValue) as any,
+    } as any);
+    setTagsEditOpen(false);
+  }, [handleRowChange, tagsEditCategory, tagsEditKey, tagsEditValue]);
 
   const handleConfirmRename = useCallback(async () => {
     const from = String(renameFrom || '').trim();
@@ -268,14 +280,6 @@ export default function EmojiStickersManager(props: Props) {
     setSaving(true);
     try {
       await renameEmojiStickerFile({ from, to });
-      setThumbs(prev => {
-        const next = { ...prev };
-        if (next[from]) {
-          next[to] = next[from];
-          delete next[from];
-        }
-        return next;
-      });
       addToast('success', '已重命名', `${from} -> ${to}`);
       setRenameOpen(false);
       await loadAll(false);
@@ -287,102 +291,120 @@ export default function EmojiStickersManager(props: Props) {
   }, [addToast, loadAll, renameFrom, renameTo]);
 
   const columns: ColumnsType<Row> = useMemo(() => {
-    return [
-      {
-        title: '预览',
-        dataIndex: 'filename',
-        width: 80,
-        render: (_v: any, row: Row) => {
-          const src = thumbs[row.filename];
-          return (
-            <div
-              className={`${styles.thumb} ${styles.thumbClickable}`}
-              role="button"
-              tabIndex={0}
-              onClick={() => openPreview(row.filename)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') openPreview(row.filename);
-              }}
-            >
-              {src ? <img src={src} alt={row.filename} /> : <PictureOutlined style={{ color: 'var(--sentra-muted-fg)' }} />}
-            </div>
-          );
-        }
-      },
-      {
-        title: '文件',
-        dataIndex: 'filename',
-        width: 220,
-        render: (v: any, row: Row) => (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div className={styles.monoEllipsis} title={String(v)}>{String(v)}</div>
-            {!row.hasFile && <Tag color="warning">缺少文件</Tag>}
+    const previewCol: ColumnsType<Row>[number] = {
+      title: '预览',
+      dataIndex: 'filename',
+      width: 80,
+      render: (_v: any, row: Row) => {
+        const src = row.hasFile ? buildImageUrl(row.filename, { thumb: true, maxDim: 64 }) : '';
+        return (
+          <div
+            className={`${styles.thumb} ${styles.thumbClickable}`}
+            role="button"
+            tabIndex={0}
+            onClick={() => openPreview(row.filename)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') openPreview(row.filename);
+            }}
+          >
+            {src ? (
+              <img src={src} alt={row.filename} loading="lazy" decoding="async" />
+            ) : (
+              <PictureOutlined style={{ color: 'var(--sentra-muted-fg)' }} />
+            )}
           </div>
-        )
-      },
-      {
-        title: '描述',
-        dataIndex: 'description',
-        render: (v: any, row: Row) => (
-          <Input
-            value={String(v || '')}
-            placeholder="例如：虎鲸猫-探头"
-            onChange={(e) => handleRowChange(row.key, { description: e.target.value })}
-          />
-        )
-      },
-      {
-        title: '标签',
-        dataIndex: 'tags',
-        width: 260,
-        render: (v: any, row: Row) => {
-          const value = normalizeTagList(v);
-          return (
-            <Select
-              className={styles.tagSelect}
-              mode="tags"
-              value={value}
-              placeholder="添加标签（如：高兴/委屈/生气）"
-              options={tagChoices.map(t => ({ value: t, label: t }))}
-              onChange={(vals) => handleRowChange(row.key, { tags: normalizeTagList(vals) } as any)}
-              maxTagCount="responsive"
-              style={{ width: '100%' }}
-              styles={{ popup: { root: { minWidth: 320 } } }}
-            />
-          );
-        }
-      },
-      {
-        title: '启用',
-        dataIndex: 'enabled',
-        width: 90,
-        render: (v: any, row: Row) => (
-          <Switch checked={v !== false} onChange={(checked) => handleRowChange(row.key, { enabled: checked })} />
-        )
-      },
-      {
-        title: '操作',
-        width: 170,
-        render: (_v: any, row: Row) => (
-          <Space>
-            <Button size="small" onClick={() => handleStartRename(row.filename)} disabled={!row.hasFile}>
-              重命名
-            </Button>
-            <Popconfirm
-              title="删除文件"
-              description={`确定删除 ${row.filename} 吗？这会从 emoji 文件夹中移除图片。`}
-              okText="删除"
-              cancelText="取消"
-              onConfirm={() => handleDeleteFile(row.filename)}
-              disabled={!row.hasFile}
-            >
-              <Button danger size="small" disabled={!row.hasFile}>删除文件</Button>
-            </Popconfirm>
-          </Space>
-        )
+        );
       }
-    ];
-  }, [handleDeleteFile, handleRowChange, openPreview, tagChoices, thumbs]);
+    };
+
+    const fileCol: ColumnsType<Row>[number] = {
+      title: '文件',
+      dataIndex: 'filename',
+      width: compact ? 160 : 220,
+      render: (v: any, row: Row) => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div className={styles.monoEllipsis} title={String(v)}>{String(v)}</div>
+          {!row.hasFile && <Tag color="warning">缺少文件</Tag>}
+        </div>
+      )
+    };
+
+    const descCol: ColumnsType<Row>[number] = {
+      title: '描述',
+      dataIndex: 'description',
+      render: (v: any, row: Row) => (
+        <Input
+          value={String(v || '')}
+          placeholder="例如：虎鲸猫-探头"
+          onChange={(e) => handleRowChange(row.key, { description: e.target.value })}
+        />
+      )
+    };
+
+    const tagsCol: ColumnsType<Row>[number] = {
+      title: '标签',
+      dataIndex: 'tags',
+      width: 260,
+      render: (v: any, row: Row) => {
+        const value = normalizeTagList(v);
+        return (
+          <Select
+            className={styles.tagSelect}
+            mode="tags"
+            value={value}
+            placeholder="添加标签（如：高兴/委屈/生气）"
+            options={tagChoices.map(t => ({ value: t, label: t }))}
+            onChange={(vals) => handleRowChange(row.key, { tags: normalizeTagList(vals) } as any)}
+            maxTagCount="responsive"
+            style={{ width: '100%' }}
+            styles={{ popup: { root: { minWidth: 320 } } }}
+          />
+        );
+      }
+    };
+
+    const enabledCol: ColumnsType<Row>[number] = {
+      title: '启用',
+      dataIndex: 'enabled',
+      width: 90,
+      render: (v: any, row: Row) => (
+        <Switch checked={v !== false} onChange={(checked) => handleRowChange(row.key, { enabled: checked })} />
+      )
+    };
+
+    const actionsCol: ColumnsType<Row>[number] = {
+      title: '操作',
+      width: compact ? 210 : 170,
+      render: (_v: any, row: Row) => (
+        <Space>
+          {compact && (
+            <Button size="small" onClick={() => openTagsEditor(row)} disabled={!row.hasFile}>
+              标签
+            </Button>
+          )}
+          <Button size="small" onClick={() => handleStartRename(row.filename)} disabled={!row.hasFile}>
+            重命名
+          </Button>
+          <Popconfirm
+            title="删除文件"
+            description={`确定删除 ${row.filename} 吗？这会从 emoji 文件夹中移除图片。`}
+            okText="删除"
+            cancelText="取消"
+            onConfirm={() => handleDeleteFile(row.filename)}
+            disabled={!row.hasFile}
+          >
+            <Button danger size="small" disabled={!row.hasFile}>删除文件</Button>
+          </Popconfirm>
+        </Space>
+      )
+    };
+
+    if (compact) {
+      return [previewCol, fileCol, descCol, enabledCol, actionsCol];
+    }
+
+    return [previewCol, fileCol, descCol, tagsCol, enabledCol, actionsCol];
+  }, [buildImageUrl, handleDeleteFile, handleRowChange, openPreview, tagChoices]);
 
   const uploadProps = useMemo(() => {
     return {
@@ -642,10 +664,48 @@ export default function EmojiStickersManager(props: Props) {
             dataSource={filteredRows}
             columns={columns}
             tableLayout="fixed"
-            pagination={{ pageSize: 12, showSizeChanger: true }}
+            pagination={{
+              current: tablePage,
+              pageSize: tablePageSize,
+              total: filteredRows.length,
+              showSizeChanger: !compact,
+              pageSizeOptions: compact ? ['8', '12', '20'] : ['12', '20', '50', '100'],
+              showTotal: (total, range) => `${range[0]}-${range[1]} / ${total}`,
+              onChange: (page, pageSize) => {
+                setTablePage(page);
+                setTablePageSize(pageSize);
+              },
+            }}
           />
         </div>
       </div>
+
+      <Modal
+        open={tagsEditOpen}
+        title="编辑标签"
+        okText="确认"
+        cancelText="取消"
+        onCancel={() => setTagsEditOpen(false)}
+        onOk={handleConfirmTags}
+        destroyOnHidden
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <Input
+            value={tagsEditCategory}
+            onChange={(e) => setTagsEditCategory(e.target.value)}
+            placeholder="分类（可选）"
+          />
+          <Select
+            mode="tags"
+            value={tagsEditValue}
+            placeholder="添加标签（如：高兴/委屈/生气）"
+            options={tagChoices.map(t => ({ value: t, label: t }))}
+            onChange={(vals) => setTagsEditValue(normalizeTagList(vals))}
+            maxTagCount="responsive"
+            style={{ width: '100%' }}
+          />
+        </div>
+      </Modal>
 
       <Modal
         open={previewOpen}
@@ -655,12 +715,14 @@ export default function EmojiStickersManager(props: Props) {
         width={560}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {previewFilename && thumbs[previewFilename] ? (
+          {previewFilename ? (
             <div style={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
               <img
-                src={thumbs[previewFilename]}
+                src={buildImageUrl(previewFilename)}
                 alt={previewFilename}
                 style={{ maxWidth: '100%', maxHeight: 420, borderRadius: 12, border: '1px solid var(--sentra-border-strong)' }}
+                loading="eager"
+                decoding="async"
               />
             </div>
           ) : (

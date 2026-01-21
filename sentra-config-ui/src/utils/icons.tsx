@@ -29,7 +29,8 @@ import {
   IoServer,
   IoDocumentText,
   IoCloudDownload,
-  IoFolderOpen
+  IoFolderOpen,
+  IoTerminalOutline
 } from 'react-icons/io5';
 import { BsRobot } from 'react-icons/bs';
 import { OpenAI } from '@lobehub/icons';
@@ -77,6 +78,7 @@ export const getDisplayName = (name: string): string => {
     'file-manager': '文件管理',
     'redis-admin': 'Redis 管理器',
     'model-providers-manager': '模型供应商',
+    'terminal-manager': '终端执行器',
     'av_transcribe': '音频转录',
     'mindmap_gen': '思维导图',
     'custom_music_card': '自定义音卡',
@@ -203,6 +205,7 @@ export const getIconForType = (name: string, type: 'module' | 'plugin'): React.R
 
   // Built-in apps
   if (n.includes('file-manager')) return <AppIconWrapper bg="linear-gradient(135deg, #f6d365 0%, #fda085 100%)"><IoFolderOpen color="white" /></AppIconWrapper>;
+  if (n.includes('terminal-manager')) return <AppIconWrapper bg="linear-gradient(135deg, #111827 0%, #374151 100%)"><IoTerminalOutline color="white" /></AppIconWrapper>;
   if (n.includes('preset-importer')) return <AppIconWrapper bg="linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)"><IoCloudDownload color="white" /></AppIconWrapper>;
   if (n.includes('agent-presets') || n.includes('presets-editor')) return <AppIconWrapper bg="linear-gradient(135deg, #00b09b 0%, #96c93d 100%)"><IoDocumentText color="white" /></AppIconWrapper>;
   if (n.includes('redis-admin')) return <AppIconWrapper bg="linear-gradient(135deg, #7c3aed 0%, #2563eb 100%)"><IoServer color="white" /></AppIconWrapper>;

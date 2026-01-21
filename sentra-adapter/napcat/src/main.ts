@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import createSDK from './sdk';
 import { createLogger } from './logger';
-import { formatEventCompact, isMeaningfulMessage } from './events';
+import { formatEventCompact, formatMessageHuman, isMeaningfulMessage } from './events';
 import type { MessageEvent } from './types/onebot';
 import { getConfig, refreshConfigFromEnv } from './runtimeConfig';
 import { startEnvWatcher } from './envWatcher';
@@ -21,6 +21,26 @@ async function main() {
   startCacheCleanupTimer(log as any);
 
   const sdk = createSDK();
+
+  const groupNameCache = new Map<number, { name: string; ts: number }>();
+  const getGroupNameCached = async (groupId: number | undefined): Promise<string | undefined> => {
+    if (!groupId || !Number.isFinite(groupId)) return undefined;
+    const now = Date.now();
+    const cached = groupNameCache.get(groupId);
+    // 10 分钟缓存
+    if (cached && now - cached.ts < 10 * 60 * 1000) return cached.name;
+    try {
+      const resp: any = await (sdk as any).group?.info?.(groupId, true);
+      const name = resp?.data?.group_name;
+      if (name && typeof name === 'string') {
+        groupNameCache.set(groupId, { name, ts: now });
+        return name;
+      }
+    } catch {
+      // ignore
+    }
+    return cached?.name;
+  };
 
   // 连接成功
   sdk.on.open(async () => {
@@ -51,7 +71,14 @@ async function main() {
   // 监听所有消息（记录日志）
   sdk.on.message(async (ev) => {
     const summaryMode = (process.env.EVENT_SUMMARY || 'debug').toLowerCase();
-    const line = formatEventCompact(ev, { withColor: true });
+    let line = '';
+    if ((ev as any)?.post_type === 'message') {
+      const msg = ev as any;
+      const groupName = msg.message_type === 'group' ? await getGroupNameCached(msg.group_id) : undefined;
+      line = formatMessageHuman(msg, { withColor: true, groupName });
+    } else {
+      line = formatEventCompact(ev, { withColor: true });
+    }
     if (summaryMode === 'always') {
       log.info(line);
     } else if (summaryMode === 'debug' && process.env.LOG_LEVEL === 'debug') {

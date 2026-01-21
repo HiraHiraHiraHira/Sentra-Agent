@@ -66,3 +66,75 @@
   border: none !important;
   box-shadow: none !important;
 }
+
+:where(.ant-btn) {
+  border-radius: var(--control-radius) !important;
+}
+
+:where(.ant-btn:not(.ant-btn-primary):not(.ant-btn-link):not(.ant-btn-text)) {
+  background: var(--control-bg) !important;
+  border-color: var(--control-border) !important;
+  color: var(--control-fg) !important;
+}
+
+:where(.ant-btn:not(.ant-btn-primary):not(.ant-btn-link):not(.ant-btn-text):hover) {
+  border-color: var(--control-focus-border) !important;
+  box-shadow: var(--control-focus-shadow) !important;
+}
+
+:where(.ant-btn-primary) {
+  background: var(--sentra-accent) !important;
+  border-color: rgba(var(--sentra-accent-rgb), 0.75) !important;
+  color: var(--sentra-accent-contrast) !important;
+}
+
+:where(.ant-btn-primary:hover) {
+  background: rgba(var(--sentra-accent-rgb), 0.90) !important;
+  border-color: rgba(var(--sentra-accent-rgb), 0.90) !important;
+}
+
+:where(.ant-btn-primary:active) {
+  background: rgba(var(--sentra-accent-rgb), 0.80) !important;
+  border-color: rgba(var(--sentra-accent-rgb), 0.80) !important;
+}
+
+:where(.ant-modal-content) {
+  background: var(--sentra-panel-bg-strong) !important;
+  color: var(--sentra-fg) !important;
+  border: 1px solid var(--sentra-border) !important;
+}
+
+:where(.ant-modal-header) {
+  background: transparent !important;
+  border-bottom: 1px solid var(--sentra-border) !important;
+}
+
+:where(.ant-modal-title) {
+  color: var(--sentra-fg) !important;
+}
+
+:where(.ant-modal-close) {
+  color: var(--sentra-muted-fg) !important;
+}
+
+:where(.ant-pagination) {
+  color: var(--sentra-fg) !important;
+}
+
+:where(.ant-pagination .ant-pagination-item) {
+  background: var(--sentra-panel-bg) !important;
+  border-color: var(--sentra-border-strong) !important;
+}
+
+:where(.ant-pagination .ant-pagination-item a) {
+  color: var(--sentra-fg) !important;
+}
+
+:where(.ant-pagination .ant-pagination-item-active) {
+  background: rgba(var(--sentra-accent-rgb), 0.16) !important;
+  border-color: rgba(var(--sentra-accent-rgb), 0.55) !important;
+}
+
+:where(.ant-pagination .ant-pagination-item-active a) {
+  color: var(--sentra-fg) !important;
+}

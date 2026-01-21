@@ -135,6 +135,37 @@ function formatCounts(counts: Record<string, number>): string {
   return parts.join(',');
 }
 
+function formatCountsNatural(counts: Record<string, number>): string {
+  const labelMap: Record<string, string> = {
+    text: '文本',
+    image: '图片',
+    video: '视频',
+    record: '语音',
+    file: '文件',
+    at: '艾特',
+    face: '表情',
+    reply: '回复',
+    forward: '转发',
+    json: '卡片',
+    xml: '卡片',
+    share: '分享',
+    app: '应用',
+  };
+  const keys = Object.keys(counts).filter((k) => (counts as any)[k] > 0).sort();
+  if (!keys.length) return '';
+  return keys.map((k) => `${labelMap[k] || k}×${counts[k]}`).join('、');
+}
+
+function omitCounts(counts: Record<string, number>, omit: string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(counts || {})) {
+    if (omit.includes(k)) continue;
+    if (!v) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
 function sanitizeInline(text: string, max = 80): string {
   // 常规清理
   const cleaned = text
@@ -147,6 +178,80 @@ function sanitizeInline(text: string, max = 80): string {
   // 如果 max为0或负数，不截断
   if (max <= 0 || cleaned.length <= max) return cleaned;
   return cleaned.slice(0, max - 1) + '…';
+}
+
+export function formatMessageHuman(
+  ev: MessageEvent,
+  opts: { plainMax?: number; withColor?: boolean; groupName?: string; peerName?: string } = {},
+): string {
+  const s = summarizeMessageEvent(ev);
+  const withColor = opts.withColor !== false;
+  const plain = s.plain_text || s.raw_message || '';
+
+  const envMaxLength = process.env.MESSAGE_TEXT_MAX_LENGTH;
+  const defaultMax = opts.plainMax ?? 80;
+  const maxLength = envMaxLength !== undefined ? Number(envMaxLength) : defaultMax;
+  const plainCropped = sanitizeInline(plain, maxLength);
+
+  const color = (x: string, fn: (s: string) => string) => (withColor ? fn(x) : x);
+
+  let headText = '';
+  if (s.message_type === 'group') {
+    const gName = opts.groupName || '未知群';
+    headText = `群聊:${gName}(${String(s.group_id ?? '')})`;
+  } else {
+    const peer = opts.peerName || (s.sender && (s.sender.nickname || s.sender.card)) || String(s.user_id ?? '');
+    headText = `私聊:${peer}(${String(s.user_id ?? '')})`;
+  }
+
+  const head = color(`[${headText}]`, s.message_type === 'group' ? chalk.magentaBright : chalk.blueBright);
+
+  const senderNick = String((s.sender && (s.sender.card || s.sender.nickname)) || '');
+  const senderId = String(s.user_id ?? '');
+  const senderRole = String((s.sender as any)?.role || '');
+  const roleLabel =
+    s.message_type === 'group'
+      ? (senderRole === 'owner' ? '群主' : senderRole === 'admin' ? '管理员' : senderRole === 'member' ? '成员' : '')
+      : '';
+  const senderLabelCore = senderNick ? `${senderNick}(${senderId})` : senderId;
+  const senderLabel = roleLabel ? `${roleLabel} ${senderLabelCore}` : senderLabelCore;
+
+  const replySeg = ev.message.find((seg) => seg.type === 'reply');
+  let replyText = '';
+  let replyId: string | undefined;
+  if (replySeg) {
+    const qid = replySeg.data?.id;
+    replyId = qid !== undefined ? String(qid) : undefined;
+    let qtext = '';
+    if (replySeg.data?.text) {
+      qtext = String(replySeg.data.text);
+    } else if (Array.isArray(replySeg.data?.message)) {
+      const ts = (replySeg.data.message as any[])
+        .filter((x) => x && x.type === 'text')
+        .map((x) => String(x.data?.text ?? ''))
+        .join('');
+      qtext = ts;
+    }
+    replyText = sanitizeInline(qtext, 60);
+  }
+
+  const segNatural = formatCountsNatural(s.segments.counts);
+  const attachmentsNatural = formatCountsNatural(omitCounts(s.segments.counts, ['text', 'reply']));
+  const hasMeaningText = !!plainCropped && plainCropped.trim().length > 0;
+  const content = hasMeaningText
+    ? (attachmentsNatural ? `“${plainCropped}”（另含 ${attachmentsNatural}）` : `“${plainCropped}”`)
+    : (segNatural ? `发送了 ${segNatural}` : '发送了空消息');
+
+  const action = replySeg ? '回复' : '说';
+  const quotePart = replySeg
+    ? (replyText ? `「${replyText}」` : (replyId ? `一条消息（ID ${replyId}）` : '一条消息'))
+    : '';
+  const body = replySeg ? `${senderLabel} ${action}${quotePart}：${content}` : `${senderLabel}：${content}`;
+
+  const mid = s.message_id !== undefined ? String(s.message_id) : '';
+  const tail = mid ? color(`（消息ID ${mid}）`, chalk.gray) : '';
+
+  return [head, body, tail].filter(Boolean).join(' ');
 }
 
 export function formatMessageCompact(

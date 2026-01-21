@@ -130,8 +130,8 @@ function App() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#f5f5f7',
-        color: '#666'
+        background: 'var(--mac-app-bg)',
+        color: 'var(--sentra-muted-fg)'
       }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 24, marginBottom: 16 }}>Sentra Agent</div>
