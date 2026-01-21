@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'path';
@@ -223,8 +223,44 @@ function resolveBuildMaxOldSpaceSizeMb() {
 function shouldAutoBuildDist() {
     if (skipBuildDist) return false;
     if (forceBuildDist) return true;
-    // Avoid building on very low-memory machines by default.
     return os.totalmem() >= 3 * 1024 * 1024 * 1024;
+}
+
+function safeReadJson(filePath) {
+    try {
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+}
+
+function hasInstalledNodePackage(projectDir, pkgName) {
+    const parts = String(pkgName || '').split('/').filter(Boolean);
+    if (parts.length === 0) return false;
+    const p = path.join(projectDir, 'node_modules', ...parts);
+    try {
+        const st = fs.lstatSync(p);
+        return st.isDirectory() || st.isSymbolicLink();
+    } catch {
+        return false;
+    }
+}
+
+function listMissingNodeDeps(projectDir) {
+    const pkgPath = path.join(projectDir, 'package.json');
+    const pkg = safeReadJson(pkgPath);
+    if (!pkg || typeof pkg !== 'object') return [];
+
+    const deps = Object.keys(pkg.dependencies || {});
+    const devDeps = Object.keys(pkg.devDependencies || {});
+    const direct = Array.from(new Set([...deps, ...devDeps])).filter(Boolean);
+
+    const missing = [];
+    for (const dep of direct) {
+        if (!hasInstalledNodePackage(projectDir, dep)) missing.push(dep);
+    }
+    return missing;
 }
 
 function hasPuppeteerDependency(projectDir) {
@@ -264,9 +300,8 @@ async function ensurePuppeteerBrowserForMcp(pm) {
 
 function commandExists(cmd, checkArgs = ['--version']) {
     try {
-        const r = spawn(cmd, checkArgs, { stdio: 'ignore', shell: true });
-        r.on('close', () => { });
-        return true;
+        const r = spawnSync(cmd, checkArgs, { stdio: 'ignore', shell: true });
+        return r.status === 0;
     } catch {
         return false;
     }
@@ -613,7 +648,16 @@ async function update() {
                     console.log(chalk.yellow(`  [Node] ${label}: Force update → reinstalling`));
                     installQueue.push({ dir, label, type: 'node', reason: 'force update' });
                 } else {
-                    console.log(chalk.gray(`  [Node] ${label}: no changes → skip`));
+                    const missing = listMissingNodeDeps(dir);
+                    if (missing.length > 0) {
+                        const preview = missing.slice(0, 8);
+                        const more = missing.length > preview.length ? ` (+${missing.length - preview.length} more)` : '';
+                        const reason = `missing deps: ${preview.join(', ')}${more}`;
+                        console.log(chalk.yellow(`  [Node] ${label}: ${reason} → install needed`));
+                        installQueue.push({ dir, label, type: 'node', reason });
+                    } else {
+                        console.log(chalk.gray(`  [Node] ${label}: no changes → skip`));
+                    }
                 }
             }
 
@@ -696,17 +740,17 @@ async function update() {
             console.log(chalk.green('\n✨ No dependency changes detected, skipping installation\n'));
         }
 
-        // Step 5: Build Web UI dist for fast startup (optional)
         const uiDir = path.resolve(ROOT_DIR, 'sentra-config-ui');
         if (shouldAutoBuildDist() && isNodeProject(uiDir)) {
             const maxOldSpaceSizeMb = resolveBuildMaxOldSpaceSizeMb();
             spinner.start(`[UI] Building dist (NODE_OPTIONS=--max-old-space-size=${maxOldSpaceSizeMb})...`);
             try {
-                await execCommand(pm, ['run', 'build:dist'], uiDir, {
-                    NODE_OPTIONS: `--max-old-space-size=${maxOldSpaceSizeMb}`,
-                    npm_config_registry: npmRegistry || undefined,
-                    NPM_CONFIG_REGISTRY: npmRegistry || undefined,
-                });
+                const buildEnv = { NODE_OPTIONS: `--max-old-space-size=${maxOldSpaceSizeMb}` };
+                if (npmRegistry) {
+                    buildEnv.npm_config_registry = npmRegistry;
+                    buildEnv.NPM_CONFIG_REGISTRY = npmRegistry;
+                }
+                await execCommand(pm, ['run', 'build:dist'], uiDir, buildEnv);
                 spinner.succeed('[UI] dist build completed');
             } catch (e) {
                 spinner.fail('[UI] dist build failed');

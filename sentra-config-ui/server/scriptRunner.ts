@@ -5,13 +5,22 @@ import os from 'os';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import dotenv from 'dotenv';
-import * as pty from 'node-pty';
+import { createRequire } from 'module';
+import type { IPty } from 'node-pty';
+
+const require = createRequire(import.meta.url);
+let pty: any = null;
+try {
+    pty = require('node-pty');
+} catch {
+    pty = null;
+}
 
 interface ScriptProcess {
     id: string;
     name: 'bootstrap' | 'start' | 'napcat' | 'update' | 'sentiment' | 'shell';
     dedupeKey: string;
-    process: ReturnType<typeof spawn> | pty.IPty;
+    process: ReturnType<typeof spawn> | IPty;
     output: string[];
     exitCode: number | null;
     startTime: Date;
@@ -47,6 +56,12 @@ function resolveSentimentRunner(runtimeEnv: Record<string, string>): 'uv' | 'pyt
 
 export class ScriptRunner {
     private processes: Map<string, ScriptProcess> = new Map();
+
+    private ensurePtyAvailable() {
+        if (!pty || typeof pty.spawn !== 'function') {
+            throw new Error('Missing dependency: node-pty. Please run dependency installation for sentra-config-ui (e.g. run update script or run npm/pnpm install).');
+        }
+    }
 
     private getPid(p: ScriptProcess): number | undefined {
         const pid = (p.process as any)?.pid;
@@ -103,6 +118,7 @@ export class ScriptRunner {
         } catch { }
 
         const spawnPty = (cmd: string, cmdArgs: string[], cwd: string, extraEnv?: Record<string, string>) => {
+            this.ensurePtyAvailable();
             if (!cmd || !String(cmd).trim()) {
                 throw new Error('File not found: (empty command)');
             }
@@ -123,7 +139,7 @@ export class ScriptRunner {
             });
         };
 
-        let proc: pty.IPty;
+        let proc: IPty;
 
         if (scriptName === 'sentiment') {
             // Special handling for Sentra Emo (Python FastAPI service)
@@ -358,7 +374,7 @@ export class ScriptRunner {
             }
         }
 
-        let proc: pty.IPty | null = null;
+        let proc: IPty | null = null;
         let selectedCmd = '';
         let lastErr: any = null;
 
@@ -366,6 +382,7 @@ export class ScriptRunner {
             const cCmd = String(c.cmd || '').trim();
             if (!cCmd) continue;
             try {
+                this.ensurePtyAvailable();
                 proc = pty.spawn(cCmd, c.args, {
                     name: 'xterm-256color',
                     cols: 120,
@@ -486,7 +503,7 @@ export class ScriptRunner {
         const r = Math.max(2, Math.min(500, Math.floor(rows)));
 
         try {
-            const p = record.process as pty.IPty;
+            const p = record.process as IPty;
             p.resize(c, r);
             return true;
         } catch {
@@ -516,7 +533,7 @@ export class ScriptRunner {
 
         if (proc.isPty) {
             try {
-                (proc.process as pty.IPty).write(String(data ?? ''));
+                (proc.process as IPty).write(String(data ?? ''));
                 return true;
             } catch {
                 return false;
