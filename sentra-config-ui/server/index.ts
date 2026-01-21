@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import compress from '@fastify/compress';
 import fastifyStatic from '@fastify/static';
+import websocket from '@fastify/websocket';
 import { configRoutes } from './routes/config';
 import { scriptRoutes } from './routes/scripts';
 import { presetRoutes } from './routes/presets';
@@ -12,6 +13,7 @@ import { redisRoutes } from './routes/redis.ts';
 import { redisAdminRoutes } from './routes/redisAdmin.ts';
 import { llmProvidersRoutes } from './routes/llmProviders.ts';
 import { emojiStickersRoutes } from './routes/emojiStickers.ts';
+import { terminalExecutorRoutes } from './routes/terminalExecutor.ts';
 import { join } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import dotenv from 'dotenv';
@@ -100,6 +102,16 @@ async function start() {
     // Also check query string for EventSource connections
     if (!token && (request.query as any)?.token) {
       token = (request.query as any).token;
+    }
+
+    if (!token) {
+      try {
+        const rawUrl = String((request.raw as any)?.url || request.url || '');
+        const u = new URL(rawUrl.startsWith('http') ? rawUrl : `http://localhost${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`);
+        const t = u.searchParams.get('token');
+        if (t) token = t;
+      } catch {
+      }
     }
 
     if (token !== SECURITY_TOKEN) {
@@ -429,8 +441,10 @@ async function start() {
   });
 
   // 注册路由
+  await fastify.register(websocket);
   await fastify.register(configRoutes);
   await fastify.register(scriptRoutes);
+  await fastify.register(terminalExecutorRoutes);
   await fastify.register(presetRoutes);
   await fastify.register(fileRoutes);
   await fastify.register(deepWikiRoutes);

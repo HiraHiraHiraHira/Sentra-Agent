@@ -3,8 +3,6 @@
     --ios-icon-size: 60px;
     --ios-dock-height: 90px;
     --ios-dock-icon-size: clamp(44px, 12vw, 54px);
-    --ios-overlay-fg: rgba(255, 255, 255, 0.92);
-    --ios-overlay-muted-fg: rgba(255, 255, 255, 0.78);
 }
 
 .ios-container {
@@ -47,7 +45,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--ios-overlay-fg);
+    color: white;
     font-size: 30px;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
     transition: transform 0.1s;
@@ -60,7 +58,7 @@
 
 .ios-label {
     font-size: 12px;
-    color: var(--ios-overlay-fg);
+    color: white;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     text-align: center;
     width: 70px;
@@ -76,7 +74,7 @@
     left: 20px;
     right: 20px;
     height: var(--ios-dock-height);
-    background: var(--sentra-glass-bg-strong);
+    background: rgba(255, 255, 255, 0.2);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border-radius: 24px;
@@ -105,7 +103,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 0 20px;
-    color: var(--ios-overlay-fg);
+    color: white;
     font-size: 14px;
     font-weight: 600;
     z-index: 1000;
@@ -132,7 +130,7 @@
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: var(--mac-bg);
+    background: #000;
     z-index: 2000;
     animation: appOpen 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
     display: flex;
@@ -144,10 +142,10 @@
     display: flex;
     align-items: center;
     padding: 0 16px;
-    background: var(--sentra-panel-bg-strong);
+    background: rgba(28, 28, 30, 0.9);
     backdrop-filter: blur(10px);
-    border-bottom: 1px solid var(--sentra-border);
-    color: var(--sentra-fg);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    color: white;
     font-weight: 600;
     justify-content: space-between;
 }
@@ -163,7 +161,7 @@
 }
 
 .ios-back-btn {
-    color: var(--sentra-accent);
+    color: #0a84ff;
     font-size: 16px;
     display: flex;
     align-items: center;
@@ -173,23 +171,31 @@
 
 .ios-pagination-dark.ant-pagination,
 .ios-pagination-dark .ant-pagination {
-    color: var(--sentra-fg);
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.ios-pagination-dark .ant-pagination-item a,
+.ios-pagination-dark .ant-pagination-prev .ant-pagination-item-link,
+.ios-pagination-dark .ant-pagination-next .ant-pagination-item-link,
+.ios-pagination-dark .ant-pagination-jump-prev .ant-pagination-item-link,
+.ios-pagination-dark .ant-pagination-jump-next .ant-pagination-item-link {
+    color: rgba(255, 255, 255, 0.85);
 }
 
 .ios-pagination-dark .ant-pagination-item {
-    background: var(--sentra-panel-bg);
-    border-color: var(--sentra-border);
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.12);
 }
 
 .ios-pagination-dark .ant-pagination-item-active {
-    background: rgba(var(--sentra-accent-rgb), 0.22);
-    border-color: rgba(var(--sentra-accent-rgb), 0.55);
+    background: rgba(10, 132, 255, 0.22);
+    border-color: rgba(10, 132, 255, 0.55);
 }
 
 .ios-pagination-dark .ant-pagination-item-active a {
-    color: var(--sentra-accent-contrast);
+    color: #fff;
 }
 
 .ios-pagination-dark .ant-pagination-disabled .ant-pagination-item-link {
-    color: var(--sentra-disabled-fg);
+    color: rgba(255, 255, 255, 0.25);
 }

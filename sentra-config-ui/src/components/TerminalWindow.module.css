@@ -24,6 +24,17 @@
     overflow: hidden;
 }
 
+.terminalWrapper :global(.xterm) {
+    letter-spacing: 0 !important;
+    font-variant-ligatures: none;
+    font-feature-settings: "liga" 0, "calt" 0;
+}
+
+.terminalWrapper :global(.xterm-screen),
+.terminalWrapper :global(.xterm-rows) {
+    line-height: 1 !important;
+}
+
 /* Custom scrollbar for xterm viewport */
 .terminalWrapper :global(.xterm-viewport) {
     overflow-y: auto;

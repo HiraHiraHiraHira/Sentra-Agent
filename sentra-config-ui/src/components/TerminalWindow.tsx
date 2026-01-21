@@ -19,10 +19,8 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
     const xtermInstance = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
     const eventSourceRef = useRef<EventSource | null>(null);
-
     const openedRef = useRef(false);
     const outputCursorRef = useRef(0);
-    const connectSeqRef = useRef(0);
     const [autoScroll, setAutoScroll] = useState(true);
     const autoScrollRef = useRef(true);
     const userScrolledRef = useRef(false);
@@ -34,7 +32,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
     const inputQueueRef = useRef<string[]>([]);
     const inputSendingRef = useRef(false);
     const inputFlushTimerRef = useRef<number | null>(null);
-    const resizeSendTimerRef = useRef<number | null>(null);
 
     useEffect(() => {
         autoScrollRef.current = autoScroll;
@@ -46,7 +43,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
 
         let disposed = false;
         let openRaf: number | null = null;
-        let mo: MutationObserver | null = null;
 
         stoppedRef.current = false;
         openedRef.current = false;
@@ -74,19 +70,13 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             selectionBackground: 'rgba(226, 232, 240, 0.20)',
         };
 
-        const buildFontFamily = () => {
-            const cssFont = getComputedStyle(document.documentElement).getPropertyValue('--sentra-terminal-font').trim();
-            const base = cssFont || 'Menlo, Monaco, Consolas, "Courier New", monospace';
-            return `${base}, Consolas, "Cascadia Mono", "Cascadia Code", Menlo, Monaco, "Courier New", monospace`;
-        };
-
         const term = new Terminal({
             cursorBlink: true,
             fontSize: 14,
-            fontFamily: buildFontFamily(),
+            fontFamily: 'Menlo, Monaco, "Courier New", monospace',
             theme: theme || fallbackTheme,
             allowProposedApi: true,
-            convertEol: false,
+            convertEol: true,
             scrollback: 50000,
         });
 
@@ -103,12 +93,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
         term.loadAddon(searchAddon);
 
         xtermInstance.current = term;
-
-        const applyFontFamily = () => {
-            try {
-                term.options.fontFamily = buildFontFamily();
-            } catch { }
-        };
 
         const safeWrite = (data: string) => {
             if (disposed || stoppedRef.current) return;
@@ -154,7 +138,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
                     if (!disposed && openedRef.current && canFitNow()) {
                         fitAddon.fit();
                         safeScrollToBottom();
-                        scheduleSendResize(term.cols, term.rows);
                     }
                 } catch (e) { }
             });
@@ -221,43 +204,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             });
         };
 
-        const sendResize = async (cols: number, rows: number) => {
-            const token =
-                storage.getString('sentra_auth_token', { backend: 'session', fallback: '' }) ||
-                storage.getString('sentra_auth_token', { backend: 'local', fallback: '' });
-
-            try {
-                await fetch(`/api/scripts/resize/${processId}?token=${encodeURIComponent(token || '')}`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ cols, rows }),
-                });
-            } catch { }
-        };
-
-        const scheduleSendResize = (cols: number, rows: number) => {
-            if (resizeSendTimerRef.current != null) return;
-            resizeSendTimerRef.current = window.setTimeout(() => {
-                resizeSendTimerRef.current = null;
-                void sendResize(cols, rows);
-            }, 40);
-        };
-
-        mo = new MutationObserver(() => {
-            applyFontFamily();
-            try {
-                if (!disposed && openedRef.current && canFitNow()) {
-                    fitAddon.fit();
-                    scheduleSendResize(term.cols, term.rows);
-                }
-            } catch { }
-        });
-        try {
-            mo.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
-        } catch { }
-
         const flushInputQueue = async () => {
             if (inputSendingRef.current) return;
             inputSendingRef.current = true;
@@ -290,7 +236,8 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
         };
 
         term.onData((data) => {
-            inputQueueRef.current.push(data);
+            const normalized = data === '\r' ? '\r\n' : data;
+            inputQueueRef.current.push(normalized);
             if (inputSendingRef.current) return;
             if (inputFlushTimerRef.current != null) return;
             inputFlushTimerRef.current = window.setTimeout(() => {
@@ -368,10 +315,7 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
         // Handle resize
         const handleResize = () => {
             try {
-                if (!disposed && openedRef.current && canFitNow()) {
-                    fitAddon.fit();
-                    scheduleSendResize(term.cols, term.rows);
-                }
+                if (!disposed && openedRef.current && canFitNow()) fitAddon.fit();
             } catch (e) {
                 // Ignore resize errors if terminal is hidden
             }
@@ -422,10 +366,8 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
         };
 
         const connectEventSource = async (_reason?: string) => {
-            const mySeq = (connectSeqRef.current += 1);
             const alive = await checkProcessAlive();
             if (disposed || stoppedRef.current) return;
-            if (mySeq !== connectSeqRef.current) return;
 
             if (alive === 'not_found') {
                 stoppedRef.current = true;
@@ -439,8 +381,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
                 return;
             }
             cleanupEventSource();
-            if (disposed || stoppedRef.current) return;
-            if (mySeq !== connectSeqRef.current) return;
             const token =
                 storage.getString('sentra_auth_token', { backend: 'session', fallback: '' }) ||
                 storage.getString('sentra_auth_token', { backend: 'local', fallback: '' });
@@ -450,8 +390,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             eventSourceRef.current = es;
 
             es.onopen = () => {
-                if (mySeq !== connectSeqRef.current) return;
-                if (eventSourceRef.current !== es) return;
                 reconnectAttemptRef.current = 0;
                 if (reconnectTimerRef.current) {
                     window.clearTimeout(reconnectTimerRef.current);
@@ -464,8 +402,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             };
 
             es.onmessage = (event) => {
-                if (mySeq !== connectSeqRef.current) return;
-                if (eventSourceRef.current !== es) return;
                 try {
                     const data = JSON.parse(event.data);
                     if (data.type === 'output') {
@@ -486,8 +422,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             };
 
             es.onerror = () => {
-                if (mySeq !== connectSeqRef.current) return;
-                if (eventSourceRef.current !== es) return;
                 if (stoppedRef.current) return;
                 reconnectAttemptRef.current += 1;
                 if (!disconnectedRef.current) {
@@ -518,12 +452,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             disposed = true;
             stoppedRef.current = true;
             openedRef.current = false;
-
-            if (mo) {
-                try { mo.disconnect(); } catch { }
-                mo = null;
-            }
-
             if (openRaf != null) {
                 cancelAnimationFrame(openRaf);
                 openRaf = null;
@@ -531,11 +459,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             if (inputFlushTimerRef.current != null) {
                 window.clearTimeout(inputFlushTimerRef.current);
                 inputFlushTimerRef.current = null;
-            }
-
-            if (resizeSendTimerRef.current != null) {
-                window.clearTimeout(resizeSendTimerRef.current);
-                resizeSendTimerRef.current = null;
             }
 
             if (reconnectTimerRef.current) {
@@ -572,7 +495,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
 
         let animationFrameId: number;
         const ro = new ResizeObserver(() => {
-
             // Cancel any pending frame to avoid stacking
             cancelAnimationFrame(animationFrameId);
 
@@ -587,19 +509,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
                     if (rect.width < 2 || rect.height < 2) return;
 
                     fitAddonRef.current?.fit();
-                    const term = xtermInstance.current;
-                    if (term) {
-                        const token =
-                            storage.getString('sentra_auth_token', { backend: 'session', fallback: '' }) ||
-                            storage.getString('sentra_auth_token', { backend: 'local', fallback: '' });
-                        fetch(`/api/scripts/resize/${processId}?token=${encodeURIComponent(token || '')}`, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({ cols: term.cols, rows: term.rows }),
-                        }).catch(() => { });
-                    }
                 } catch (e) { }
             });
         });
@@ -610,7 +519,7 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             cancelAnimationFrame(animationFrameId);
             ro.disconnect();
         };
-    }, [processId]);
+    }, []);
 
     return (
         <div className={styles.terminalContainer} style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', overflow: 'hidden' }}>

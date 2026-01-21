@@ -115,23 +115,23 @@ export function useTerminals({ addToast, allocateZ }: UseTerminalsParams) {
   });
 
   const handleRunShell = async (shellType: 'powershell' | 'cmd' | 'bash', title?: string) => {
-    const appKey = `shell:${shellType}:${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const appKey = `execpty:${shellType}:${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const safeTitle = String(title || '').trim() || (shellType === 'cmd' ? 'CMD' : shellType === 'bash' ? 'Bash' : 'PowerShell');
     try {
-      const response = await fetch('/api/scripts/shell', {
+      const response = await fetch('/api/terminal-executor/create', {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ args: [shellType] }),
+        body: JSON.stringify({ shellType }),
       });
 
       const data: any = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.success || !data?.processId) {
+      if (!response.ok || !data?.success || !data?.sessionId) {
         const msg = String(data?.message || data?.error || `HTTP ${response.status}`);
         addToast('error', '启动终端失败', msg);
         return;
       }
 
-      spawnTerminal(safeTitle, appKey, String(data.processId));
+      spawnTerminal(safeTitle, appKey, String(data.sessionId));
     } catch (error) {
       addToast('error', '启动终端失败', error instanceof Error ? error.message : undefined);
     }
@@ -142,11 +142,20 @@ export function useTerminals({ addToast, allocateZ }: UseTerminalsParams) {
     const terminal = st.terminalWindows.find(t => t.id === id);
     if (terminal) {
       try {
-        await fetch(`/api/scripts/kill/${terminal.processId}`, {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          body: JSON.stringify({})
-        });
+        const pid = String(terminal.processId || '');
+        if (String(terminal.appKey || '').startsWith('execpty:')) {
+          await fetch(`/api/terminal-executor/close/${encodeURIComponent(pid)}`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({})
+          });
+        } else {
+          await fetch(`/api/scripts/kill/${encodeURIComponent(pid)}`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({})
+          });
+        }
       } catch (e) {
         console.error('Failed to kill process on close', e);
       }

@@ -20,6 +20,9 @@ importers:
       '@fastify/static':
         specifier: ^7.0.1
         version: 7.0.4
+      '@fastify/websocket':
+        specifier: ^8.3.1
+        version: 8.3.1
       '@lobehub/icons':
         specifier: 4.0.3
         version: 4.0.3(@lobehub/ui@4.18.0)(@types/react@18.3.27)(antd@6.2.0(date-fns@4.1.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -81,7 +84,7 @@ importers:
         specifier: ^0.55.1
         version: 0.55.1
       node-pty:
-        specifier: ^1.1.0
+        specifier: ^1.0.0
         version: 1.1.0
       ora:
         specifier: ^8.2.0
@@ -728,6 +731,9 @@ packages:
 
   '@fastify/static@7.0.4':
     resolution: {integrity: sha512-p2uKtaf8BMOZWLs6wu+Ihg7bWNBdjNgCwDza4MJtTqg+5ovKmcbgbR9Xs5/smZ1YISfzKOCNYmZV8LaCj+eJ1Q==}
+
+  '@fastify/websocket@8.3.1':
+    resolution: {integrity: sha512-hsQYHHJme/kvP3ZS4v/WMUznPBVeeQHHwAoMy1LiN6m/HuPfbdXq1MBJ4Nt8qX1YI+eVbog4MnOsU7MTozkwYA==}
 
   '@floating-ui/core@1.7.3':
     resolution: {integrity: sha512-sGnvb5dmrJaKEZ+LDIpguvdX3bDlEllmv4/ClQ9awcmCZrlx5jQyyMWFM5kBI+EyNOCDDiKk8il0zeuX3Zlg/w==}
@@ -4337,6 +4343,18 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
+  ws@8.19.0:
+    resolution: {integrity: sha512-blAT2mjOEIi0ZzruJfIhb3nps74PRWTCz1IjglWEEpQl5XS/UNama6u2/rjFkDDouqr4L67ry+1aGIALViWjDg==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   xhr@2.6.0:
     resolution: {integrity: sha512-/eCGLb5rxjx5e3mF1A7s+pLlR6CGyqWN91fv1JgER5mVWg1MZmlhBvy9kjcsOdRk8RrIujotWyJamfyrp+WIcA==}
 
@@ -4949,6 +4967,14 @@ snapshots:
       fastify-plugin: 4.5.1
       fastq: 1.19.1
       glob: 10.5.0
+
+  '@fastify/websocket@8.3.1':
+    dependencies:
+      fastify-plugin: 4.5.1
+      ws: 8.19.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@floating-ui/core@1.7.3':
     dependencies:
@@ -9330,6 +9356,8 @@ snapshots:
       strip-ansi: 7.1.2
 
   wrappy@1.0.2: {}
+
+  ws@8.19.0: {}
 
   xhr@2.6.0:
     dependencies:

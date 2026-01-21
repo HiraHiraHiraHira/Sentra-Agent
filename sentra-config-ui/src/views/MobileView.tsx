@@ -19,6 +19,7 @@ import { useIOSEditor } from '../hooks/useIOSEditor';
 const ModelProvidersManager = React.lazy(() => import('../components/ModelProvidersManager/ModelProvidersManager').then(module => ({ default: module.default })));
 const RedisAdminManager = React.lazy(() => import('../components/RedisAdminManager/RedisAdminManager').then(module => ({ default: module.RedisAdminManager })));
 const TerminalWindow = React.lazy(() => import('../components/TerminalWindow').then(module => ({ default: module.TerminalWindow })));
+const TerminalExecutorWindow = React.lazy(() => import('../components/TerminalExecutorWindow').then(module => ({ default: module.TerminalExecutorWindow })));
 const IOSTerminalManager = React.lazy(() => import('../components/IOSTerminalManager').then(module => ({ default: module.IOSTerminalManager })));
 const IOSEmojiStickersManager = React.lazy(() => import('../components/IOSEmojiStickersManager').then(module => ({ default: module.IOSEmojiStickersManager })));
 
@@ -662,7 +663,11 @@ export function MobileView(props: MobileViewProps) {
             </div>
           </div>
           <Suspense fallback={<SentraLoading title="加载终端" subtitle="首次打开可能较慢，请稍等..." />}>
-            <TerminalWindow processId={term.processId} onProcessNotFound={() => handleCloseTerminal(term.id)} />
+            {String(term.appKey || '').startsWith('execpty:') ? (
+              <TerminalExecutorWindow sessionId={term.processId} onSessionNotFound={() => handleCloseTerminal(term.id)} />
+            ) : (
+              <TerminalWindow processId={term.processId} onProcessNotFound={() => handleCloseTerminal(term.id)} />
+            )}
           </Suspense>
         </div>
       ))}

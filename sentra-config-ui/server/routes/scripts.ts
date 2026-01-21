@@ -118,7 +118,6 @@ export async function scriptRoutes(fastify: FastifyInstance) {
             exitCode: process.exitCode,
             startTime: process.startTime,
             endTime: process.endTime,
-            isPty: Boolean((process as any).isPty),
             output: process.output,
         };
     });
@@ -174,9 +173,17 @@ export async function scriptRoutes(fastify: FastifyInstance) {
         });
 
         const unsubscribeExit = scriptRunner.subscribeToExit(id, (data) => {
-            reply.raw.write(`data: ${JSON.stringify({ type: 'exit', ...data })}\n\n`);
-            clearInterval(heartbeat);
-            reply.raw.end();
+            try {
+                reply.raw.write(`data: ${JSON.stringify({ type: 'exit', ...data })}\n\n`);
+                if (typeof (reply.raw as any).flush === 'function') {
+                    try { (reply.raw as any).flush(); } catch { }
+                }
+            } finally {
+                clearInterval(heartbeat);
+                setTimeout(() => {
+                    try { reply.raw.end(); } catch { }
+                }, 30);
+            }
         });
 
         request.raw.on('close', () => {
@@ -214,20 +221,6 @@ export async function scriptRoutes(fastify: FastifyInstance) {
             return reply.code(400).send({ error: 'Failed to write input (process not found or exited)' });
         }
 
-        return { success: true };
-    });
-
-    fastify.post<{
-        Params: { id: string };
-        Body: { cols: number; rows: number };
-    }>('/api/scripts/resize/:id', async (request, reply) => {
-        const { id } = request.params;
-        const { cols, rows } = request.body || {};
-
-        const ok = scriptRunner.resizeProcess(id, cols, rows);
-        if (!ok) {
-            return reply.code(400).send({ error: 'Failed to resize (process not found, exited, or not PTY)' });
-        }
         return { success: true };
     });
 }

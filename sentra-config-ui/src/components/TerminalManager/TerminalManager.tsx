@@ -28,7 +28,7 @@ function shellLabel(t: ShellType) {
 
 function parseShellTypeFromAppKey(appKey?: string): ShellType | null {
   const s = String(appKey || '');
-  const m = s.match(/^shell:([^:]+):/i);
+  const m = s.match(/^(?:shell|execpty):([^:]+):/i);
   const v = (m?.[1] || '').toLowerCase();
   if (v === 'powershell' || v === 'cmd' || v === 'bash') return v;
   return null;
@@ -54,14 +54,14 @@ export default function TerminalManager(props: Props) {
 
   const suggestedName = useMemo(() => {
     const label = shellLabel(createShell);
-    const count = terminalWindows.filter(t => String(t.appKey || '').startsWith(`shell:${createShell}:`)).length;
+    const count = terminalWindows.filter(t => String(t.appKey || '').startsWith(`execpty:${createShell}:`)).length;
     return `${label} ${count + 1}`;
   }, [createShell, terminalWindows]);
 
   const filteredSessions = useMemo(() => {
     const q = String(filter || '').trim().toLowerCase();
     const list = terminalWindows.filter(t => {
-      const isShell = String(t.appKey || '').startsWith('shell:');
+      const isShell = String(t.appKey || '').startsWith('shell:') || String(t.appKey || '').startsWith('execpty:');
       if (viewKind === 'shell') return isShell;
       return !isShell;
     });
@@ -165,13 +165,13 @@ export default function TerminalManager(props: Props) {
                         bringTerminalToFront(s.id);
                       }}
                     >
-                      <div className={styles.sessionTitle}>{s.title}</div>
-                      <div className={styles.sessionMeta}>
-                        <span>PID: {s.processId}</span>
-                        <span>
+                      <div className={styles.sessionHeaderRow}>
+                        <div className={styles.sessionTitle}>{s.title}</div>
+                        <div className={styles.sessionTag}>
                           {shellType ? <Tag color="blue" style={{ marginInlineEnd: 0 }}>{shellLabel(shellType)}</Tag> : <Tag color="purple" style={{ marginInlineEnd: 0 }}>Script</Tag>}
-                        </span>
+                        </div>
                       </div>
+                      <div className={styles.sessionPid}>PID: {s.processId}</div>
                     </div>
                   );
                 })
@@ -218,8 +218,9 @@ export default function TerminalManager(props: Props) {
 
             <div className={styles.terminalArea}>
               {selected ? (
-                <div className={styles.empty}>
-                  {`PID: ${selected.processId}`}
+                <div className={styles.previewHint}>
+                  <div className={styles.previewHintTitle}>已在独立窗口运行</div>
+                  <div className={styles.previewHintSub}>终端内容不在此处投射。点击上方“打开窗口”查看。</div>
                 </div>
               ) : (
                 <div className={styles.empty}>暂无会话</div>

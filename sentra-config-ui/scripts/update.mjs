@@ -21,12 +21,38 @@ const trustGitDir = args.includes('trust-git-dir') || args.includes('--trust-git
 const skipBuildDist = args.includes('no-build') || args.includes('--no-build');
 const forceBuildDist = args.includes('build-dist') || args.includes('--build-dist') || args.includes('--build');
 
-console.log(chalk.blue.bold('\n🔄 Sentra Agent Update Script\n'));
-console.log(chalk.gray(`Root Directory: ${ROOT_DIR}`));
-console.log(chalk.gray(`Update Mode: ${isForce ? 'FORCE' : 'NORMAL'}\n`));
+console.log(chalk.blue.bold('\n🔄 Sentra Agent 更新脚本\n'));
+console.log(chalk.gray(`根目录: ${ROOT_DIR}`));
+console.log(chalk.gray(`更新模式: ${isForce ? '强制(丢弃本地改动)' : '普通'}\n`));
 
 function normalizeGitPath(p) {
     return String(p || '').replace(/\\/g, '/');
+}
+
+function buildNodeInstallArgs(pm) {
+    const args = ['install'];
+    if (pm === 'pnpm') {
+        args.push('--prod=false');
+    } else if (pm === 'bun') {
+    } else {
+        args.push('--production=false');
+    }
+    return args;
+}
+
+function buildNodeInstallEnv(npmRegistry, extraEnv = {}) {
+    const envOut = {
+        ...extraEnv,
+        npm_config_production: 'false',
+        NPM_CONFIG_PRODUCTION: 'false',
+        NODE_ENV: '',
+        BUN_INSTALL_DEV: '1',
+    };
+    if (npmRegistry) {
+        envOut.npm_config_registry = npmRegistry;
+        envOut.NPM_CONFIG_REGISTRY = npmRegistry;
+    }
+    return envOut;
 }
 
 function isDubiousOwnershipText(text) {
@@ -314,8 +340,9 @@ function choosePM(preferred) {
         }
         return preferred;
     }
-    // Auto detection priority: pnpm > npm > cnpm > yarn
+    // Auto detection priority: pnpm > bun > npm > cnpm > yarn
     if (commandExists('pnpm')) return 'pnpm';
+    if (commandExists('bun')) return 'bun';
     if (commandExists('npm')) return 'npm';
     if (commandExists('cnpm')) return 'cnpm';
     if (commandExists('yarn')) return 'yarn';
@@ -336,16 +363,18 @@ async function execCommand(command, args, cwd, extraEnv = {}) {
 
         let stdout = '';
         let stderr = '';
+        const maxBuf = 16 * 1024;
+        const trimBuf = (s) => (s.length > maxBuf ? s.slice(s.length - maxBuf) : s);
 
         proc.stdout?.on('data', (data) => {
             const s = data.toString();
-            stdout += s;
+            stdout = trimBuf(stdout + s);
             try { process.stdout.write(s); } catch { }
         });
 
         proc.stderr?.on('data', (data) => {
             const s = data.toString();
-            stderr += s;
+            stderr = trimBuf(stderr + s);
             try { process.stderr.write(s); } catch { }
         });
 
@@ -530,18 +559,18 @@ async function update() {
     try {
         // Step -1: Git safety check for Windows 'dubious ownership' (optional auto-fix)
         if (trustGitDir) {
-            console.log(chalk.cyan('\n🔐 Git Safe Directory: enabled (will auto add safe.directory if needed)')); 
+            console.log(chalk.cyan('\n🔐 Git 安全目录：已启用（如遇 dubious ownership 将尝试自动添加 safe.directory）'));
             await ensureGitSafeDirectory(ROOT_DIR);
             console.log();
         }
 
         // Step 0: Configure Remote
         const targetUrl = getUpdateSourceUrl();
-        console.log(chalk.cyan(`\n🌐 Update Source: ${env.UPDATE_SOURCE || 'github'} (${targetUrl})`));
+        console.log(chalk.cyan(`\n🌐 更新源: ${env.UPDATE_SOURCE || 'github'} (${targetUrl})`));
         await switchRemote(targetUrl);
 
         // Step 1: Detect projects and record pre-update hashes
-        console.log(chalk.cyan('\n📦 Detecting projects...\n'));
+        console.log(chalk.cyan('\n📦 正在扫描项目...\n'));
         const projects = collectAllProjects();
         const beforeHashes = new Map();
 
@@ -554,7 +583,7 @@ async function update() {
             if (isNode) typeStr += 'Node';
             if (isPy) typeStr += (typeStr ? '/Python' : 'Python');
 
-            console.log(chalk.gray(`  Found [${typeStr}]: ${label}`));
+            console.log(chalk.gray(`  发现 [${typeStr}]: ${label}`));
 
             if (isNode) {
                 beforeHashes.set(dir + ':pkg', getFileHash(path.join(dir, 'package.json')));
@@ -570,53 +599,53 @@ async function update() {
 
         // Step 2: Git operations
         if (isForce) {
-            console.log(chalk.yellow.bold('⚠️  Force Update Mode - This will discard local changes!\n'));
+            console.log(chalk.yellow.bold('⚠️  强制更新模式：将丢弃本地改动！\n'));
             const originDefault = await getOriginDefaultBranch(ROOT_DIR);
             const branch = originDefault || await getCurrentBranch(ROOT_DIR);
-            spinner.start('Fetching latest changes...');
+            spinner.start('正在拉取远端最新信息...');
             await execCommand('git', ['fetch', '--all', '--prune'], ROOT_DIR);
-            spinner.succeed('Fetched latest changes');
+            spinner.succeed('已拉取远端信息');
 
-            spinner.start(`Resetting to origin/${branch}...`);
+            spinner.start(`正在重置到 origin/${branch}...`);
             await execCommand('git', ['reset', '--hard', `origin/${branch}`], ROOT_DIR);
-            spinner.succeed(`Reset to origin/${branch}`);
+            spinner.succeed(`已重置到 origin/${branch}`);
 
-            spinner.start('Cleaning untracked files...');
+            spinner.start('正在清理未跟踪文件...');
             await execCommand('git', ['clean', '-fd'], ROOT_DIR);
-            spinner.succeed('Cleaned untracked files');
+            spinner.succeed('已清理未跟踪文件');
         } else {
-            spinner.start('Checking for updates...');
+            spinner.start('正在检查更新...');
             await execCommand('git', ['fetch'], ROOT_DIR);
-            spinner.succeed('Checked for updates');
+            spinner.succeed('更新检查完成');
 
             await discardLocalLockFileChanges(ROOT_DIR, spinner);
 
-            spinner.start('Pulling latest changes...');
+            spinner.start('正在拉取最新代码...');
             try {
                 await execCommand('git', ['pull'], ROOT_DIR);
-                spinner.succeed('Pulled latest changes');
+                spinner.succeed('已拉取最新代码');
             } catch (e) {
                 const r = await discardLocalLockFileChanges(ROOT_DIR, spinner);
                 if (r.hadAny) {
-                    spinner.start('Retrying pull after discarding lock files...');
+                    spinner.start('检测到 lock 文件冲突，已丢弃本地 lock 变更，正在重试拉取...');
                     try {
                         await execCommand('git', ['pull'], ROOT_DIR);
-                        spinner.succeed('Pulled latest changes');
+                        spinner.succeed('已拉取最新代码');
                     } catch (e2) {
-                        spinner.fail('Pull failed (conflict?)');
-                        console.log(chalk.yellow('\n💡 Tip: Try "Force Update" if you have local conflicts.'));
+                        spinner.fail('拉取失败（可能存在冲突）');
+                        console.log(chalk.yellow('\n💡 提示：如果本地有冲突，建议使用强制更新：node scripts/update.mjs --force'));
                         throw e2;
                     }
                 } else {
-                    spinner.fail('Pull failed (conflict?)');
-                    console.log(chalk.yellow('\n💡 Tip: Try "Force Update" if you have local conflicts.'));
+                    spinner.fail('拉取失败（可能存在冲突）');
+                    console.log(chalk.yellow('\n💡 提示：如果本地有冲突，建议使用强制更新：node scripts/update.mjs --force'));
                     throw e;
                 }
             }
         }
 
         // Step 3: Check which projects need installation
-        console.log(chalk.cyan('\n🔍 Checking for dependency changes...\n'));
+        console.log(chalk.cyan('\n🔍 正在检查依赖变化...\n'));
         const installQueue = [];
 
         for (const dir of projects) {
@@ -636,16 +665,16 @@ async function update() {
                 const lockFileName = afterLockInfo.file || beforeHashes.get(dir + ':lockFile') || 'lock file';
 
                 if (!exists(nmPath)) {
-                    console.log(chalk.yellow(`  [Node] ${label}: node_modules missing → install needed`));
+                    console.log(chalk.yellow(`  [Node] ${label}: node_modules 缺失 → 需要安装依赖`));
                     installQueue.push({ dir, label, type: 'node', reason: 'missing node_modules' });
                 } else if (beforePkgHash !== afterPkgHash) {
-                    console.log(chalk.yellow(`  [Node] ${label}: package.json changed → install needed`));
+                    console.log(chalk.yellow(`  [Node] ${label}: package.json 有变化 → 需要安装依赖`));
                     installQueue.push({ dir, label, type: 'node', reason: 'package.json changed' });
                 } else if (beforeLockHash !== afterLockHash) {
-                    console.log(chalk.yellow(`  [Node] ${label}: ${lockFileName} changed → install needed`));
+                    console.log(chalk.yellow(`  [Node] ${label}: ${lockFileName} 有变化 → 需要安装依赖`));
                     installQueue.push({ dir, label, type: 'node', reason: `${lockFileName} changed` });
                 } else if (isForce) {
-                    console.log(chalk.yellow(`  [Node] ${label}: Force update → reinstalling`));
+                    console.log(chalk.yellow(`  [Node] ${label}: 强制更新 → 重新安装依赖`));
                     installQueue.push({ dir, label, type: 'node', reason: 'force update' });
                 } else {
                     const missing = listMissingNodeDeps(dir);
@@ -653,10 +682,10 @@ async function update() {
                         const preview = missing.slice(0, 8);
                         const more = missing.length > preview.length ? ` (+${missing.length - preview.length} more)` : '';
                         const reason = `missing deps: ${preview.join(', ')}${more}`;
-                        console.log(chalk.yellow(`  [Node] ${label}: ${reason} → install needed`));
+                        console.log(chalk.yellow(`  [Node] ${label}: ${reason} → 需要安装依赖`));
                         installQueue.push({ dir, label, type: 'node', reason });
                     } else {
-                        console.log(chalk.gray(`  [Node] ${label}: no changes → skip`));
+                        console.log(chalk.gray(`  [Node] ${label}: 无变化 → 跳过`));
                     }
                 }
             }
@@ -670,13 +699,13 @@ async function update() {
                 const venvPython = getVenvPython(dir);
 
                 if (!exists(venvPath) || !exists(venvPython)) {
-                    console.log(chalk.yellow(`  [Python] ${label}: venv missing/broken → install needed`));
+                    console.log(chalk.yellow(`  [Python] ${label}: 虚拟环境缺失/损坏 → 需要安装依赖`));
                     installQueue.push({ dir, label, type: 'python', reason: 'missing .venv' });
                 } else if (beforeHash !== afterHash) {
-                    console.log(chalk.yellow(`  [Python] ${label}: requirements.txt changed → install needed`));
+                    console.log(chalk.yellow(`  [Python] ${label}: requirements.txt 有变化 → 需要安装依赖`));
                     installQueue.push({ dir, label, type: 'python', reason: 'requirements.txt changed' });
                 } else if (isForce) {
-                    console.log(chalk.yellow(`  [Python] ${label}: Force update → reinstalling`));
+                    console.log(chalk.yellow(`  [Python] ${label}: 强制更新 → 重新安装依赖`));
                     installQueue.push({ dir, label, type: 'python', reason: 'force update' });
                 } else {
                     console.log(chalk.gray(`  [Python] ${label}: no changes → skip`));
@@ -689,7 +718,7 @@ async function update() {
             const uiLabel = path.relative(ROOT_DIR, uiDir) || 'sentra-config-ui';
             const alreadyQueued = installQueue.some((x) => x && x.type === 'node' && x.dir === uiDir);
             if (!alreadyQueued && isNodeProject(uiDir)) {
-                console.log(chalk.yellow(`  [Node] ${uiLabel}: post-update safeguard → install needed`));
+                console.log(chalk.yellow(`  [Node] ${uiLabel}: 更新后兜底 → 需要安装依赖`));
                 installQueue.push({ dir: uiDir, label: uiLabel, type: 'node', reason: 'post-update safeguard' });
             }
         }
@@ -699,37 +728,38 @@ async function update() {
         const pm = choosePM(env.PACKAGE_MANAGER || 'auto');
 
         if (installQueue.length > 0) {
-            console.log(chalk.cyan(`\n📥 Installing dependencies for ${installQueue.length} targets...\n`));
+            console.log(chalk.cyan(`\n📥 开始安装依赖（共 ${installQueue.length} 个目标）...\n`));
 
             for (const item of installQueue) {
                 const { dir, label, type, reason } = item;
 
                 if (type === 'node') {
-                    spinner.start(`[Node] Installing ${label} (${reason})...`);
+                    spinner.start(`[Node] 正在安装 ${label}（${reason}）...`);
                     try {
-                        const extraEnv = {};
-                        if (npmRegistry) {
-                            extraEnv.npm_config_registry = npmRegistry;
-                            extraEnv.NPM_CONFIG_REGISTRY = npmRegistry;
-                        }
-                        await execCommand(pm, ['install'], dir, extraEnv);
-                        spinner.succeed(`[Node] Installed ${label}`);
+                        const installArgs = buildNodeInstallArgs(pm);
+                        const extraEnv = buildNodeInstallEnv(npmRegistry);
+                        await execCommand(pm, installArgs, dir, extraEnv);
+                        spinner.succeed(`[Node] 已安装 ${label}`);
                     } catch (error) {
-                        spinner.fail(`[Node] Failed to install ${label}`);
+                        spinner.fail(`[Node] 安装失败：${label}`);
+                        console.log(chalk.yellow('\n💡 你可以尝试手动执行（在对应目录下）：'));
+                        console.log(chalk.cyan(`   ${pm} ${buildNodeInstallArgs(pm).join(' ')}`));
                         throw error;
                     }
                 } else if (type === 'python') {
-                    spinner.start(`[Python] Preparing ${label} (${reason})...`);
+                    spinner.start(`[Python] 正在准备 ${label}（${reason}）...`);
                     try {
                         await ensureVenv(dir, spinner);
                         const pip = getVenvPip(dir);
                         if (!exists(pip)) throw new Error(`Pip not found at ${pip}`);
 
-                        spinner.text = `[Python] Pip installing ${label}...`;
+                        spinner.text = `[Python] 正在安装依赖：${label}...`;
                         await execCommand(pip, ['install', '-r', 'requirements.txt'], dir);
-                        spinner.succeed(`[Python] Installed ${label}`);
+                        spinner.succeed(`[Python] 已安装 ${label}`);
                     } catch (error) {
-                        spinner.fail(`[Python] Failed to install ${label}`);
+                        spinner.fail(`[Python] 安装失败：${label}`);
+                        console.log(chalk.yellow('\n💡 你可以尝试手动执行（在对应目录下）：'));
+                        console.log(chalk.cyan('   .venv/bin/pip install -r requirements.txt  （Windows: .venv\\Scripts\\pip.exe）'));
                         throw error;
                     }
                 }
@@ -737,37 +767,36 @@ async function update() {
             // After Node dependencies are ensured, make sure Puppeteer-managed Chrome is installed for sentra-mcp if applicable
             await ensurePuppeteerBrowserForMcp(pm);
         } else {
-            console.log(chalk.green('\n✨ No dependency changes detected, skipping installation\n'));
+            console.log(chalk.green('\n✨ 未检测到依赖变化，跳过安装\n'));
         }
 
         const uiDir = path.resolve(ROOT_DIR, 'sentra-config-ui');
-        if (shouldAutoBuildDist() && isNodeProject(uiDir)) {
+        if (!skipBuildDist && isNodeProject(uiDir)) {
             const maxOldSpaceSizeMb = resolveBuildMaxOldSpaceSizeMb();
-            spinner.start(`[UI] Building dist (NODE_OPTIONS=--max-old-space-size=${maxOldSpaceSizeMb})...`);
+            spinner.start(`[UI] 正在构建（tsc && vite build，NODE_OPTIONS=--max-old-space-size=${maxOldSpaceSizeMb}）...`);
             try {
                 const buildEnv = { NODE_OPTIONS: `--max-old-space-size=${maxOldSpaceSizeMb}` };
                 if (npmRegistry) {
                     buildEnv.npm_config_registry = npmRegistry;
                     buildEnv.NPM_CONFIG_REGISTRY = npmRegistry;
                 }
-                await execCommand(pm, ['run', 'build:dist'], uiDir, buildEnv);
-                spinner.succeed('[UI] dist build completed');
+                await execCommand(pm, ['run', 'build'], uiDir, buildEnv);
+                spinner.succeed('[UI] 构建完成');
             } catch (e) {
-                spinner.fail('[UI] dist build failed');
-                console.log(chalk.yellow('\n💡 Tip: If you see "JavaScript heap out of memory" during build:'));
-                console.log(chalk.gray('   - Use a higher-memory machine to build dist, then deploy dist to low-spec machines'));
-                console.log(chalk.gray('   - Or run: node --max-old-space-size=4096 ./node_modules/vite/bin/vite.js build'));
-                console.log(chalk.gray('   - Or re-run update with: node scripts/update.mjs --build-dist'));
+                spinner.fail('[UI] 构建失败');
+                console.log(chalk.yellow('\n💡 提示：如果构建时出现 “JavaScript heap out of memory”：'));
+                console.log(chalk.gray('   - 建议在内存更高的机器构建 dist，再把 dist 部署到低配机器'));
+                console.log(chalk.gray('   - 或执行：node --max-old-space-size=4096 ./node_modules/vite/bin/vite.js build'));
+                console.log(chalk.gray('   - 或重新运行更新并强制构建：node scripts/update.mjs --build-dist'));
             }
-        } else if (!skipBuildDist && !forceBuildDist) {
-            const gb = (os.totalmem() / (1024 * 1024 * 1024)).toFixed(1);
-            console.log(chalk.gray(`\n[UI] dist build skipped (total memory ~${gb} GB). Use --build-dist to force, or --no-build to silence.`));
+        } else if (skipBuildDist) {
+            console.log(chalk.gray('\n[UI] 已按参数跳过构建（--no-build）'));
         }
 
-        console.log(chalk.green.bold('\n✅ Update completed successfully!\n'));
+        console.log(chalk.green.bold('\n✅ 更新完成！\n'));
         process.exit(0);
     } catch (error) {
-        spinner.fail('Update failed');
+        spinner.fail('更新失败');
 
         if (error && error.kind === 'DUBIOUS_OWNERSHIP') {
             const safeDir = normalizeGitPath(ROOT_DIR);
@@ -779,7 +808,11 @@ async function update() {
             console.log(chalk.gray('\n你也可以用参数自动修复：'));
             console.log(chalk.cyan('   node scripts/update.mjs --trust-git-dir'));
         } else {
-            console.error(chalk.red('\n❌ Error:'), error?.message || String(error));
+            console.error(chalk.red('\n❌ 错误:'), error?.message || String(error));
+            if (error?.details) {
+                console.log(chalk.gray('\n--- 最近的命令输出（截断）---'));
+                console.log(chalk.gray(String(error.details).trim() || '(无)'));
+            }
         }
         process.exit(1);
     }

@@ -99,6 +99,7 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: `http://localhost:${serverPort}`,
           changeOrigin: true,
+          ws: true,
         },
         '/v1': {
           target: `http://localhost:${serverPort}`,

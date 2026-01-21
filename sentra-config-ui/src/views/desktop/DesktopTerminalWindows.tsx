@@ -5,6 +5,7 @@ import { SentraLoading } from '../../components/SentraLoading';
 import type { TerminalWin } from '../../types/ui';
 
 const TerminalWindow = lazy(() => import('../../components/TerminalWindow').then(module => ({ default: module.TerminalWindow })));
+const TerminalExecutorWindow = lazy(() => import('../../components/TerminalExecutorWindow').then(module => ({ default: module.TerminalExecutorWindow })));
 
 type DesktopTerminalWindowsProps = {
   terminalWindows: TerminalWin[];
@@ -72,12 +73,21 @@ export function DesktopTerminalWindows(props: DesktopTerminalWindowsProps) {
           }}
         >
           <Suspense fallback={<SentraLoading title="加载终端" subtitle="首次打开可能较慢，请稍等..." />}>
-            <TerminalWindow
-              processId={terminal.processId}
-              theme={terminal.theme}
-              headerText={terminal.headerText}
-              onProcessNotFound={() => handleCloseTerminal(terminal.id)}
-            />
+            {String(terminal.appKey || '').startsWith('execpty:') ? (
+              <TerminalExecutorWindow
+                sessionId={terminal.processId}
+                theme={terminal.theme}
+                headerText={terminal.headerText}
+                onSessionNotFound={() => handleCloseTerminal(terminal.id)}
+              />
+            ) : (
+              <TerminalWindow
+                processId={terminal.processId}
+                theme={terminal.theme}
+                headerText={terminal.headerText}
+                onProcessNotFound={() => handleCloseTerminal(terminal.id)}
+              />
+            )}
           </Suspense>
         </MacWindow>
       ))}

@@ -5,29 +5,18 @@ import os from 'os';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import dotenv from 'dotenv';
-import { createRequire } from 'module';
-import type { IPty } from 'node-pty';
-
-const require = createRequire(import.meta.url);
-let pty: any = null;
-try {
-    pty = require('node-pty');
-} catch {
-    pty = null;
-}
 
 interface ScriptProcess {
     id: string;
     name: 'bootstrap' | 'start' | 'napcat' | 'update' | 'sentiment' | 'shell';
     dedupeKey: string;
-    process: ReturnType<typeof spawn> | IPty;
+    process: ReturnType<typeof spawn>;
     output: string[];
     exitCode: number | null;
     startTime: Date;
     endTime: Date | null;
     emitter: EventEmitter;
     isPm2Mode?: boolean;
-    isPty?: boolean;
 }
 
 function commandExists(cmd: string): boolean {
@@ -56,17 +45,6 @@ function resolveSentimentRunner(runtimeEnv: Record<string, string>): 'uv' | 'pyt
 
 export class ScriptRunner {
     private processes: Map<string, ScriptProcess> = new Map();
-
-    private ensurePtyAvailable() {
-        if (!pty || typeof pty.spawn !== 'function') {
-            throw new Error('Missing dependency: node-pty. Please run dependency installation for sentra-config-ui (e.g. run update script or run npm/pnpm install).');
-        }
-    }
-
-    private getPid(p: ScriptProcess): number | undefined {
-        const pid = (p.process as any)?.pid;
-        return typeof pid === 'number' && Number.isFinite(pid) ? pid : undefined;
-    }
 
     private computeDedupeKey(name: ScriptProcess['name'], args: string[]): string {
         // Some scripts accept sub-commands; they must not share the same running instance.
@@ -117,47 +95,50 @@ export class ScriptRunner {
             }
         } catch { }
 
-        const spawnPty = (cmd: string, cmdArgs: string[], cwd: string, extraEnv?: Record<string, string>) => {
-            this.ensurePtyAvailable();
-            if (!cmd || !String(cmd).trim()) {
-                throw new Error('File not found: (empty command)');
-            }
-            return pty.spawn(cmd, cmdArgs, {
-                name: 'xterm-256color',
-                cols: 120,
-                rows: 30,
-                cwd,
-                env: {
-                    ...process.env,
-                    ...runtimeEnv,
-                    FORCE_COLOR: '3',
-                    CLICOLOR_FORCE: '1',
-                    TERM: 'xterm-256color',
-                    COLORTERM: 'truecolor',
-                    ...(extraEnv || {}),
-                },
-            });
-        };
-
-        let proc: IPty;
-
+        let proc;
         if (scriptName === 'sentiment') {
             // Special handling for Sentra Emo (Python FastAPI service)
             const scriptPath = 'run.py';
+            // Assuming sentra-config-ui is in the root, so sentra-emo is a sibling
             const cwd = path.join(process.cwd(), '..', 'sentra-emo');
+
             const runner = resolveSentimentRunner(runtimeEnv);
+            const baseEnv = {
+                ...process.env,
+                ...runtimeEnv,
+                FORCE_COLOR: '3',
+                CLICOLOR_FORCE: '1',
+                TERM: 'xterm-256color',
+                COLORTERM: 'truecolor',
+                PYTHONUNBUFFERED: '1',
+            };
 
             if (runner === 'uv') {
-                proc = spawnPty('uv', ['run', 'python', scriptPath, ...args], cwd, { PYTHONUNBUFFERED: '1' });
+                // Prefer uv when available: uv run python run.py [...args]
+                proc = spawn('uv', ['run', 'python', scriptPath, ...args], {
+                    cwd,
+                    env: baseEnv,
+                });
             } else {
-                proc = spawnPty('python', [scriptPath, ...args], cwd, { PYTHONUNBUFFERED: '1' });
+                // Fallback: plain Python
+                proc = spawn('python', [scriptPath, ...args], {
+                    cwd,
+                    env: baseEnv,
+                });
             }
         } else {
             // Standard node scripts
             const scriptPath = path.join(process.cwd(), 'scripts', `${scriptName}.mjs`);
-            // Avoid PATH-dependent 'node' on Windows services; use the current Node executable.
-            const nodeCmd = process.execPath || 'node';
-            proc = spawnPty(nodeCmd, [scriptPath, ...args], process.cwd());
+            proc = spawn('node', [scriptPath, ...args], {
+                cwd: process.cwd(),
+                env: {
+                    ...process.env,
+                    ...runtimeEnv,
+                    FORCE_COLOR: '3',
+                    TERM: 'xterm-256color',
+                    COLORTERM: 'truecolor',
+                },
+            });
         }
 
         const isPm2Mode = scriptName === 'start' && (() => {
@@ -184,25 +165,42 @@ export class ScriptRunner {
             endTime: null,
             emitter,
             isPm2Mode,
-            isPty: true,
         };
 
         this.processes.set(id, scriptProcess);
 
-        proc.onData((data: any) => {
+        proc.stdout?.on('data', (data) => {
             const text = data.toString();
             scriptProcess.output.push(text);
             emitter.emit('output', { type: 'stdout', data: text });
         });
 
-        proc.onExit((ev: any) => {
-            scriptProcess.exitCode = typeof ev.exitCode === 'number' ? ev.exitCode : 0;
-            scriptProcess.endTime = new Date();
-            emitter.emit('exit', { code: scriptProcess.exitCode });
+        proc.stderr?.on('data', (data) => {
+            const text = data.toString();
+            scriptProcess.output.push(text);
+            emitter.emit('output', { type: 'stderr', data: text });
+        });
 
+        proc.on('close', (code) => {
+            scriptProcess.exitCode = code;
+            scriptProcess.endTime = new Date();
+            emitter.emit('exit', { code });
+
+            // Clean up after 5 minutes
             setTimeout(() => {
                 this.processes.delete(id);
             }, 5 * 60 * 1000);
+        });
+
+        // Handle spawn errors (e.g. bad cwd, command not found)
+        proc.on('error', (err) => {
+            const errorMsg = `Failed to start process: ${err.message}`;
+            scriptProcess.output.push(errorMsg);
+            emitter.emit('output', { type: 'stderr', data: errorMsg });
+            scriptProcess.exitCode = 1;
+            scriptProcess.endTime = new Date();
+            emitter.emit('exit', { code: 1 });
+            console.error(`[ScriptRunner] Error spawning ${scriptName}:`, err);
         });
 
         return id;
@@ -233,50 +231,8 @@ export class ScriptRunner {
         };
 
         const isWin = os.platform() === 'win32';
-        const candidates: Array<{ cmd: string; args: string[] }> = [];
-
-        const getUserCmd = (key: string) => {
-            const v = (runtimeEnv[key] ?? process.env[key] ?? '').toString().trim();
-            return v;
-        };
-
-        const userCmdPath = getUserCmd('SENTRA_SHELL_CMD_PATH');
-        const userPowerShellPath = getUserCmd('SENTRA_SHELL_POWERSHELL_PATH');
-        const userPwshPath = getUserCmd('SENTRA_SHELL_PWSH_PATH');
-        const userBashPath = getUserCmd('SENTRA_SHELL_BASH_PATH');
-        const userGitBashPath = getUserCmd('SENTRA_SHELL_GIT_BASH_PATH');
-        const userWslPath = getUserCmd('SENTRA_SHELL_WSL_PATH');
-        const userZshPath = getUserCmd('SENTRA_SHELL_ZSH_PATH');
-        const userShPath = getUserCmd('SENTRA_SHELL_SH_PATH');
-
-        const findWindowsCmd = () => {
-            const comspec = (process.env['ComSpec'] || '').trim();
-            if (comspec && fs.existsSync(comspec)) return comspec;
-            const sysRoot = (process.env['SystemRoot'] || 'C:\\Windows').trim();
-            const p = path.join(sysRoot, 'System32', 'cmd.exe');
-            if (fs.existsSync(p)) return p;
-            return 'cmd.exe';
-        };
-
-        const findWindowsPowerShell = () => {
-            const sysRoot = (process.env['SystemRoot'] || 'C:\\Windows').trim();
-            const ps51 = path.join(sysRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-            if (fs.existsSync(ps51)) return ps51;
-
-            // PowerShell 7 common locations
-            const pf = (process.env['ProgramFiles'] || '').trim();
-            const pf86 = (process.env['ProgramFiles(x86)'] || '').trim();
-            const pwshCandidates = [
-                pf ? path.join(pf, 'PowerShell', '7', 'pwsh.exe') : '',
-                pf86 ? path.join(pf86, 'PowerShell', '7', 'pwsh.exe') : '',
-            ].filter(Boolean);
-            for (const p of pwshCandidates) {
-                if (p && fs.existsSync(p)) return p;
-            }
-
-            if (commandExists('pwsh')) return 'pwsh.exe';
-            return 'powershell.exe';
-        };
+        let cmd = '';
+        let cmdArgs: string[] = [];
 
         const findGitBash = () => {
             try {
@@ -297,113 +253,48 @@ export class ScriptRunner {
 
         if (isWin) {
             if (shellType === 'cmd') {
-                if (userCmdPath) {
-                    candidates.push({ cmd: userCmdPath, args: ['/Q', '/K', 'chcp 65001>nul & PROMPT $P$G'] });
-                }
-                candidates.push({ cmd: findWindowsCmd(), args: ['/Q', '/K', 'chcp 65001>nul & PROMPT $P$G'] });
-                candidates.push({ cmd: 'cmd.exe', args: ['/Q', '/K', 'chcp 65001>nul & PROMPT $P$G'] });
+                cmd = 'cmd.exe';
+                cmdArgs = ['/Q', '/K', 'chcp 65001>nul & PROMPT $P$G'];
             } else if (shellType === 'bash') {
-                if (userBashPath) {
-                    candidates.push({ cmd: userBashPath, args: ['-i'] });
-                }
-                if (userGitBashPath) {
-                    candidates.push({ cmd: userGitBashPath, args: ['-i'] });
-                }
                 if (commandExists('bash')) {
-                    candidates.push({ cmd: 'bash', args: ['-i'] });
+                    cmd = 'bash';
+                    cmdArgs = ['-i'];
+                } else {
+                    const gitBash = findGitBash();
+                    if (gitBash) {
+                        cmd = gitBash;
+                        cmdArgs = ['-i'];
+                    } else if (commandExists('wsl')) {
+                        cmd = 'wsl.exe';
+                        cmdArgs = ['-e', 'bash', '-li'];
+                    } else {
+                        cmd = 'powershell.exe';
+                        cmdArgs = ['-NoLogo', '-NoExit'];
+                    }
                 }
-                const gitBash = findGitBash();
-                if (gitBash) {
-                    candidates.push({ cmd: gitBash, args: ['-i'] });
-                }
-                if (userWslPath) {
-                    candidates.push({ cmd: userWslPath, args: ['-e', 'bash', '-li'] });
-                }
-                if (commandExists('wsl')) {
-                    candidates.push({ cmd: 'wsl.exe', args: ['-e', 'bash', '-li'] });
-                }
-                if (userPwshPath) {
-                    candidates.push({ cmd: userPwshPath, args: ['-NoLogo', '-NoExit'] });
-                }
-                if (userPowerShellPath) {
-                    candidates.push({ cmd: userPowerShellPath, args: ['-NoLogo', '-NoExit'] });
-                }
-                candidates.push({ cmd: findWindowsPowerShell(), args: ['-NoLogo', '-NoExit'] });
             } else {
-                if (userPwshPath) {
-                    candidates.push({ cmd: userPwshPath, args: ['-NoLogo', '-NoExit'] });
-                }
-                if (userPowerShellPath) {
-                    candidates.push({ cmd: userPowerShellPath, args: ['-NoLogo', '-NoExit'] });
-                }
-                candidates.push({ cmd: findWindowsPowerShell(), args: ['-NoLogo', '-NoExit'] });
-                if (commandExists('pwsh')) {
-                    candidates.push({ cmd: 'pwsh.exe', args: ['-NoLogo', '-NoExit'] });
-                }
-                candidates.push({ cmd: 'powershell.exe', args: ['-NoLogo', '-NoExit'] });
-                if (userCmdPath) {
-                    candidates.push({ cmd: userCmdPath, args: ['/Q', '/K', 'chcp 65001>nul & PROMPT $P$G'] });
-                }
-                candidates.push({ cmd: findWindowsCmd(), args: ['/Q', '/K', 'chcp 65001>nul & PROMPT $P$G'] });
+                cmd = 'powershell.exe';
+                cmdArgs = ['-NoLogo', '-NoExit'];
             }
         } else {
-            const want = shellType || 'bash';
-            const pushIfExists = (cmd: string, a: string[]) => {
-                if (commandExists(cmd)) candidates.push({ cmd, args: a });
-            };
-            if (want === 'zsh') {
-                if (userZshPath) candidates.push({ cmd: userZshPath, args: ['-i'] });
-                if (userBashPath) candidates.push({ cmd: userBashPath, args: ['-i'] });
-                if (userShPath) candidates.push({ cmd: userShPath, args: ['-i'] });
-                pushIfExists('zsh', ['-i']);
-                pushIfExists('bash', ['-i']);
-                pushIfExists('sh', ['-i']);
-            } else if (want === 'sh') {
-                if (userShPath) candidates.push({ cmd: userShPath, args: ['-i'] });
-                if (userBashPath) candidates.push({ cmd: userBashPath, args: ['-i'] });
-                pushIfExists('sh', ['-i']);
-                pushIfExists('bash', ['-i']);
+            if (shellType === 'zsh') {
+                cmd = 'zsh';
+                cmdArgs = ['-i'];
+            } else if (shellType === 'sh') {
+                cmd = 'sh';
+                cmdArgs = ['-i'];
             } else {
-                if (userBashPath) candidates.push({ cmd: userBashPath, args: ['-i'] });
-                if (userShPath) candidates.push({ cmd: userShPath, args: ['-i'] });
-                pushIfExists('bash', ['-i']);
-                pushIfExists('sh', ['-i']);
-            }
-            if (candidates.length === 0) {
-                candidates.push({ cmd: 'sh', args: ['-i'] });
+                cmd = 'bash';
+                cmdArgs = ['-i'];
             }
         }
 
-        let proc: IPty | null = null;
-        let selectedCmd = '';
-        let lastErr: any = null;
+        const usedBashFallbackToPwsh = isWin && shellType === 'bash' && cmd.toLowerCase().includes('powershell.exe');
 
-        for (const c of candidates) {
-            const cCmd = String(c.cmd || '').trim();
-            if (!cCmd) continue;
-            try {
-                this.ensurePtyAvailable();
-                proc = pty.spawn(cCmd, c.args, {
-                    name: 'xterm-256color',
-                    cols: 120,
-                    rows: 30,
-                    cwd: process.cwd(),
-                    env: baseEnv,
-                });
-                selectedCmd = cCmd;
-                break;
-            } catch (e) {
-                lastErr = e;
-            }
-        }
-
-        if (!proc) {
-            const attempted = candidates.map((c) => String(c.cmd || '').trim()).filter(Boolean).join(', ');
-            const reason = lastErr instanceof Error ? lastErr.message : String(lastErr || 'unknown error');
-            throw new Error(`Failed to start shell. attempted=[${attempted}] reason=${reason}`);
-        }
-
-        const usedBashFallbackToPwsh = isWin && shellType === 'bash' && selectedCmd.toLowerCase().includes('powershell');
+        const proc = spawn(cmd, cmdArgs, {
+            cwd: process.cwd(),
+            env: baseEnv,
+        });
 
         const scriptProcess: ScriptProcess = {
             id,
@@ -416,7 +307,6 @@ export class ScriptRunner {
             endTime: null,
             emitter,
             isPm2Mode: false,
-            isPty: true,
         };
 
         this.processes.set(id, scriptProcess);
@@ -427,20 +317,36 @@ export class ScriptRunner {
             emitter.emit('output', { type: 'stderr', data: msg + '\r\n' });
         }
 
-        proc.onData((data: any) => {
+        proc.stdout?.on('data', (data) => {
             const text = data.toString();
             scriptProcess.output.push(text);
             emitter.emit('output', { type: 'stdout', data: text });
         });
 
-        proc.onExit((ev: any) => {
-            scriptProcess.exitCode = typeof ev.exitCode === 'number' ? ev.exitCode : 0;
+        proc.stderr?.on('data', (data) => {
+            const text = data.toString();
+            scriptProcess.output.push(text);
+            emitter.emit('output', { type: 'stderr', data: text });
+        });
+
+        proc.on('close', (code) => {
+            scriptProcess.exitCode = code;
             scriptProcess.endTime = new Date();
-            emitter.emit('exit', { code: scriptProcess.exitCode });
+            emitter.emit('exit', { code });
 
             setTimeout(() => {
                 this.processes.delete(id);
             }, 5 * 60 * 1000);
+        });
+
+        proc.on('error', (err) => {
+            const errorMsg = `Failed to start process: ${err.message}`;
+            scriptProcess.output.push(errorMsg);
+            emitter.emit('output', { type: 'stderr', data: errorMsg });
+            scriptProcess.exitCode = 1;
+            scriptProcess.endTime = new Date();
+            emitter.emit('exit', { code: 1 });
+            console.error(`[ScriptRunner] Error spawning shell (${shellType || 'default'}):`, err);
         });
 
         return id;
@@ -454,7 +360,7 @@ export class ScriptRunner {
         const record = this.processes.get(id);
         if (!record || record.exitCode !== null) return false;
 
-        const pid = this.getPid(record);
+        const pid = record.process.pid;
         if (!pid) return false;
 
         try {
@@ -494,23 +400,6 @@ export class ScriptRunner {
         }
     }
 
-    resizeProcess(id: string, cols: number, rows: number): boolean {
-        const record = this.processes.get(id);
-        if (!record || record.exitCode !== null) return false;
-        if (!record.isPty) return false;
-
-        const c = Math.max(2, Math.min(500, Math.floor(cols)));
-        const r = Math.max(2, Math.min(500, Math.floor(rows)));
-
-        try {
-            const p = record.process as IPty;
-            p.resize(c, r);
-            return true;
-        } catch {
-            return false;
-        }
-    }
-
     subscribeToOutput(id: string, callback: (data: { type: string; data: string }) => void): (() => void) | null {
         const proc = this.processes.get(id);
         if (!proc) return null;
@@ -531,21 +420,10 @@ export class ScriptRunner {
         const proc = this.processes.get(id);
         if (!proc || proc.exitCode !== null) return false;
 
-        if (proc.isPty) {
-            try {
-                (proc.process as IPty).write(String(data ?? ''));
-                return true;
-            } catch {
-                return false;
-            }
-        }
-
-        const child = proc.process as ReturnType<typeof spawn>;
-        if (child.stdin && !child.stdin.destroyed) {
-            child.stdin.write(data);
+        if (proc.process.stdin && !proc.process.stdin.destroyed) {
+            proc.process.stdin.write(data);
             return true;
         }
-
         return false;
     }
 }
