@@ -8,6 +8,11 @@ const CONTRACT_HARDENING = [
   '- For ingest: you MUST output extraction.entities as an array and extraction.relations as an array (empty only if truly none).',
   '- Every entity should include evidence: segment_id (child) + quote whenever possible.',
   '- Every relation MUST reference entities structurally (subject/object with type + canonical_name), and include evidence segment_id + quote whenever possible.',
+  '- Entity identity & merging (IMPORTANT): if an entity has a stable, globally unique identifier, you MUST output entity_key on that entity.',
+  '- entity_key is a stable string key. Avoid separators like ":" or "/"; prefer lowercase + digits + underscore only.',
+  '- Examples: "qq_2166683295", "pkg_react", "repo_owner_name", "file_utils_emoji-stickers_.env" (keep identifiers exact; do not invent).',
+  '- If entity_key exists, relations SHOULD include subject.entity_key/object.entity_key in addition to canonical_name so the system can merge across documents/turns.',
+  '- Optionally output aliases as an array of alternative surface forms (e.g. nicknames, different spellings).',
   '- Output MUST be valid XML and use the typed value nodes required by the policy.',
 ].join('\n');
 

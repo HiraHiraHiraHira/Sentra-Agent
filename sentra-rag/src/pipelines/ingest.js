@@ -10,7 +10,15 @@ function sha1Hex(value) {
 }
 
 function normalizeName(x) {
-  return String(x ?? '').trim();
+  return String(x ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeEntityKey(x) {
+  const s = normalizeName(x);
+  if (!s) return '';
+  return s
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
 }
 
 function normalizeSegmentId(segmentId, fallbackValue) {
@@ -25,9 +33,10 @@ function makeChunkKey(docId, segmentId) {
 function getEntityKey(obj) {
   if (!obj) return { type: 'OTHER', canonical: '' };
   if (typeof obj === 'string') return { type: 'OTHER', canonical: normalizeName(obj) };
-  const type = normalizeName(obj.type) || 'OTHER';
+  const entityKey = normalizeEntityKey(obj.entity_key ?? obj.entityKey);
+  const type = (normalizeName(obj.type) || 'OTHER').toUpperCase();
   const canonical = normalizeName(obj.canonical_name ?? obj.canonicalName ?? obj.name);
-  return { type, canonical };
+  return { entityKey, type, canonical };
 }
 
 async function linkEntityByTextFallback(neo4j, docId, entityId, names) {
@@ -313,22 +322,34 @@ export async function ingestContractToNeo4j(neo4j, embeddingOpenai, contract, { 
 
   // Entities
   for (const e of entities) {
-    const canonical = e.canonical_name || e.name || '';
-    const type = e.type || 'OTHER';
-    const entityId = stableId('ent', `${type}|${canonical}`);
+    const canonical = normalizeName(e.canonical_name ?? e.canonicalName ?? e.name);
+    const type = (normalizeName(e.type) || 'OTHER').toUpperCase();
+    const entityKey = normalizeEntityKey(e.entity_key ?? e.entityKey);
+    const aliases = Array.isArray(e.aliases)
+      ? e.aliases.map(normalizeName).filter(Boolean)
+      : [];
+    if (!canonical) continue;
+
+    const entityId = entityKey
+      ? stableId('ent', `key|${entityKey}`)
+      : stableId('ent', `${type}|${canonical}`);
     await neo4j.run(
       `MERGE (en:Entity {entityId: $entityId})
        SET en.name = $name,
            en.type = $type,
            en.canonicalName = $canonical,
+           en.entityKey = coalesce($entityKey, en.entityKey),
+           en.aliases = CASE WHEN size($aliases) = 0 THEN coalesce(en.aliases, []) ELSE $aliases END,
            en.id = $entityId,
            en.updatedAt = $now,
            en.createdAt = coalesce(en.createdAt, $now)`,
       {
         entityId,
-        name: e.name || '',
+        name: normalizeName(e.name) || canonical,
         type,
         canonical,
+        entityKey: entityKey || null,
+        aliases,
         now: nowIso(),
       }
     );
@@ -373,17 +394,23 @@ export async function ingestContractToNeo4j(neo4j, embeddingOpenai, contract, { 
     const obj = getEntityKey(rel.object ?? rel.to ?? rel.tail ?? rel.b ?? rel.target);
     if (!subj.canonical || !obj.canonical) continue;
 
-    const subjId = stableId('ent', `${subj.type}|${subj.canonical}`);
-    const objId = stableId('ent', `${obj.type}|${obj.canonical}`);
+    const subjId = subj.entityKey
+      ? stableId('ent', `key|${subj.entityKey}`)
+      : stableId('ent', `${subj.type}|${subj.canonical}`);
+    const objId = obj.entityKey
+      ? stableId('ent', `key|${obj.entityKey}`)
+      : stableId('ent', `${obj.type}|${obj.canonical}`);
 
     // Ensure both entity nodes exist
     await neo4j.run(
       `MERGE (s:Entity {entityId: $sid})
        ON CREATE SET s.type = $stype, s.canonicalName = $scan, s.name = $scan, s.createdAt = $now
-       SET s.updatedAt = $now
+       SET s.updatedAt = $now,
+           s.entityKey = coalesce($skey, s.entityKey)
        MERGE (o:Entity {entityId: $oid})
        ON CREATE SET o.type = $otype, o.canonicalName = $ocan, o.name = $ocan, o.createdAt = $now
-       SET o.updatedAt = $now
+       SET o.updatedAt = $now,
+           o.entityKey = coalesce($okey, o.entityKey)
        MERGE (s)-[r:RELATED {predicate: $pred}]->(o)
        SET r.confidence = $conf,
            r.updatedAt = $now`,
@@ -394,6 +421,8 @@ export async function ingestContractToNeo4j(neo4j, embeddingOpenai, contract, { 
         otype: obj.type,
         scan: subj.canonical,
         ocan: obj.canonical,
+        skey: subj.entityKey || null,
+        okey: obj.entityKey || null,
         pred: predicate,
         conf: Number(rel.confidence ?? 0.5),
         now: nowIso(),

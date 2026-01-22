@@ -187,6 +187,10 @@ function tryEnqueueRagIngestAfterSave({ logger, conversationId, groupId, userid,
         '- Do NOT create entities for role labels like "USER", "ASSISTANT", "SYSTEM", "BOT".',
         '- Prefer real-world entities: people, accounts, apps, packages, versions, files, errors, URLs, orgs, concepts.',
         '- Relations MUST be specific predicates (avoid generic RELATED). Examples: "asks_about", "mentions", "uses", "depends_on", "causes_error", "version_of".',
+        '- IMPORTANT: Use a stable canonical_name so entities can MERGE across turns/documents:',
+        '  - For packages/libs/tools: use lowercase, strip versions (e.g. "react@18" -> "react").',
+        '  - For files/paths: normalize slashes to "/" and prefer repo-relative paths when possible.',
+        '  - For errors: keep the canonical error code/name stable (e.g. "FST_ERR_CTP_EMPTY_JSON_BODY").',
         '- Every entity/relation should include evidence (segment_id + quote) whenever possible.',
         '- If the only possible entities are role labels, output zero entities/relations.',
       ].join('\n');
@@ -1108,6 +1112,16 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
       if (currentTaskId && isTaskCancelled(currentTaskId)) {
         isCancelled = true;
         logger.info(`检测到任务已被取消: ${groupId} taskId=${currentTaskId}`);
+
+        if (currentRunId && sdk && typeof sdk.cancelRun === 'function') {
+          try {
+            sdk.cancelRun(currentRunId);
+            try {
+              untrackRunForSender(userid, groupId, currentRunId);
+            } catch {}
+          } catch {}
+        }
+        currentRunId = null;
         break;
       }
 
@@ -2018,7 +2032,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
                           userid,
                           userObjective,
                           msg,
-                          response: promised
+                          response: forced
                         });
                       }
                     } catch {}
