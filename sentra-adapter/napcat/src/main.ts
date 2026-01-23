@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import createSDK from './sdk';
 import { createLogger } from './logger';
-import { formatEventCompact, formatMessageHuman, isMeaningfulMessage } from './events';
+import { formatEventCompact, formatMessageHuman, formatReplyContextHuman, isMeaningfulMessage } from './events';
 import type { MessageEvent } from './types/onebot';
 import { getConfig, refreshConfigFromEnv } from './runtimeConfig';
 import { startEnvWatcher } from './envWatcher';
@@ -100,17 +100,9 @@ async function main() {
       try {
         replyContext = await (sdk as any).utils.getReplyContext(ev as MessageEvent);
         if (summaryMode === 'always' || process.env.LOG_LEVEL === 'debug') {
-          const out = {
-            reply_id: replyContext.reply?.id,
-            referred_plain: replyContext.referredPlain,
-            current_plain: replyContext.currentPlain,
-            media: replyContext.media,
-          };
-          if (summaryMode === 'always') {
-            log.info(out, '引用上下文');
-          } else {
-            log.debug(out, '引用上下文');
-          }
+          const line = formatReplyContextHuman(replyContext, { withColor: true });
+          if (summaryMode === 'always') log.info(line);
+          else log.debug(line);
         }
       } catch {}
     }

@@ -1,5 +1,6 @@
-import type { MessageEvent, OneBotEvent } from './types/onebot';
+import type { MessageEvent, MessageSegment, OneBotEvent } from './types/onebot';
 import chalk from 'chalk';
+import { toSegments, type MessageInput } from './utils/message';
 
 export function isMessageEvent(ev: OneBotEvent): ev is MessageEvent {
   return ev.post_type === 'message';
@@ -18,6 +19,123 @@ export function getPlainText(ev: MessageEvent): string {
     .filter((seg) => seg.type === 'text')
     .map((seg) => String(seg.data?.text ?? ''))
     .join('');
+}
+
+function isAnimatedImage(seg: MessageSegment): boolean {
+  if (seg.type !== 'image') return false;
+  const summary = String((seg as any).data?.summary ?? '');
+  const subType = (seg as any).data?.sub_type;
+  if (summary.includes('动画表情')) return true;
+  if (Number(subType) === 1) return true;
+  return false;
+}
+
+function segmentToQQToken(seg: MessageSegment): string {
+  const data: any = (seg as any).data || {};
+  switch (seg.type) {
+    case 'text':
+      return String(data.text ?? '');
+    case 'at':
+      return data.qq === 'all' ? '@全体成员' : `@${String(data.qq ?? '')}`;
+    case 'image':
+      return isAnimatedImage(seg) ? '[动画表情]' : '[图片]';
+    case 'record':
+      return '[语音]';
+    case 'video':
+      return '[视频]';
+    case 'file':
+      return '[文件]';
+    case 'forward':
+      return '[转发]';
+    case 'face':
+      return '[表情]';
+    case 'reply':
+      return '';
+    case 'json':
+    case 'xml':
+      return '[卡片]';
+    case 'share':
+      return '[分享]';
+    case 'app':
+      return '[应用]';
+    default:
+      return `[${String(seg.type || 'unknown')}]`;
+  }
+}
+
+function compressQQTokens(tokens: string[]): string[] {
+  const out: string[] = [];
+  let last: string | null = null;
+  let count = 0;
+
+  const flush = () => {
+    if (!last) return;
+    if (count <= 1) out.push(last);
+    else {
+      const m = /^\[([^\]]+)\]$/.exec(last);
+      if (m) out.push(`[${m[1]}×${count}]`);
+      else out.push(last.repeat(count));
+    }
+    last = null;
+    count = 0;
+  };
+
+  for (const t of tokens) {
+    const token = String(t || '');
+    if (!token) continue;
+
+    const isBracketToken = /^\[[^\]]+\]$/.test(token);
+    if (isBracketToken) {
+      if (last === token) {
+        count++;
+      } else {
+        flush();
+        last = token;
+        count = 1;
+      }
+      continue;
+    }
+
+    flush();
+    out.push(token);
+  }
+  flush();
+  return out;
+}
+
+function formatTag(label: string, value?: string, withColor = true, valueColor?: (s: string) => string): string {
+  const l = String(label ?? '');
+  const v = value !== undefined && value !== null ? String(value) : '';
+  if (!withColor) {
+    return v ? `[${l} ${v}]` : `[${l}]`;
+  }
+  const coloredLabel = chalk.gray(l);
+  const coloredValue = v ? (valueColor ? valueColor(v) : chalk.yellowBright(v)) : '';
+  const inner = v ? `${coloredLabel} ${coloredValue}` : coloredLabel;
+  return chalk.gray('[') + inner + chalk.gray(']');
+}
+
+export function formatMessageInputQQ(input: MessageInput, opts: { plainMax?: number } = {}): string {
+  const segs = toSegments(input);
+  const tokens = segs.map(segmentToQQToken).filter(Boolean);
+  const mergedTokens = compressQQTokens(tokens);
+  let merged = '';
+  for (const t of mergedTokens) {
+    const token = String(t || '');
+    if (!token) continue;
+
+    if (/^\[[^\]]+\]$/.test(token) && merged && !/\s$/.test(merged)) {
+      merged += ' ';
+    }
+
+    const isNextText = !/^\[[^\]]+\]$/.test(token);
+    if (isNextText && merged && !/\s$/.test(merged) && /@[^\s]+$/.test(merged) && !/^\s/.test(token)) {
+      merged += ' ';
+    }
+
+    merged += token;
+  }
+  return sanitizeInline(merged, opts.plainMax ?? 80);
 }
 
 /**
@@ -180,31 +298,85 @@ function sanitizeInline(text: string, max = 80): string {
   return cleaned.slice(0, max - 1) + '…';
 }
 
+function colorizeQQInline(text: string, withColor: boolean): string {
+  const src = String(text ?? '');
+  if (!withColor) return src;
+
+  const tokenColor: Record<string, (s: string) => string> = {
+    图片: chalk.greenBright,
+    视频: chalk.greenBright,
+    语音: chalk.greenBright,
+    文件: chalk.yellowBright,
+    转发: chalk.yellowBright,
+    表情: chalk.yellowBright,
+    动画表情: chalk.magentaBright,
+    卡片: chalk.blueBright,
+    分享: chalk.blueBright,
+    应用: chalk.blueBright,
+  };
+
+  let out = src;
+  out = out.replace(/@全体成员/g, chalk.cyanBright('@全体成员'));
+  out = out.replace(/@[0-9]+/g, (m) => chalk.cyanBright(m));
+
+  out = out.replace(/\[([^\]×]+)(?:×(\d+))?\]/g, (_full, label: string, count?: string) => {
+    const base = String(label ?? '');
+    const fn = tokenColor[base];
+    const coloredLabel = fn ? fn(base) : chalk.gray(base);
+    const suffix = count ? chalk.gray(`×${String(count)}`) : '';
+    return chalk.gray('[') + coloredLabel + suffix + chalk.gray(']');
+  });
+
+  return out;
+}
+
 export function formatMessageHuman(
   ev: MessageEvent,
   opts: { plainMax?: number; withColor?: boolean; groupName?: string; peerName?: string } = {},
 ): string {
   const s = summarizeMessageEvent(ev);
   const withColor = opts.withColor !== false;
-  const plain = s.plain_text || s.raw_message || '';
-
   const envMaxLength = process.env.MESSAGE_TEXT_MAX_LENGTH;
   const defaultMax = opts.plainMax ?? 80;
   const maxLength = envMaxLength !== undefined ? Number(envMaxLength) : defaultMax;
-  const plainCropped = sanitizeInline(plain, maxLength);
+  const plain = formatMessageInputQQ(ev.message as any, { plainMax: maxLength });
+
+  const plainCropped = plain;
 
   const color = (x: string, fn: (s: string) => string) => (withColor ? fn(x) : x);
 
-  let headText = '';
+  let head = '';
   if (s.message_type === 'group') {
-    const gName = opts.groupName || '未知群';
-    headText = `群聊:${gName}(${String(s.group_id ?? '')})`;
+    const gName = String(opts.groupName || '未知群');
+    const gid = String(s.group_id ?? '');
+    if (withColor) {
+      head =
+        chalk.gray('[') +
+        chalk.gray('群聊:') +
+        chalk.magentaBright(gName) +
+        chalk.gray('(') +
+        chalk.yellowBright(gid) +
+        chalk.gray(')') +
+        chalk.gray(']');
+    } else {
+      head = `[群聊:${gName}(${gid})]`;
+    }
   } else {
-    const peer = opts.peerName || (s.sender && (s.sender.nickname || s.sender.card)) || String(s.user_id ?? '');
-    headText = `私聊:${peer}(${String(s.user_id ?? '')})`;
+    const peer = String(opts.peerName || (s.sender && (s.sender.nickname || s.sender.card)) || String(s.user_id ?? ''));
+    const uid = String(s.user_id ?? '');
+    if (withColor) {
+      head =
+        chalk.gray('[') +
+        chalk.gray('私聊:') +
+        chalk.blueBright(peer) +
+        chalk.gray('(') +
+        chalk.yellowBright(uid) +
+        chalk.gray(')') +
+        chalk.gray(']');
+    } else {
+      head = `[私聊:${peer}(${uid})]`;
+    }
   }
-
-  const head = color(`[${headText}]`, s.message_type === 'group' ? chalk.magentaBright : chalk.blueBright);
 
   const senderNick = String((s.sender && (s.sender.card || s.sender.nickname)) || '');
   const senderId = String(s.user_id ?? '');
@@ -213,8 +385,23 @@ export function formatMessageHuman(
     s.message_type === 'group'
       ? (senderRole === 'owner' ? '群主' : senderRole === 'admin' ? '管理员' : senderRole === 'member' ? '成员' : '')
       : '';
-  const senderLabelCore = senderNick ? `${senderNick}(${senderId})` : senderId;
-  const senderLabel = roleLabel ? `${roleLabel} ${senderLabelCore}` : senderLabelCore;
+  const nickColored = senderNick ? color(senderNick, chalk.cyanBright) : '';
+  const idColored = color(senderId, chalk.yellowBright);
+  const senderLabelCore = senderNick
+    ? withColor
+      ? `${nickColored}${chalk.gray('(')}${idColored}${chalk.gray(')')}`
+      : `${senderNick}(${senderId})`
+    : idColored;
+  const senderLabel = senderLabelCore;
+
+  const roleTag = roleLabel
+    ? formatTag(
+        roleLabel,
+        undefined,
+        withColor,
+        roleLabel === '群主' ? chalk.redBright : roleLabel === '管理员' ? chalk.yellowBright : chalk.gray,
+      )
+    : '';
 
   const replySeg = ev.message.find((seg) => seg.type === 'reply');
   let replyText = '';
@@ -235,23 +422,115 @@ export function formatMessageHuman(
     replyText = sanitizeInline(qtext, 60);
   }
 
-  const segNatural = formatCountsNatural(s.segments.counts);
-  const attachmentsNatural = formatCountsNatural(omitCounts(s.segments.counts, ['text', 'reply']));
-  const hasMeaningText = !!plainCropped && plainCropped.trim().length > 0;
-  const content = hasMeaningText
-    ? (attachmentsNatural ? `“${plainCropped}”（另含 ${attachmentsNatural}）` : `“${plainCropped}”`)
-    : (segNatural ? `发送了 ${segNatural}` : '发送了空消息');
+  const content = colorizeQQInline(plainCropped || '（空消息）', withColor);
 
-  const action = replySeg ? '回复' : '说';
-  const quotePart = replySeg
-    ? (replyText ? `「${replyText}」` : (replyId ? `一条消息（ID ${replyId}）` : '一条消息'))
-    : '';
-  const body = replySeg ? `${senderLabel} ${action}${quotePart}：${content}` : `${senderLabel}：${content}`;
+  const replyActionTag = replySeg ? formatTag('回复', undefined, withColor, chalk.gray) : '';
 
   const mid = s.message_id !== undefined ? String(s.message_id) : '';
-  const tail = mid ? color(`（消息ID ${mid}）`, chalk.gray) : '';
+  const replyTag = replyId ? formatTag('回复ID', replyId, withColor, chalk.yellowBright) : '';
+  const midTag = mid ? formatTag('消息ID', mid, withColor, chalk.yellowBright) : '';
 
-  return [head, body, tail].filter(Boolean).join(' ');
+  const firstLine = head;
+  const secondLine = [roleTag, senderLabel, replyActionTag, replyTag, midTag, content].filter(Boolean).join(' ');
+  return secondLine ? `${firstLine}\n${secondLine}` : firstLine;
+}
+
+export function formatReplyContextHuman(
+  ctx: any,
+  opts: { withColor?: boolean; maxLen?: number } = {},
+): string {
+  const withColor = opts.withColor !== false;
+  const color = (x: string, fn: (s: string) => string) => (withColor ? fn(x) : x);
+  const maxLen = opts.maxLen ?? 60;
+
+  const replyId = ctx?.reply?.id !== undefined ? String(ctx.reply.id) : '';
+  const referred = sanitizeInline(String(ctx?.referredPlain ?? ''), maxLen);
+  const current = sanitizeInline(String(ctx?.currentPlain ?? ''), maxLen);
+
+  const m = ctx?.media || {};
+  const parts: string[] = [];
+  const addCount = (label: string, n: any) => {
+    const c = Number(n);
+    if (Number.isFinite(c) && c > 0) parts.push(`[${label}×${c}]`);
+  };
+  addCount('图片', Array.isArray(m.images) ? m.images.length : 0);
+  addCount('视频', Array.isArray(m.videos) ? m.videos.length : 0);
+  addCount('文件', Array.isArray(m.files) ? m.files.length : 0);
+  addCount('语音', Array.isArray(m.records) ? m.records.length : 0);
+  addCount('转发', Array.isArray(m.forwards) ? m.forwards.length : 0);
+  addCount('表情', Array.isArray(m.faces) ? m.faces.length : 0);
+
+  const head = color('[引用]', chalk.gray);
+  const idPart = replyId ? `ID ${replyId}` : '';
+  const textPart = [referred ? `被引用:${referred}` : '', current ? `当前:${current}` : '']
+    .filter(Boolean)
+    .join(' | ');
+  const mediaPart = parts.join('');
+  return [head, idPart, textPart, mediaPart].filter(Boolean).join(' ');
+}
+
+export function formatBotSendHuman(params: {
+  message_type: 'group' | 'private';
+  group_id?: number;
+  user_id?: number;
+  reply_to_message_id?: number;
+  message: MessageInput;
+  withColor?: boolean;
+  botName?: string;
+  groupName?: string;
+  peerName?: string;
+  plainMax?: number;
+}): string {
+  const withColor = params.withColor !== false;
+
+  let head = '';
+  if (params.message_type === 'group') {
+    const gName = String(params.groupName || '未知群');
+    const gid = String(params.group_id ?? '');
+    if (withColor) {
+      head =
+        chalk.gray('[') +
+        chalk.gray('群聊:') +
+        chalk.magentaBright(gName) +
+        chalk.gray('(') +
+        chalk.yellowBright(gid) +
+        chalk.gray(')') +
+        chalk.gray(']');
+    } else {
+      head = `[群聊:${gName}(${gid})]`;
+    }
+  } else {
+    const peer = String(params.peerName || String(params.user_id ?? ''));
+    const uid = String(params.user_id ?? '');
+    if (withColor) {
+      head =
+        chalk.gray('[') +
+        chalk.gray('私聊:') +
+        chalk.blueBright(peer) +
+        chalk.gray('(') +
+        chalk.yellowBright(uid) +
+        chalk.gray(')') +
+        chalk.gray(']');
+    } else {
+      head = `[私聊:${peer}(${uid})]`;
+    }
+  }
+
+  const envMaxLength = process.env.MESSAGE_TEXT_MAX_LENGTH;
+  const defaultMax = params.plainMax ?? 80;
+  const maxLength = envMaxLength !== undefined ? Number(envMaxLength) : defaultMax;
+  const contentRaw = formatMessageInputQQ(params.message, { plainMax: maxLength }) || '';
+  const content = colorizeQQInline(contentRaw, withColor);
+
+  const actor = String(params.botName || '').trim() || '机器人';
+  const actorColored = withColor ? chalk.cyanBright(actor) : actor;
+  const actionTag = params.reply_to_message_id ? formatTag('回复', undefined, withColor, chalk.gray) : formatTag('发送', undefined, withColor, chalk.gray);
+  const replyTag = params.reply_to_message_id
+    ? formatTag('回复ID', String(params.reply_to_message_id), withColor, chalk.yellowBright)
+    : '';
+  const firstLine = head;
+  const secondLine = [actorColored, actionTag, replyTag, content].filter(Boolean).join(' ');
+  return secondLine ? `${firstLine}\n${secondLine}` : firstLine;
 }
 
 export function formatMessageCompact(

@@ -10,6 +10,8 @@ import { assertOk } from './ob11';
 import { extractReplyInfo, type ReplyInfo } from './utils/reply-parser';
 import { MessageStream, type FormattedMessage } from './stream';
 import { ensureLocalFile, isLocalPath } from './utils/fileCache';
+import { createLogger } from './logger';
+import { formatBotSendHuman } from './events';
 
 export type SDKInit =
   | { adapter: NapcatAdapter | NapcatReverseAdapter }
@@ -198,10 +200,47 @@ export type SdkInvoke = ((action: string, params?: any) => Promise<OneBotRespons
 
 export type { FormattedMessage };
 
+const log = createLogger(process.env.LOG_LEVEL as any || 'info');
+
 export function createSDK(init?: SDKInit): SdkInvoke {
   let cfg = loadConfig();
   let adapter: NapcatAdapter | NapcatReverseAdapter;
   let isReverse = false;
+
+  let selfName: string | undefined;
+  const groupNameCache = new Map<number, { name: string; ts: number }>();
+  const getSelfNameCached = async (): Promise<string | undefined> => {
+    if (selfName) return selfName;
+    try {
+      const info: any = await (fn as any).data?.('get_login_info');
+      const nickname = info?.nickname;
+      if (nickname && typeof nickname === 'string') {
+        selfName = nickname;
+        return nickname;
+      }
+    } catch {
+      // ignore
+    }
+    return selfName;
+  };
+
+  const getGroupNameCached = async (groupId: number | undefined): Promise<string | undefined> => {
+    if (!groupId || !Number.isFinite(groupId)) return undefined;
+    const now = Date.now();
+    const cached = groupNameCache.get(groupId);
+    if (cached && now - cached.ts < 10 * 60 * 1000) return cached.name;
+    try {
+      const resp: any = await (fn as any).data?.('get_group_info', { group_id: groupId, no_cache: false });
+      const name = resp?.group_name;
+      if (name && typeof name === 'string') {
+        groupNameCache.set(groupId, { name, ts: now });
+        return name;
+      }
+    } catch {
+      // ignore
+    }
+    return cached?.name;
+  };
 
   // 初始化适配器
   if (init && (init as any).adapter) {
@@ -332,30 +371,133 @@ export function createSDK(init?: SDKInit): SdkInvoke {
   };
 
   // 消息发送
+  const botSendLogEnabled = String(process.env.BOT_SEND_LOG ?? 'true').toLowerCase() !== 'false';
+
+  const getReturnedMessageId = (res: any): number | undefined => {
+    const mid = res?.data?.message_id;
+    const n = typeof mid === 'string' ? Number(mid) : mid;
+    return Number.isFinite(n) ? n : undefined;
+  };
+
+  const logBotSendBefore = (p: Parameters<typeof formatBotSendHuman>[0]) => {
+    if (!botSendLogEnabled) return;
+    try {
+      log.info(formatBotSendHuman({ ...p, withColor: true }));
+    } catch {
+      // ignore
+    }
+  };
+
+  const logBotSendAfter = async (messageId: number | undefined) => {
+    if (!botSendLogEnabled) return;
+    if (messageId === undefined) return;
+    const name = await getSelfNameCached();
+    log.info({ message_id: messageId }, `${name || '机器人'}消息已发送`);
+  };
+
   fn.send = {
-    private: (user_id, message) => adapter.sendPrivateMessage(user_id, message),
-    group: (group_id, message) => adapter.sendGroupMessage(group_id, message),
-    reply: (ev, message) => {
-      if (adapter instanceof NapcatAdapter && typeof adapter.sendReply === 'function') {
-        return adapter.sendReply(ev, message);
+    private: async (user_id, message) => {
+      const botName = await getSelfNameCached();
+      logBotSendBefore({ message_type: 'private', user_id, message, botName });
+      try {
+        const res = await adapter.sendPrivateMessage(user_id, message);
+        await logBotSendAfter(getReturnedMessageId(res));
+        return res;
+      } catch (err) {
+        log.error({ err, user_id }, '机器人私聊发送失败');
+        throw err;
       }
-      // 手动实现
-      if (ev.message_type === 'group' && ev.group_id) {
-        return adapter.sendGroupReply(ev.group_id, ev.message_id, message);
-      }
-      if (ev.message_type === 'private' && ev.user_id) {
-        return adapter.sendPrivateReply(ev.user_id, ev.message_id, message);
-      }
-      throw new Error('Unsupported event for reply');
     },
-    privateReply: (user_id, message_id, message) => 
-      adapter.sendPrivateReply(user_id, message_id, message),
-    groupReply: (group_id, message_id, message) => 
-      adapter.sendGroupReply(group_id, message_id, message),
-    forwardGroup: (group_id, messages) => 
-      adapter.sendGroupForwardMessage(group_id, messages),
-    forwardPrivate: (user_id, messages) => 
-      adapter.sendPrivateForwardMessage(user_id, messages),
+    group: async (group_id, message) => {
+      const [botName, groupName] = await Promise.all([getSelfNameCached(), getGroupNameCached(group_id)]);
+      logBotSendBefore({ message_type: 'group', group_id, message, botName, groupName });
+      try {
+        const res = await adapter.sendGroupMessage(group_id, message);
+        await logBotSendAfter(getReturnedMessageId(res));
+        return res;
+      } catch (err) {
+        log.error({ err, group_id }, '机器人群聊发送失败');
+        throw err;
+      }
+    },
+    reply: async (ev, message) => {
+      const message_type = ev.message_type;
+      const group_id = (ev as any).group_id as number | undefined;
+      const user_id = (ev as any).user_id as number | undefined;
+      const reply_to_message_id = (ev as any).message_id as number | undefined;
+      const [botName, groupName] = await Promise.all([getSelfNameCached(), getGroupNameCached(group_id)]);
+      logBotSendBefore({ message_type, group_id, user_id, reply_to_message_id, message, botName, groupName });
+      try {
+        const res = (adapter instanceof NapcatAdapter && typeof (adapter as any).sendReply === 'function')
+          ? await (adapter as any).sendReply(ev, message)
+          : (message_type === 'group' && group_id)
+            ? await adapter.sendGroupReply(group_id, ev.message_id, message)
+            : (message_type === 'private' && user_id)
+              ? await adapter.sendPrivateReply(user_id, ev.message_id, message)
+              : (() => { throw new Error('Unsupported event for reply'); })();
+        await logBotSendAfter(getReturnedMessageId(res));
+        return res;
+      } catch (err) {
+        log.error({ err, message_type, group_id, user_id, reply_to_message_id }, '机器人回复失败');
+        throw err;
+      }
+    },
+    privateReply: async (user_id, message_id, message) => {
+      const botName = await getSelfNameCached();
+      logBotSendBefore({ message_type: 'private', user_id, reply_to_message_id: message_id, message, botName });
+      try {
+        const res = await adapter.sendPrivateReply(user_id, message_id, message);
+        await logBotSendAfter(getReturnedMessageId(res));
+        return res;
+      } catch (err) {
+        log.error({ err, user_id, reply_to_message_id: message_id }, '机器人私聊回复失败');
+        throw err;
+      }
+    },
+    groupReply: async (group_id, message_id, message) => {
+      const [botName, groupName] = await Promise.all([getSelfNameCached(), getGroupNameCached(group_id)]);
+      logBotSendBefore({ message_type: 'group', group_id, reply_to_message_id: message_id, message, botName, groupName });
+      try {
+        const res = await adapter.sendGroupReply(group_id, message_id, message);
+        await logBotSendAfter(getReturnedMessageId(res));
+        return res;
+      } catch (err) {
+        log.error({ err, group_id, reply_to_message_id: message_id }, '机器人群聊回复失败');
+        throw err;
+      }
+    },
+    forwardGroup: async (group_id, messages) => {
+      if (botSendLogEnabled) {
+        const [botName, groupName] = await Promise.all([getSelfNameCached(), getGroupNameCached(group_id)]);
+        const actor = String(botName || '').trim() || '机器人';
+        log.info({ group_id, group_name: groupName, count: Array.isArray(messages) ? messages.length : 0 }, `${actor}发送合并转发(群)`);
+      }
+      try {
+        const res = await adapter.sendGroupForwardMessage(group_id, messages);
+        await logBotSendAfter(getReturnedMessageId(res));
+        return res;
+      } catch (err) {
+        const actor = String((await getSelfNameCached()) || '').trim() || '机器人';
+        log.error({ err, group_id }, `${actor}合并转发发送失败(群)`);
+        throw err;
+      }
+    },
+    forwardPrivate: async (user_id, messages) => {
+      if (botSendLogEnabled) {
+        const botName = await getSelfNameCached();
+        const actor = String(botName || '').trim() || '机器人';
+        log.info({ user_id, count: Array.isArray(messages) ? messages.length : 0 }, `${actor}发送合并转发(私)`);
+      }
+      try {
+        const res = await adapter.sendPrivateForwardMessage(user_id, messages);
+        await logBotSendAfter(getReturnedMessageId(res));
+        return res;
+      } catch (err) {
+        const actor = String((await getSelfNameCached()) || '').trim() || '机器人';
+        log.error({ err, user_id }, `${actor}合并转发发送失败(私)`);
+        throw err;
+      }
+    },
   };
 
   // 消息操作

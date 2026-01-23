@@ -1546,6 +1546,22 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
                   }).catch((e) => {
                     logger.debug(`PresetTeaching: 异步教导触发失败 ${groupId}`, { err: String(e) });
                   });
+
+                  try {
+                    const refreshed = historyManager.getConversationHistoryForContext(groupId, {
+                      recentPairs: contextPairsLimit,
+                      maxTokens: contextTokensLimit
+                    });
+                    if (Array.isArray(refreshed)) {
+                      historyConversations = refreshed;
+                      conversations = [{ role: 'system', content: systemContent }, ...historyConversations];
+                      logger.info(
+                        `ToolPreReply: 已写入历史并刷新上下文快照: ${groupId} history=${historyConversations.length} conv=${conversations.length}`
+                      );
+                    }
+                  } catch (e) {
+                    logger.debug(`ToolPreReply: 刷新上下文快照失败 ${groupId}`, { err: String(e) });
+                  }
                 }
               } catch (e) {
                 logger.debug('ToolPreReply: 保存预回复对话对失败', { err: String(e) });
