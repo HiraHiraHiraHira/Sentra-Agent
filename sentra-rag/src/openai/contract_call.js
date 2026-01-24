@@ -142,19 +142,21 @@ function buildUserInputXml({ task, lang, queryText, contextText, documentText })
 export async function requestContractXml(openai, policy, { task, queryText, contextText, documentText, lang }) {
   const model = getEnv('CHAT_MODEL', { defaultValue: 'gpt-4o-mini' });
   const temperature = getEnvNumber('CHAT_TEMPERATURE', { defaultValue: 0 });
-  const max_tokens = getEnvNumber('CHAT_MAX_OUTPUT_TOKENS', { defaultValue: 2000 });
+  const maxTokens = getEnvNumber('CHAT_MAX_OUTPUT_TOKENS', { defaultValue: 2000 });
 
   const inputXml = buildUserInputXml({ task, lang, queryText, contextText, documentText });
 
-  const resp = await openai.chat.completions.create({
+  const req = {
     model,
     temperature,
-    max_tokens,
     messages: [
       { role: 'system', content: `${policy.text}\n\n${CONTRACT_HARDENING}\n\n${CONTRACT_V4_PROCEDURE}` },
       { role: 'user', content: inputXml },
     ],
-  });
+  };
+  if (maxTokens !== -1) req.max_tokens = maxTokens;
+
+  const resp = await openai.chat.completions.create(req);
 
   const xml = extractAssistantText(resp);
   const echoInput = getEnvBoolean('CONTRACT_ECHO_INPUT', { defaultValue: true });
@@ -164,7 +166,7 @@ export async function requestContractXml(openai, policy, { task, queryText, cont
 export async function requestContractXmlRepair(openai, policy, { badXml, errorReport, lang }) {
   const model = getEnv('CHAT_MODEL', { defaultValue: 'gpt-4o-mini' });
   const temperature = 0;
-  const max_tokens = getEnvNumber('CHAT_MAX_OUTPUT_TOKENS', { defaultValue: 2000 });
+  const maxTokens = getEnvNumber('CHAT_MAX_OUTPUT_TOKENS', { defaultValue: 2000 });
 
   const user = [
     '<sentra-repair>',
@@ -178,15 +180,17 @@ export async function requestContractXmlRepair(openai, policy, { badXml, errorRe
     '</sentra-repair>',
   ].join('\n');
 
-  const resp = await openai.chat.completions.create({
+  const req = {
     model,
     temperature,
-    max_tokens,
     messages: [
       { role: 'system', content: `${policy.text}\n\n${CONTRACT_HARDENING}\n\n${CONTRACT_V4_PROCEDURE}` },
       { role: 'user', content: user },
     ],
-  });
+  };
+  if (maxTokens !== -1) req.max_tokens = maxTokens;
+
+  const resp = await openai.chat.completions.create(req);
 
   return extractAssistantText(resp);
 }
