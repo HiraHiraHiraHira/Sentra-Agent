@@ -42,10 +42,24 @@ function commandExists(cmd) {
   }
 }
 
+function resolvePm2Bin() {
+  const isWin = process.platform === 'win32';
+  if (commandExists('pm2')) return 'pm2';
+  const local = path.join(__dirname, '..', 'node_modules', '.bin', isWin ? 'pm2.cmd' : 'pm2');
+  if (fs.existsSync(local) && commandExists(local)) return local;
+  return 'pm2';
+}
+
+function pm2Available() {
+  const pm2Bin = resolvePm2Bin();
+  if (pm2Bin === 'pm2') return commandExists('pm2');
+  return fs.existsSync(pm2Bin) && commandExists(pm2Bin);
+}
+
 function chooseMode(preferred) {
   if (preferred && preferred !== 'auto') return preferred;
   // Default: prefer plain Node.js; PM2 is only used when explicitly requested
-  return 'node';
+  return pm2Available() ? 'pm2' : 'node';
 }
 
 function quotePath(p) {
@@ -65,9 +79,9 @@ function ensureLogsDir() {
   try { fs.mkdirSync(logsDir, { recursive: true }); } catch { }
 }
 
-function pm2ProcessExists(name) {
+function pm2ProcessExists(pm2Bin, name) {
   try {
-    const out = execSync('pm2 jlist', { stdio: ['ignore', 'pipe', 'ignore'], shell: true }).toString();
+    const out = execSync(`${JSON.stringify(pm2Bin)} jlist`, { stdio: ['ignore', 'pipe', 'ignore'], shell: true }).toString();
     const list = JSON.parse(out);
     return Array.isArray(list) && list.some((p) => p.name === name);
   } catch {
@@ -76,59 +90,66 @@ function pm2ProcessExists(name) {
 }
 
 async function runPm2(cmd, opts) {
+  const pm2Bin = resolvePm2Bin();
+  if (!commandExists(pm2Bin)) throw new Error('pm2 not found (neither global PATH nor local node_modules/.bin)');
   ensureLogsDir();
   console.log(boxen(chalk.bold.blue(`PM2 Manager: ${cmd}`), { padding: 1, borderStyle: 'round' }));
 
   switch (cmd) {
     case 'start': {
-      const exists = pm2ProcessExists(appName);
+      const exists = pm2ProcessExists(pm2Bin, appName);
       if (!fs.existsSync(ecosystem)) throw new Error(`ecosystem file not found: ${ecosystem}`);
       if (exists) {
-        console.log(chalk.yellow('Process already exists, restarting...'));
-        const args = ['restart', quotePath(ecosystem)];
-        if (opts.env) args.push('--env', opts.env);
-        await run('pm2', args, { cwd: repoRoot });
+        console.log(chalk.yellow('Process already exists, deleting and re-creating...'));
+        await run(pm2Bin, ['delete', appName], { cwd: repoRoot });
       } else {
         console.log(chalk.green('Starting new process...'));
-        const args = ['start', quotePath(ecosystem)];
-        if (opts.env) args.push('--env', opts.env);
-        await run('pm2', args, { cwd: repoRoot });
       }
-      if (opts.logs) await run('pm2', ['logs', appName], { cwd: repoRoot });
+
+      const args = ['start', quotePath(ecosystem), '--only', appName];
+      if (opts.env) args.push('--env', opts.env);
+      await run(pm2Bin, args, { cwd: repoRoot });
+      if (opts.logs) await run(pm2Bin, ['logs', appName], { cwd: repoRoot });
       break;
     }
     case 'stop':
-      await run('pm2', ['stop', appName], { cwd: repoRoot });
+      await run(pm2Bin, ['stop', appName], { cwd: repoRoot });
       break;
     case 'restart': {
       if (!fs.existsSync(ecosystem)) throw new Error(`ecosystem file not found: ${ecosystem}`);
-      if (opts.env) {
-        await run('pm2', ['restart', quotePath(ecosystem), '--env', opts.env], { cwd: repoRoot });
-      } else {
-        await run('pm2', ['restart', appName, '--update-env'], { cwd: repoRoot });
+      console.log(chalk.yellow('Re-creating process to ensure environment is refreshed...'));
+      if (pm2ProcessExists(pm2Bin, appName)) {
+        await run(pm2Bin, ['delete', appName], { cwd: repoRoot });
       }
+      const args = ['start', quotePath(ecosystem), '--only', appName];
+      if (opts.env) args.push('--env', opts.env);
+      await run(pm2Bin, args, { cwd: repoRoot });
+      if (opts.logs) await run(pm2Bin, ['logs', appName], { cwd: repoRoot });
       break;
     }
     case 'reload': {
       if (!fs.existsSync(ecosystem)) throw new Error(`ecosystem file not found: ${ecosystem}`);
-      if (opts.env) {
-        await run('pm2', ['reload', quotePath(ecosystem), '--env', opts.env], { cwd: repoRoot });
-      } else {
-        await run('pm2', ['reload', appName, '--update-env'], { cwd: repoRoot });
+      console.log(chalk.yellow('Re-creating process to ensure environment is refreshed...'));
+      if (pm2ProcessExists(pm2Bin, appName)) {
+        await run(pm2Bin, ['delete', appName], { cwd: repoRoot });
       }
+      const args = ['start', quotePath(ecosystem), '--only', appName];
+      if (opts.env) args.push('--env', opts.env);
+      await run(pm2Bin, args, { cwd: repoRoot });
+      if (opts.logs) await run(pm2Bin, ['logs', appName], { cwd: repoRoot });
       break;
     }
     case 'delete':
-      await run('pm2', ['delete', appName], { cwd: repoRoot });
+      await run(pm2Bin, ['delete', appName], { cwd: repoRoot });
       break;
     case 'logs':
-      await run('pm2', ['logs', appName], { cwd: repoRoot });
+      await run(pm2Bin, ['logs', appName], { cwd: repoRoot });
       break;
     case 'status':
-      await run('pm2', ['status'], { cwd: repoRoot });
+      await run(pm2Bin, ['status'], { cwd: repoRoot });
       break;
     case 'monit':
-      await run('pm2', ['monit'], { cwd: repoRoot });
+      await run(pm2Bin, ['monit'], { cwd: repoRoot });
       break;
   }
 }

@@ -198,14 +198,13 @@ export async function scriptRoutes(fastify: FastifyInstance) {
         Params: { id: string };
     }>('/api/scripts/kill/:id', async (request) => {
         const { id } = request.params;
-        const killed = scriptRunner.killProcess(id);
+        const result = scriptRunner.killProcess(id);
 
-        if (!killed) {
-            // If process not found, consider it already terminated
-            return { success: true, message: 'Process already terminated or not found' };
+        if (!result.success) {
+            return { success: false, message: result.message, pm2: result.pm2 };
         }
 
-        return { success: true, message: 'Process terminated' };
+        return { success: true, message: result.message, pm2: result.pm2 };
     });
     // Send input to script process
     fastify.post<{

@@ -4,8 +4,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import '@xterm/xterm/css/xterm.css';
-import styles from './TerminalWindow.module.css';
+import styles from './TerminalExecutorWindow.module.css';
 import { storage } from '../utils/storage';
+import { getTerminalSnapshot, removeTerminalSnapshot, setTerminalSnapshot } from '../utils/terminalSnapshotDb';
 import { fontFiles } from 'virtual:sentra-fonts';
 
 const TERMINAL_FONT_FALLBACK = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "DejaVu Sans Mono", "Noto Sans Mono", "Cascadia Mono", "Courier New", monospace';
@@ -71,39 +72,18 @@ export const TerminalExecutorWindow: React.FC<TerminalExecutorWindowProps> = ({ 
     let openRaf: number | null = null;
     let wsStarted = false;
 
+    const now0 = Date.now();
+
     const cursorKey = `sentra_exec_terminal_cursor:${String(sessionId || '')}`;
     const snapshotKey = `sentra_exec_terminal_snapshot:${String(sessionId || '')}`;
     const tsKey = `sentra_exec_terminal_persist_ts:${String(sessionId || '')}`;
-    const restoredTsSession = storage.getNumber(tsKey, { backend: 'session', fallback: NaN });
-    const restoredTsLocal = storage.getNumber(tsKey, { backend: 'local', fallback: NaN });
-    const restoredTs = Number.isFinite(restoredTsSession) ? restoredTsSession : (Number.isFinite(restoredTsLocal) ? restoredTsLocal : 0);
-    const isFresh = restoredTs > 0 && Date.now() - restoredTs <= TERMINAL_PERSIST_TTL_MS;
-    const cursorSession = storage.getNumber(cursorKey, { backend: 'session', fallback: NaN });
-    const cursorLocal = storage.getNumber(cursorKey, { backend: 'local', fallback: NaN });
-    const restoredCursor = isFresh
-      ? (Number.isFinite(cursorSession) ? cursorSession : (Number.isFinite(cursorLocal) ? cursorLocal : 0))
-      : 0;
-    const snapSession = storage.getString(snapshotKey, { backend: 'session', fallback: '' });
-    const snapLocal = storage.getString(snapshotKey, { backend: 'local', fallback: '' });
-    const restoredSnapshot = isFresh
-      ? (snapSession || snapLocal)
-      : '';
-
-    if (!isFresh && restoredTs > 0) {
-      try { storage.remove(tsKey, 'session'); } catch { }
-      try { storage.remove(cursorKey, 'session'); } catch { }
-      try { storage.remove(snapshotKey, 'session'); } catch { }
-      try { storage.remove(tsKey, 'local'); } catch { }
-      try { storage.remove(cursorKey, 'local'); } catch { }
-      try { storage.remove(snapshotKey, 'local'); } catch { }
-    }
 
     stoppedRef.current = false;
     openedRef.current = false;
     initSeenRef.current = false;
-    cursorRef.current = restoredCursor;
-    lastSavedCursorRef.current = restoredCursor;
-    snapshotRef.current = restoredSnapshot;
+    cursorRef.current = 0;
+    lastSavedCursorRef.current = 0;
+    snapshotRef.current = '';
 
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
@@ -196,12 +176,13 @@ export const TerminalExecutorWindow: React.FC<TerminalExecutorWindowProps> = ({ 
       }
       snapshotSavedAtRef.current = now;
       lastSavedCursorRef.current = cursor;
-      try { storage.setNumber(tsKey, now, 'session'); } catch { }
-      try { storage.setNumber(cursorKey, cursor, 'session'); } catch { }
-      try { storage.setString(snapshotKey, snapshotRef.current, 'session'); } catch { }
-      try { storage.setNumber(tsKey, now, 'local'); } catch { }
-      try { storage.setNumber(cursorKey, cursor, 'local'); } catch { }
-      try { storage.setString(snapshotKey, snapshotRef.current, 'local'); } catch { }
+      void setTerminalSnapshot({
+        id: String(sessionId || ''),
+        kind: 'exec',
+        ts: now,
+        cursor,
+        snapshot: String(snapshotRef.current || ''),
+      });
     };
 
     const canFitNow = () => {
@@ -232,9 +213,69 @@ export const TerminalExecutorWindow: React.FC<TerminalExecutorWindowProps> = ({ 
       return next;
     };
 
-    if (restoredSnapshot) {
-      safeWrite(restoredSnapshot);
-    }
+    const restorePromise = (async () => {
+      const sid = String(sessionId || '');
+      let restoredCursor = 0;
+      let restoredSnapshot = '';
+      let restoredTs = 0;
+
+      const fromDb = await getTerminalSnapshot('exec', sid);
+      if (fromDb && fromDb.ts > 0 && now0 - fromDb.ts <= TERMINAL_PERSIST_TTL_MS) {
+        restoredCursor = Number(fromDb.cursor || 0);
+        restoredSnapshot = String(fromDb.snapshot || '');
+        restoredTs = Number(fromDb.ts || 0);
+      } else if (fromDb) {
+        try { await removeTerminalSnapshot('exec', sid); } catch { }
+      }
+
+      if (!restoredTs) {
+        const restoredTsSession = storage.getNumber(tsKey, { backend: 'session', fallback: NaN });
+        const restoredTsLocal = storage.getNumber(tsKey, { backend: 'local', fallback: NaN });
+        const legacyTs = Number.isFinite(restoredTsSession) ? restoredTsSession : (Number.isFinite(restoredTsLocal) ? restoredTsLocal : 0);
+        const legacyFresh = legacyTs > 0 && now0 - legacyTs <= TERMINAL_PERSIST_TTL_MS;
+        if (legacyFresh) {
+          const cursorSession = storage.getNumber(cursorKey, { backend: 'session', fallback: NaN });
+          const cursorLocal = storage.getNumber(cursorKey, { backend: 'local', fallback: NaN });
+          restoredCursor = Number.isFinite(cursorSession)
+            ? cursorSession
+            : (Number.isFinite(cursorLocal) ? cursorLocal : 0);
+          const snapSession = storage.getString(snapshotKey, { backend: 'session', fallback: '' });
+          const snapLocal = storage.getString(snapshotKey, { backend: 'local', fallback: '' });
+          restoredSnapshot = snapSession || snapLocal;
+          restoredTs = legacyTs;
+          void setTerminalSnapshot({ id: sid, kind: 'exec', ts: legacyTs, cursor: restoredCursor, snapshot: restoredSnapshot });
+          try { storage.remove(tsKey, 'session'); } catch { }
+          try { storage.remove(cursorKey, 'session'); } catch { }
+          try { storage.remove(snapshotKey, 'session'); } catch { }
+          try { storage.remove(tsKey, 'local'); } catch { }
+          try { storage.remove(cursorKey, 'local'); } catch { }
+          try { storage.remove(snapshotKey, 'local'); } catch { }
+        }
+        if (!legacyFresh && legacyTs > 0) {
+          try { storage.remove(tsKey, 'session'); } catch { }
+          try { storage.remove(cursorKey, 'session'); } catch { }
+          try { storage.remove(snapshotKey, 'session'); } catch { }
+          try { storage.remove(tsKey, 'local'); } catch { }
+          try { storage.remove(cursorKey, 'local'); } catch { }
+          try { storage.remove(snapshotKey, 'local'); } catch { }
+        }
+      }
+
+      if (disposed || stoppedRef.current) return;
+      cursorRef.current = Number.isFinite(Number(restoredCursor)) ? Number(restoredCursor) : 0;
+      lastSavedCursorRef.current = cursorRef.current;
+      snapshotRef.current = String(restoredSnapshot || '');
+      if (snapshotRef.current) {
+        safeWrite(snapshotRef.current);
+      }
+
+      try { storage.remove(tsKey, 'session'); } catch { }
+      try { storage.remove(cursorKey, 'session'); } catch { }
+      try { storage.remove(snapshotKey, 'session'); } catch { }
+      try { storage.remove(tsKey, 'local'); } catch { }
+      try { storage.remove(cursorKey, 'local'); } catch { }
+      try { storage.remove(snapshotKey, 'local'); } catch { }
+    })();
 
     function getToken() {
       return (
@@ -317,6 +358,7 @@ export const TerminalExecutorWindow: React.FC<TerminalExecutorWindowProps> = ({ 
         if (msg?.type === 'error') {
           const m = String(msg?.message || '');
           if (m.toLowerCase().includes('not found')) {
+            try { void removeTerminalSnapshot('exec', String(sessionId || '')); } catch { }
             try { storage.remove(tsKey, 'session'); } catch { }
             try { storage.remove(cursorKey, 'session'); } catch { }
             try { storage.remove(snapshotKey, 'session'); } catch { }
@@ -359,8 +401,12 @@ export const TerminalExecutorWindow: React.FC<TerminalExecutorWindowProps> = ({ 
       }
 
       if (!wsStarted) {
-        wsStarted = true;
-        connect(0);
+        void restorePromise.then(() => {
+          if (disposed || stoppedRef.current) return;
+          if (wsStarted) return;
+          wsStarted = true;
+          connect(0);
+        });
       }
 
       // Force a small write to trigger initial render even before any PTY output.

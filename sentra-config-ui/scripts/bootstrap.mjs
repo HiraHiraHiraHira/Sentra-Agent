@@ -175,6 +175,46 @@ function choosePM(preferred) {
   throw new Error('No package manager found. Please install one or set PACKAGE_MANAGER in .env');
 }
 
+function buildGlobalPm2InstallArgs(pm) {
+  const v = String(pm || '').toLowerCase();
+  if (v === 'pnpm') return ['add', '-g', 'pm2@latest'];
+  if (v === 'yarn') return ['global', 'add', 'pm2@latest'];
+  if (v === 'bun') return ['add', '-g', 'pm2@latest'];
+  return ['install', '-g', 'pm2@latest'];
+}
+
+async function ensureGlobalPm2(pm, dryRun, registry) {
+  const spinner = ora(`Ensuring global pm2@latest (using ${pm})...`).start();
+  if (dryRun) {
+    spinner.info(chalk.yellow(`[DRY] ${pm} ${buildGlobalPm2InstallArgs(pm).join(' ')}`));
+    return;
+  }
+  try {
+    const extraEnv = {};
+    if (registry) {
+      extraEnv.npm_config_registry = registry;
+      extraEnv.NPM_CONFIG_REGISTRY = registry;
+    }
+    await run(pm, buildGlobalPm2InstallArgs(pm), repoRoot, extraEnv);
+    spinner.succeed(chalk.green('Global pm2 is ready'));
+  } catch (e) {
+    spinner.fail(chalk.yellow('Failed to install/upgrade global pm2 (continuing)'));
+    try {
+      if (pm !== 'npm' && commandExists('npm')) {
+        const extraEnv = {};
+        if (registry) {
+          extraEnv.npm_config_registry = registry;
+          extraEnv.NPM_CONFIG_REGISTRY = registry;
+        }
+        await run('npm', ['install', '-g', 'pm2@latest'], repoRoot, extraEnv);
+        console.log(chalk.green('Global pm2 installed via npm fallback'));
+      }
+    } catch {
+      console.log(chalk.gray('You can try manually: npm install -g pm2@latest'));
+    }
+  }
+}
+
 function resolveMirrorProfileDefaults() {
   const profile = String(process.env.MIRROR_PROFILE || '').toLowerCase();
   const isChina = profile === 'china' || profile === 'cn' || profile === 'tsinghua' || profile === 'npmmirror' || profile === 'taobao';
@@ -466,6 +506,8 @@ async function main() {
   const { pipIndexDefault } = resolveMirrorProfileDefaults();
   const resolvedPipIndex = (opts.pipIndex || pipIndexDefault || '').trim();
   const npmRegistry = resolveNpmRegistry();
+
+  await ensureGlobalPm2(pm, opts.dryRun, npmRegistry);
 
   if (opts.only === 'all' || opts.only === 'node') {
     await ensureNodeProjects(pm, opts.force, opts.dryRun, npmRegistry);

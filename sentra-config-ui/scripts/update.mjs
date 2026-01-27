@@ -55,6 +55,34 @@ function buildNodeInstallEnv(npmRegistry, extraEnv = {}) {
     return envOut;
 }
 
+function buildGlobalPm2InstallArgs(pm) {
+    const v = String(pm || '').toLowerCase();
+    if (v === 'pnpm') return ['add', '-g', 'pm2@latest'];
+    if (v === 'yarn') return ['global', 'add', 'pm2@latest'];
+    if (v === 'bun') return ['add', '-g', 'pm2@latest'];
+    return ['install', '-g', 'pm2@latest'];
+}
+
+async function ensureGlobalPm2(pm, npmRegistry) {
+    const spinner = ora(`[Node] Ensuring global pm2@latest (using ${pm})...`).start();
+    try {
+        const extraEnv = buildNodeInstallEnv(npmRegistry);
+        await execCommand(pm, buildGlobalPm2InstallArgs(pm), ROOT_DIR, extraEnv);
+        spinner.succeed('[Node] Global pm2 is ready');
+    } catch (e) {
+        spinner.fail('[Node] Failed to install/upgrade global pm2 (continuing)');
+        try {
+            if (pm !== 'npm' && commandExists('npm')) {
+                const extraEnv = buildNodeInstallEnv(npmRegistry);
+                await execCommand('npm', ['install', '-g', 'pm2@latest'], ROOT_DIR, extraEnv);
+                console.log(chalk.green('[Node] Global pm2 installed via npm fallback'));
+            }
+        } catch {
+            console.log(chalk.gray('You can try manually: npm install -g pm2@latest'));
+        }
+    }
+}
+
 function isDubiousOwnershipText(text) {
     const t = String(text || '');
     return /detected\s+dubious\s+ownership/i.test(t) || /safe\.directory/i.test(t);
@@ -726,6 +754,8 @@ async function update() {
         // Step 4: Execute Installations
         const npmRegistry = resolveNpmRegistry();
         const pm = choosePM(env.PACKAGE_MANAGER || 'auto');
+
+        await ensureGlobalPm2(pm, npmRegistry);
 
         if (installQueue.length > 0) {
             console.log(chalk.cyan(`\n📥 开始安装依赖（共 ${installQueue.length} 个目标）...\n`));

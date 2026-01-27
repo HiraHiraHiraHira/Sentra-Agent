@@ -6,6 +6,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import '@xterm/xterm/css/xterm.css';
 import styles from './TerminalWindow.module.css';
 import { storage } from '../utils/storage';
+import { getTerminalSnapshot, removeTerminalSnapshot, setTerminalSnapshot } from '../utils/terminalSnapshotDb';
 import { fontFiles } from 'virtual:sentra-fonts';
 
 const TERMINAL_FONT_FALLBACK = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "DejaVu Sans Mono", "Noto Sans Mono", "Cascadia Mono", "Courier New", monospace';
@@ -59,26 +60,15 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
         const cursorKey = `sentra_terminal_cursor:${String(processId || '')}`;
         const snapshotKey = `sentra_terminal_snapshot:${String(processId || '')}`;
         const tsKey = `sentra_terminal_persist_ts:${String(processId || '')}`;
-        const restoredTs =
-            storage.getNumber(tsKey, { backend: 'session', fallback: 0 }) ||
-            storage.getNumber(tsKey, { backend: 'local', fallback: 0 });
-        const isFresh = restoredTs > 0 && Date.now() - restoredTs <= TERMINAL_PERSIST_TTL_MS;
-        const cursorSession = storage.getNumber(cursorKey, { backend: 'session', fallback: NaN });
-        const cursorLocal = storage.getNumber(cursorKey, { backend: 'local', fallback: NaN });
-        const restoredCursor = isFresh
-            ? (Number.isFinite(cursorSession) ? cursorSession : (Number.isFinite(cursorLocal) ? cursorLocal : 0))
-            : 0;
-        const snapSession = storage.getString(snapshotKey, { backend: 'session', fallback: '' });
-        const snapLocal = storage.getString(snapshotKey, { backend: 'local', fallback: '' });
-        const restoredSnapshot = isFresh
-            ? (snapSession || snapLocal)
-            : '';
+
+        const now0 = Date.now();
+        outputCursorRef.current = 0;
+        lastSavedCursorRef.current = 0;
+        snapshotRef.current = '';
+        snapshotSavedAtRef.current = 0;
 
         stoppedRef.current = false;
         openedRef.current = false;
-        outputCursorRef.current = restoredCursor;
-        lastSavedCursorRef.current = restoredCursor;
-        snapshotRef.current = restoredSnapshot;
         disconnectedRef.current = false;
         reconnectAttemptRef.current = 0;
 
@@ -170,12 +160,13 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             }
             snapshotSavedAtRef.current = now;
             lastSavedCursorRef.current = cursor;
-            try { storage.setNumber(tsKey, now, 'session'); } catch { }
-            try { storage.setNumber(cursorKey, cursor, 'session'); } catch { }
-            try { storage.setString(snapshotKey, snapshotRef.current, 'session'); } catch { }
-            try { storage.setNumber(tsKey, now, 'local'); } catch { }
-            try { storage.setNumber(cursorKey, cursor, 'local'); } catch { }
-            try { storage.setString(snapshotKey, snapshotRef.current, 'local'); } catch { }
+            void setTerminalSnapshot({
+                id: String(processId || ''),
+                kind: 'script',
+                ts: now,
+                cursor,
+                snapshot: String(snapshotRef.current || ''),
+            });
         };
 
         const safeWrite = (data: string) => {
@@ -191,13 +182,10 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             }
         };
 
-        if (restoredSnapshot) {
-            safeWrite(restoredSnapshot);
-        }
-
         const canFitNow = () => {
             const el = terminalEl;
             if (!el) return false;
+
             const rect = el.getBoundingClientRect();
             if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return false;
             return rect.width >= 2 && rect.height >= 2;
@@ -463,11 +451,13 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
 
             if (alive === 'not_found') {
                 stoppedRef.current = true;
+
                 if (reconnectTimerRef.current) {
                     window.clearTimeout(reconnectTimerRef.current);
                     reconnectTimerRef.current = null;
                 }
                 cleanupEventSource();
+                try { await removeTerminalSnapshot('script', String(processId || '')); } catch { }
                 try { storage.remove(tsKey, 'session'); } catch { }
                 try { storage.remove(cursorKey, 'session'); } catch { }
                 try { storage.remove(snapshotKey, 'session'); } catch { }
@@ -556,13 +546,74 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
         window.addEventListener('online', handleOnline);
         document.addEventListener('visibilitychange', handleVisibility);
 
-        void connectEventSource('init');
+        void (async () => {
+            const pid = String(processId || '');
+            let restoredCursor = 0;
+            let restoredSnapshot = '';
+            let restoredTs = 0;
+
+            const fromDb = await getTerminalSnapshot('script', pid);
+            if (fromDb && fromDb.ts > 0 && now0 - fromDb.ts <= TERMINAL_PERSIST_TTL_MS) {
+                restoredCursor = Number(fromDb.cursor || 0);
+                restoredSnapshot = String(fromDb.snapshot || '');
+                restoredTs = Number(fromDb.ts || 0);
+            } else if (fromDb) {
+                try { await removeTerminalSnapshot('script', pid); } catch { }
+            }
+
+            if (!restoredTs) {
+                const legacyTs =
+                    storage.getNumber(tsKey, { backend: 'session', fallback: 0 }) ||
+                    storage.getNumber(tsKey, { backend: 'local', fallback: 0 });
+                const legacyFresh = legacyTs > 0 && now0 - legacyTs <= TERMINAL_PERSIST_TTL_MS;
+
+                if (legacyFresh) {
+                    const cursorSession = storage.getNumber(cursorKey, { backend: 'session', fallback: NaN });
+                    const cursorLocal = storage.getNumber(cursorKey, { backend: 'local', fallback: NaN });
+                    restoredCursor = Number.isFinite(cursorSession)
+                        ? cursorSession
+                        : (Number.isFinite(cursorLocal) ? cursorLocal : 0);
+                    const snapSession = storage.getString(snapshotKey, { backend: 'session', fallback: '' });
+                    const snapLocal = storage.getString(snapshotKey, { backend: 'local', fallback: '' });
+                    restoredSnapshot = snapSession || snapLocal;
+                    restoredTs = legacyTs;
+                    void setTerminalSnapshot({ id: pid, kind: 'script', ts: legacyTs, cursor: restoredCursor, snapshot: restoredSnapshot });
+                }
+
+                if (!legacyFresh && legacyTs > 0) {
+                    try { storage.remove(tsKey, 'session'); } catch { }
+                    try { storage.remove(cursorKey, 'session'); } catch { }
+                    try { storage.remove(snapshotKey, 'session'); } catch { }
+                    try { storage.remove(tsKey, 'local'); } catch { }
+                    try { storage.remove(cursorKey, 'local'); } catch { }
+                    try { storage.remove(snapshotKey, 'local'); } catch { }
+                }
+            }
+
+            if (disposed || stoppedRef.current) return;
+            outputCursorRef.current = Number.isFinite(Number(restoredCursor)) ? Number(restoredCursor) : 0;
+            lastSavedCursorRef.current = outputCursorRef.current;
+            snapshotRef.current = String(restoredSnapshot || '');
+            if (snapshotRef.current) {
+                safeWrite(snapshotRef.current);
+            }
+
+            try { storage.remove(tsKey, 'session'); } catch { }
+            try { storage.remove(cursorKey, 'session'); } catch { }
+            try { storage.remove(snapshotKey, 'session'); } catch { }
+            try { storage.remove(tsKey, 'local'); } catch { }
+            try { storage.remove(cursorKey, 'local'); } catch { }
+            try { storage.remove(snapshotKey, 'local'); } catch { }
+
+            void connectEventSource('init');
+        })();
 
         return () => {
             disposed = true;
             stoppedRef.current = true;
             openedRef.current = false;
             persistState(true);
+
             if (openRaf != null) {
                 cancelAnimationFrame(openRaf);
                 openRaf = null;

@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { EventEmitter } from 'events';
 import path from 'path';
 import os from 'os';
@@ -32,15 +32,103 @@ function commandExists(cmd: string): boolean {
     }
 }
 
-function resolveSentimentRunner(runtimeEnv: Record<string, string>): 'uv' | 'python' {
-    const prefer = (runtimeEnv.SENTRA_EMO_RUNNER || process.env.SENTRA_EMO_RUNNER || 'auto').toString().toLowerCase();
-    const hasUv = commandExists('uv');
+function resolvePm2Bin(): string {
+    const isWin = os.platform() === 'win32';
+    if (commandExists('pm2')) return 'pm2';
+    const local = path.join(process.cwd(), 'node_modules', '.bin', isWin ? 'pm2.cmd' : 'pm2');
+    if (fs.existsSync(local)) return local;
+    return 'pm2';
+}
 
-    if (prefer === 'uv') return hasUv ? 'uv' : 'python';
-    if (prefer === 'python') return 'python';
+function resolveShell(): string | undefined {
+    return os.platform() === 'win32' ? 'cmd.exe' : undefined;
+}
 
-    // auto: prefer uv when available, otherwise fall back to python
-    return hasUv ? 'uv' : 'python';
+function pm2Available(): boolean {
+    try {
+        const pm2Bin = resolvePm2Bin();
+        if (pm2Bin === 'pm2') return commandExists('pm2');
+        return fs.existsSync(pm2Bin);
+    } catch {
+        return false;
+    }
+}
+
+type Pm2DeleteResult = {
+    ok: boolean;
+    alreadyGone?: boolean;
+    message?: string;
+};
+
+function runPm2(args: string[]): { status: number | null; stdout: string; stderr: string; error?: string } {
+    const pm2Bin = resolvePm2Bin();
+    const isWin = os.platform() === 'win32';
+    const needsShell = isWin && (pm2Bin === 'pm2' || pm2Bin.toLowerCase().endsWith('.cmd') || pm2Bin.toLowerCase().endsWith('.bat'));
+    try {
+        const r = spawnSync(pm2Bin, args, {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            shell: needsShell ? (resolveShell() || true) : false,
+        });
+        return {
+            status: r.status,
+            stdout: String(r.stdout || ''),
+            stderr: String(r.stderr || ''),
+            error: r.error ? String(r.error?.message || r.error) : undefined,
+        };
+    } catch (e: any) {
+        return {
+            status: null,
+            stdout: '',
+            stderr: '',
+            error: String(e?.message || e),
+        };
+    }
+}
+
+function pm2HasApp(name: string): boolean {
+    try {
+        const r = runPm2(['jlist']);
+        if (r.status !== 0) return false;
+        const list = JSON.parse(String(r.stdout || ''));
+        if (!Array.isArray(list)) return false;
+        return list.some((p: any) => p && p.name === name);
+    } catch {
+        return false;
+    }
+}
+
+function deletePm2ProcessByName(appName: 'sentra-agent' | 'sentra-napcat' | 'sentra-emo'): Pm2DeleteResult {
+    if (!pm2Available()) {
+        return { ok: false, message: 'pm2 not available' };
+    }
+
+    const r = runPm2(['delete', appName]);
+    const combined = `${r.stdout}\n${r.stderr}\n${r.error || ''}`.toLowerCase();
+    const notFound = combined.includes('not found') || combined.includes('process or namespace not found');
+    if (r.status === 0 || notFound) {
+        // Verify: avoid false positives on Windows/cross-env situations.
+        const stillThere = pm2HasApp(appName);
+        if (stillThere) {
+            const msg = `pm2 delete reported success but process still exists: ${appName}`;
+            console.error('[ScriptRunner] Failed to delete PM2 process:', msg);
+            return { ok: false, message: msg };
+        }
+        console.log(`[ScriptRunner] Deleted PM2 process: ${appName}${notFound ? ' (already gone)' : ''}`);
+        return { ok: true, alreadyGone: notFound };
+    }
+
+    const msg = `pm2 delete ${appName} failed (status=${r.status ?? 'null'})\n${r.stdout}${r.stderr}${r.error ? `\n${r.error}` : ''}`.trim();
+    console.error('[ScriptRunner] Failed to delete PM2 process:', msg);
+    return { ok: false, message: msg };
+}
+
+function deletePm2ByProcessId(processId: string): Pm2DeleteResult {
+    const id = String(processId || '');
+    // Only allow deletion of our own known PM2 app names.
+    if (id.startsWith('start-')) return deletePm2ProcessByName('sentra-agent');
+    if (id.startsWith('napcat-')) return deletePm2ProcessByName('sentra-napcat');
+    if (id.startsWith('sentiment-')) return deletePm2ProcessByName('sentra-emo');
+    return { ok: false, message: 'unknown process id prefix' };
 }
 
 export class ScriptRunner {
@@ -97,53 +185,19 @@ export class ScriptRunner {
 
         let proc;
         const windowsHide = os.platform() === 'win32';
-        if (scriptName === 'sentiment') {
-            // Special handling for Sentra Emo (Python FastAPI service)
-            const scriptPath = 'run.py';
-            // Assuming sentra-config-ui is in the root, so sentra-emo is a sibling
-            const cwd = path.join(process.cwd(), '..', 'sentra-emo');
-
-            const runner = resolveSentimentRunner(runtimeEnv);
-            const baseEnv = {
+        // Standard node scripts (sentiment is also wrapped as a node script to manage PM2 lifecycle)
+        const scriptPath = path.join(process.cwd(), 'scripts', `${scriptName}.mjs`);
+        proc = spawn('node', [scriptPath, ...args], {
+            cwd: process.cwd(),
+            env: {
                 ...process.env,
                 ...runtimeEnv,
                 FORCE_COLOR: '3',
-                CLICOLOR_FORCE: '1',
                 TERM: 'xterm-256color',
                 COLORTERM: 'truecolor',
-                PYTHONUNBUFFERED: '1',
-            };
-
-            if (runner === 'uv') {
-                // Prefer uv when available: uv run python run.py [...args]
-                proc = spawn('uv', ['run', 'python', scriptPath, ...args], {
-                    cwd,
-                    env: baseEnv,
-                    windowsHide,
-                });
-            } else {
-                // Fallback: plain Python
-                proc = spawn('python', [scriptPath, ...args], {
-                    cwd,
-                    env: baseEnv,
-                    windowsHide,
-                });
-            }
-        } else {
-            // Standard node scripts
-            const scriptPath = path.join(process.cwd(), 'scripts', `${scriptName}.mjs`);
-            proc = spawn('node', [scriptPath, ...args], {
-                cwd: process.cwd(),
-                env: {
-                    ...process.env,
-                    ...runtimeEnv,
-                    FORCE_COLOR: '3',
-                    TERM: 'xterm-256color',
-                    COLORTERM: 'truecolor',
-                },
-                windowsHide,
-            });
-        }
+            },
+            windowsHide,
+        });
 
         const isPm2Mode = scriptName === 'start' && (() => {
             const modeEq = args.find((a) => a.startsWith('--mode='));
@@ -363,12 +417,28 @@ export class ScriptRunner {
         return this.processes.get(id);
     }
 
-    killProcess(id: string): boolean {
+    killProcess(id: string): { success: boolean; message: string; pm2?: Pm2DeleteResult } {
         const record = this.processes.get(id);
-        if (!record || record.exitCode !== null) return false;
+        if (!record || record.exitCode !== null) {
+            // The wrapper record may be missing (UI refresh / server restart / GC) while PM2 is still running.
+            // Fall back to a safe, scoped PM2 delete based on processId prefix.
+            const pm2 = deletePm2ByProcessId(id);
+            return {
+                success: pm2.ok,
+                pm2,
+                message: pm2.ok ? 'PM2 process deleted' : (pm2.message || 'Failed to delete PM2 process'),
+            };
+        }
 
         const pid = record.process.pid;
-        if (!pid) return false;
+        if (!pid) {
+            const pm2 = deletePm2ByProcessId(id);
+            return {
+                success: pm2.ok,
+                pm2,
+                message: pm2.ok ? 'PM2 process deleted' : (pm2.message || 'Failed to delete PM2 process'),
+            };
+        }
 
         try {
             // Special handling for PM2-managed start script
@@ -380,16 +450,33 @@ export class ScriptRunner {
                     try { process.kill(pid, 'SIGTERM'); } catch { }
                 }
 
-                // If pm2 is installed, also delete any lingering PM2 process
-                if (record.isPm2Mode && commandExists('pm2')) {
-                    try {
-                        execSync('pm2 delete sentra-agent', { stdio: 'ignore' });
-                        console.log('[ScriptRunner] Deleted PM2 process: sentra-agent');
-                    } catch (pm2Error) {
-                        console.error('[ScriptRunner] Failed to delete PM2 process:', pm2Error);
-                        // Continue anyway since wrapper is killed
-                    }
+                // Always attempt to delete the scoped PM2 process. If it doesn't exist, it's a no-op.
+                const pm2 = deletePm2ProcessByName('sentra-agent');
+                return { success: pm2.ok, pm2, message: pm2.ok ? 'Process terminated (PM2 deleted)' : (pm2.message || 'Wrapper terminated but PM2 delete failed') };
+            } else if (record.name === 'napcat') {
+                if (os.platform() === 'win32') {
+                    execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+                } else {
+                    try { process.kill(pid, 'SIGTERM'); } catch { }
+                    setTimeout(() => {
+                        try { process.kill(pid, 'SIGKILL'); } catch { }
+                    }, 500);
                 }
+
+                const pm2 = deletePm2ProcessByName('sentra-napcat');
+                return { success: pm2.ok, pm2, message: pm2.ok ? 'Process terminated (PM2 deleted)' : (pm2.message || 'Wrapper terminated but PM2 delete failed') };
+            } else if (record.name === 'sentiment') {
+                if (os.platform() === 'win32') {
+                    execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+                } else {
+                    try { process.kill(pid, 'SIGTERM'); } catch { }
+                    setTimeout(() => {
+                        try { process.kill(pid, 'SIGKILL'); } catch { }
+                    }, 500);
+                }
+
+                const pm2 = deletePm2ProcessByName('sentra-emo');
+                return { success: pm2.ok, pm2, message: pm2.ok ? 'Process terminated (PM2 deleted)' : (pm2.message || 'Wrapper terminated but PM2 delete failed') };
             } else {
                 // Normal process termination for other scripts
                 if (os.platform() === 'win32') {
@@ -400,10 +487,10 @@ export class ScriptRunner {
                         try { process.kill(pid, 'SIGKILL'); } catch { }
                     }, 500);
                 }
+                return { success: true, message: 'Process terminated' };
             }
-            return true;
         } catch {
-            return false;
+            return { success: false, message: 'Failed to terminate process' };
         }
     }
 
