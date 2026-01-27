@@ -388,7 +388,8 @@ export function parseSendFusionFromSentraTools(text) {
 const ResourceSchema = z.object({
   type: z.enum(['image', 'video', 'audio', 'file', 'link']),
   source: z.string(),
-  caption: z.string().optional()
+  caption: z.string().optional(),
+  segment_index: z.number().int().positive().optional()
 });
 
 const SentraResponseSchema = z.object({
@@ -692,9 +693,12 @@ export function parseSentraResponse(response) {
         const type = unescapeXml(getTextNode(it?.type).trim());
         const source = unescapeXml(getTextNode(it?.source).trim());
         const caption = unescapeXml(getTextNode(it?.caption).trim());
+        const segRaw = unescapeXml(getTextNode(it?.segment_index).trim());
+        const seg = segRaw && /^\d+$/.test(segRaw) ? parseInt(segRaw, 10) : null;
         if (!type || !source) return null;
         const r = { type, source };
         if (caption) r.caption = caption;
+        if (seg && Number.isFinite(seg) && seg > 0) r.segment_index = seg;
         return ResourceSchema.parse(r);
       }).filter(Boolean);
     } catch {}
@@ -731,9 +735,12 @@ export function parseSentraResponse(response) {
       const eb = parsed.emoji;
       const source = unescapeXml(getTextNode(eb?.source).trim());
       const caption = unescapeXml(getTextNode(eb?.caption).trim());
+      const segRaw = unescapeXml(getTextNode(eb?.segment_index).trim());
+      const seg = segRaw && /^\d+$/.test(segRaw) ? parseInt(segRaw, 10) : null;
       if (source) {
         emoji = { source };
         if (caption) emoji.caption = caption;
+        if (seg && Number.isFinite(seg) && seg > 0) emoji.segment_index = seg;
       }
     } catch {}
 
@@ -831,6 +838,8 @@ export function parseSentraResponse(response) {
           const type = unescapeXml((extractXMLTag(resourceXML, 'type') || '').trim());
           const source = unescapeXml((extractXMLTag(resourceXML, 'source') || '').trim());
           const caption = unescapeXml((extractXMLTag(resourceXML, 'caption') || '').trim());
+          const segRaw = unescapeXml((extractXMLTag(resourceXML, 'segment_index') || '').trim());
+          const seg = segRaw && /^\d+$/.test(segRaw) ? parseInt(segRaw, 10) : null;
           
           if (!type || !source) {
             logger.warn(`resource[${idx}] 缺少必需字段`);
@@ -839,6 +848,7 @@ export function parseSentraResponse(response) {
           
           const resource = { type, source };
           if (caption) resource.caption = caption;
+          if (seg && Number.isFinite(seg) && seg > 0) resource.segment_index = seg;
           
           return ResourceSchema.parse(resource);
         } catch (e) {
@@ -893,10 +903,13 @@ export function parseSentraResponse(response) {
     try {
       const source = unescapeXml((extractXMLTag(emojiBlock, 'source') || '').trim());
       const caption = unescapeXml((extractXMLTag(emojiBlock, 'caption') || '').trim());
+      const segRaw = unescapeXml((extractXMLTag(emojiBlock, 'segment_index') || '').trim());
+      const seg = segRaw && /^\d+$/.test(segRaw) ? parseInt(segRaw, 10) : null;
 
       if (source) {
         emoji = { source };
         if (caption) emoji.caption = caption;
+        if (seg && Number.isFinite(seg) && seg > 0) emoji.segment_index = seg;
         logger.debug(`找到 <emoji> 标签: ${source.slice(0, 60)}`);
       } else {
         logger.warn('<emoji> 标签缺少 <source> 字段');

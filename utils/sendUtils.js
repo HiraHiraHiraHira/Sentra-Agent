@@ -30,6 +30,7 @@ function _getCfg() {
 
   _cfgCache = {
     base64MaxBytes,
+    maxMediaPartsPerMessage: getEnvInt('SEND_MEDIA_BATCH_MAX', 8),
     crossChat: {
       enabled: getEnvBool('CROSS_CHAT_SEND_ENABLED', true),
       allowedGroupIds: _parseCsvIdSet(getEnv('CROSS_CHAT_SEND_ALLOW_GROUP_IDS', '')),
@@ -294,6 +295,15 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
     : ((parsed && parsed.user_id) ? { kind: 'private', id: String(parsed.user_id) } : null);
 
   const crossCfg = _getCrossChatSendConfig();
+  const maxMediaPartsPerMessage = Math.max(1, Number(_getCfg().maxMediaPartsPerMessage || 8));
+
+  const _splitBatches = (arr, maxSize) => {
+    const out = [];
+    const max = Math.max(1, Number(maxSize || 1));
+    if (!Array.isArray(arr) || arr.length === 0) return out;
+    for (let i = 0; i < arr.length; i += max) out.push(arr.slice(i, i + max));
+    return out;
+  };
   
   logger.debug(`文本段落数: ${textSegments.length}`);
   logger.debug(`协议资源数: ${protocolResources.length}`);
@@ -303,6 +313,8 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
   
   // 只从AI的resources中提取文件（支持本地路径和 HTTP/HTTPS 链接）
   const protocolFiles = [];
+  const linkSegments = [];
+  const segmentCountHint = Array.isArray(textSegments) ? textSegments.length : 0;
   protocolResources.forEach(res => {
     const parsedRoute = _extractRoutePrefix(String(res.source || ''));
     const routeTarget = _resolveRouteTargetWithDefault(msg, parsedRoute, defaultRoute);
@@ -312,21 +324,39 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
     if (source) {
       const isHttpUrl = /^https?:\/\//i.test(source);
       const resolvedLocalPath = (!isHttpUrl) ? _resolveLocalPathFromFileField(source) : '';
+      const segIdxRaw = res && res.segment_index != null ? Number(res.segment_index) : NaN;
+      const segmentIndex = Number.isFinite(segIdxRaw) && segIdxRaw > 0 ? Math.floor(segIdxRaw) : null;
+      const segmentIndexOk = segmentIndex && (segmentCountHint <= 0 || segmentIndex <= segmentCountHint);
+
+      if (segmentIndex && !segmentIndexOk) {
+        logger.warn(`协议资源 segment_index 超出范围，将忽略并按默认顺序发送: ${source}`, {
+          segment_index: segmentIndex,
+          textSegments: segmentCountHint
+        });
+      }
 
       if (isHttpUrl) {
         const urlPath = source.split('?')[0];
         const t = String(res?.type || '').trim().toLowerCase();
         const isLinkType = t === 'link' || t === 'url';
+
+        if (isLinkType) {
+          const cap = (typeof res?.caption === 'string' && res.caption.trim()) ? `${res.caption.trim()}\n` : '';
+          linkSegments.push({
+            text: `${cap}${source}`,
+            routeTarget,
+            segmentIndex: segmentIndexOk ? segmentIndex : null
+          });
+          logger.debug(`HTTP link 资源将作为文本发送: ${source}`);
+          return;
+        }
+
         const inferredMime = mimeTypes.lookup(urlPath);
         const mime = typeof inferredMime === 'string' ? inferredMime : '';
         const isHtml = mime === 'text/html';
 
         if (!mime || isHtml) {
-          if (isLinkType) {
-            logger.debug(`跳过 HTTP link 资源（无法推断直链文件 MIME）: ${source}`);
-          } else {
-            logger.warn(`HTTP 资源无法推断有效文件 MIME，已跳过: ${source}`, { mime: mime || '(unknown)' });
-          }
+          logger.warn(`HTTP 资源无法推断有效文件 MIME，已跳过: ${source}`, { mime: mime || '(unknown)' });
           return;
         }
       }
@@ -375,7 +405,8 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         fileType,
         caption: res.caption,
         isHttpUrl,  // 标记是否为 HTTP 链接
-        routeTarget
+        routeTarget,
+        segmentIndex: segmentIndexOk ? segmentIndex : null
       });
       
       if (isHttpUrl) {
@@ -397,6 +428,17 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       };
     })
     .filter((seg) => seg && typeof seg.text === 'string' && seg.text.trim());
+  const linkSendPlans = [];
+  if (linkSegments.length) {
+    for (const s of linkSegments) {
+      if (!s || typeof s.text !== 'string' || !s.text.trim()) continue;
+      linkSendPlans.push({
+        text: s.text,
+        routeTarget: s.routeTarget,
+        segmentIndex: s.segmentIndex
+      });
+    }
+  }
   
   //logger.debug(`文本段落数: ${segments.length}`);
   //logger.debug(`资源文件数: ${protocolFiles.length}`);
@@ -428,11 +470,41 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
     ? String(parsed.replyToMessageId)
     : null;
   let usedReply = false;
+
+  const emojiSegIdxRaw = emoji && emoji.segment_index != null ? Number(emoji.segment_index) : NaN;
+  const emojiSegmentIndex = Number.isFinite(emojiSegIdxRaw) && emojiSegIdxRaw > 0 ? Math.floor(emojiSegIdxRaw) : null;
+  let emojiSentInSegmentFlow = false;
   
   logger.debug(`发送策略: 段落=${segments.length}, replyMode=${finalReplyMode}(${hasSendDirective ? 'by_send' : 'fallback'}), allowReply=${allowReply}, replyTo=${replyMessageId || '(none)'}`);
 
   let skippedCrossRouteCount = 0;
   let crossOps = 0;
+
+  const attachedFilesBySegAndTarget = new Map();
+  const attachedLinksBySegAndTarget = new Map();
+  const deferredProtocolFiles = [];
+  for (const f of protocolFiles) {
+    const rt = f?.routeTarget || _resolveRouteTarget(msg, { kind: 'current', id: '' });
+    const segIdx = Number(f?.segmentIndex || 0);
+    if (segIdx > 0 && segments.length > 0 && segIdx <= segments.length) {
+      const k = `${segIdx}|${rt.kind}:${rt.id}`;
+      if (!attachedFilesBySegAndTarget.has(k)) attachedFilesBySegAndTarget.set(k, []);
+      attachedFilesBySegAndTarget.get(k).push(f);
+    } else {
+      deferredProtocolFiles.push(f);
+    }
+  }
+  for (const l of linkSendPlans) {
+    const rt = l?.routeTarget || _resolveRouteTarget(msg, { kind: 'current', id: '' });
+    const segIdx = Number(l?.segmentIndex || 0);
+    if (segIdx > 0 && segments.length > 0 && segIdx <= segments.length) {
+      const k = `${segIdx}|${rt.kind}:${rt.id}`;
+      if (!attachedLinksBySegAndTarget.has(k)) attachedLinksBySegAndTarget.set(k, []);
+      attachedLinksBySegAndTarget.get(k).push(l);
+    } else {
+      segments.push({ text: l.text, routeTarget: rt });
+    }
+  }
   
   // 发送文本段落
   if (segments.length > 0) {
@@ -535,6 +607,227 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         await updateConversationHistory(msg, sentMessageId, true);
         logger.debug(`第${i+1}段发送成功，消息ID: ${sentMessageId}`);
       }
+
+      const segKey = `${i + 1}|${routeTarget.kind}:${routeTarget.id}`;
+      const attachedLinks = attachedLinksBySegAndTarget.get(segKey) || [];
+      const attachedFiles = attachedFilesBySegAndTarget.get(segKey) || [];
+
+      if (attachedLinks.length > 0) {
+        const isGroupTarget2 = routeTarget.kind === 'group';
+        const replyForAddon = routeTarget.isCurrent && replyMessageId && allowReply && (
+          finalReplyMode === 'always' || (finalReplyMode === 'first' && !usedReply)
+        );
+
+        for (const l of attachedLinks) {
+          const addonText = String(l?.text || '').trim();
+          if (!addonText) continue;
+          const delay = 200 + Math.random() * 500;
+          await new Promise(resolve => setTimeout(resolve, delay));
+          const parts = buildSegmentMessage({ text: addonText });
+          if (parts.length === 0) continue;
+          if (routeTarget.kind === 'private') {
+            const result = await sendAndWaitResult({
+              type: "sdk",
+              path: replyForAddon ? "send.privateReply" : "send.private",
+              args: replyForAddon ? [Number(routeTarget.id), replyMessageId, parts] : [Number(routeTarget.id), parts],
+              requestId: `private-link-${Date.now()}-${i}`
+            });
+            if (routeTarget.isCurrent && result?.data?.message_id) {
+              await updateConversationHistory(msg, result.data.message_id, true);
+            }
+            if (replyForAddon) usedReply = true;
+          } else if (isGroupTarget2) {
+            const result = await sendAndWaitResult({
+              type: "sdk",
+              path: replyForAddon ? "send.groupReply" : "send.group",
+              args: replyForAddon ? [Number(routeTarget.id), replyMessageId, parts] : [Number(routeTarget.id), parts],
+              requestId: `group-link-${Date.now()}-${i}`
+            });
+            if (routeTarget.isCurrent && result?.data?.message_id) {
+              await updateConversationHistory(msg, result.data.message_id, true);
+            }
+            if (replyForAddon) usedReply = true;
+          }
+        }
+      }
+
+      if (attachedFiles.length > 0) {
+        const delay = 200 + Math.random() * 700;
+        await new Promise(resolve => setTimeout(resolve, delay));
+
+        const mediaParts = [];
+        const normalFiles = [];
+        for (const file of attachedFiles) {
+          if (['image', 'video', 'record'].includes(file.fileType)) {
+            if (file.fileType === 'image') mediaParts.push({ type: 'image', data: { file: _toFileUrlIfLikelyLocal(file.path) } });
+            else if (file.fileType === 'video') mediaParts.push({ type: 'video', data: { file: _toFileUrlIfLikelyLocal(file.path) } });
+            else if (file.fileType === 'record') mediaParts.push({ type: 'record', data: { file: _toFileUrlIfLikelyLocal(file.path) } });
+          } else {
+            normalFiles.push(file);
+          }
+        }
+
+        const shouldReplyForMedia = routeTarget.isCurrent && replyMessageId && allowReply && (
+          finalReplyMode === 'always' || (finalReplyMode === 'first' && !usedReply)
+        );
+
+        if (mediaParts.length > 0) {
+          const batches = _splitBatches(mediaParts, maxMediaPartsPerMessage);
+          logger.debug(`分批发送媒体: 总数=${mediaParts.length}, 单批上限=${maxMediaPartsPerMessage}, 批次数=${batches.length}`);
+          for (let bi = 0; bi < batches.length; bi++) {
+            const batch = batches[bi];
+            const useReply = shouldReplyForMedia && !usedReply;
+            const requestId = `${routeTarget.kind}-segmedia-${Date.now()}-${i}-${bi}`;
+            let normalizedParts = _withNormalizedFileField(batch);
+            let result = await sendAndWaitResult({
+              type: "sdk",
+              path: routeTarget.kind === 'private'
+                ? (useReply ? "send.privateReply" : "send.private")
+                : (useReply ? "send.groupReply" : "send.group"),
+              args: routeTarget.kind === 'private'
+                ? (useReply ? [Number(routeTarget.id), replyMessageId, normalizedParts] : [Number(routeTarget.id), normalizedParts])
+                : (useReply ? [Number(routeTarget.id), replyMessageId, normalizedParts] : [Number(routeTarget.id), normalizedParts]),
+              requestId
+            });
+            if (result && _isAdapterSendFailed(result)) {
+              const fb = _withBase64FallbackForImages(normalizedParts);
+              if (fb.changed) {
+                const retryId = `${requestId}-base64`;
+                normalizedParts = fb.parts;
+                result = await sendAndWaitResult({
+                  type: "sdk",
+                  path: routeTarget.kind === 'private'
+                    ? (useReply ? "send.privateReply" : "send.private")
+                    : (useReply ? "send.groupReply" : "send.group"),
+                  args: routeTarget.kind === 'private'
+                    ? (useReply ? [Number(routeTarget.id), replyMessageId, normalizedParts] : [Number(routeTarget.id), normalizedParts])
+                    : (useReply ? [Number(routeTarget.id), replyMessageId, normalizedParts] : [Number(routeTarget.id), normalizedParts]),
+                  requestId: retryId
+                });
+              }
+            }
+            if (useReply) usedReply = true;
+            if (routeTarget.isCurrent && result?.data?.message_id) {
+              await updateConversationHistory(msg, result.data.message_id, true);
+            }
+            if (bi < batches.length - 1) {
+              const gap = 250 + Math.random() * 700;
+              await new Promise(resolve => setTimeout(resolve, gap));
+            }
+          }
+        }
+
+        if (normalFiles.length > 0) {
+          const delay2 = 200 + Math.random() * 800;
+          await new Promise(resolve => setTimeout(resolve, delay2));
+          for (const file of normalFiles) {
+            const fileField = _toFileUrlIfLikelyLocal(file.path);
+            const requestId = `segfile-${routeTarget.kind}-${Date.now()}-${i}`;
+            let result = await sendAndWaitResult({
+              type: "sdk",
+              path: routeTarget.kind === 'private' ? "file.uploadPrivate" : "file.uploadGroup",
+              args: routeTarget.kind === 'private'
+                ? [Number(routeTarget.id), fileField, file.fileName]
+                : [Number(routeTarget.id), fileField, file.fileName, ""],
+              requestId
+            });
+            if (result && _isAdapterSendFailed(result)) {
+              const b64 = _readBase64FileIfAllowed(fileField);
+              if (b64) {
+                result = await sendAndWaitResult({
+                  type: "sdk",
+                  path: routeTarget.kind === 'private' ? "file.uploadPrivate" : "file.uploadGroup",
+                  args: routeTarget.kind === 'private'
+                    ? [Number(routeTarget.id), b64, file.fileName]
+                    : [Number(routeTarget.id), b64, file.fileName, ""],
+                  requestId: `${requestId}-base64`
+                });
+              }
+            }
+            await new Promise(resolve => setTimeout(resolve, 300));
+          }
+        }
+      }
+
+      if (!emojiSentInSegmentFlow && emoji && emoji.source && emojiSegmentIndex && emojiSegmentIndex === (i + 1)) {
+        const extracted = _extractRoutePrefix(String(emoji.source || ''));
+        const rt = _resolveRouteTargetWithDefault(msg, extracted, defaultRoute);
+        const emojiPath = extracted.rest;
+
+        if (rt?.id && _isCrossRouteAllowed(msg, rt, crossCfg)) {
+          if (!rt.isCurrent) {
+            if (crossOps >= crossCfg.maxCrossOpsPerResponse) {
+              skippedCrossRouteCount++;
+            } else {
+              crossOps++;
+            }
+          }
+
+          if (rt?.id && (rt.isCurrent || crossOps <= crossCfg.maxCrossOpsPerResponse)) {
+            if (fs.existsSync(emojiPath)) {
+              const delay3 = 200 + Math.random() * 800;
+              await new Promise(resolve => setTimeout(resolve, delay3));
+
+              const emojiMessageParts = [
+                { type: 'image', data: { file: _toFileUrlIfLikelyLocal(emojiPath) } }
+              ];
+
+              if (rt.kind === 'private') {
+                const requestId = `private-emoji-${Date.now()}`;
+                let normalizedParts = _withNormalizedFileField(emojiMessageParts);
+                let result = await sendAndWaitResult({
+                  type: "sdk",
+                  path: "send.private",
+                  args: [Number(rt.id), normalizedParts],
+                  requestId
+                });
+                if (result && _isAdapterSendFailed(result)) {
+                  const fb = _withBase64FallbackForImages(normalizedParts);
+                  if (fb.changed) {
+                    const retryId = `${requestId}-base64`;
+                    normalizedParts = fb.parts;
+                    result = await sendAndWaitResult({
+                      type: "sdk",
+                      path: "send.private",
+                      args: [Number(rt.id), normalizedParts],
+                      requestId: retryId
+                    });
+                  }
+                }
+              } else if (rt.kind === 'group') {
+                const requestId = `group-emoji-${Date.now()}`;
+                let normalizedParts = _withNormalizedFileField(emojiMessageParts);
+                let result = await sendAndWaitResult({
+                  type: "sdk",
+                  path: "send.group",
+                  args: [Number(rt.id), normalizedParts],
+                  requestId
+                });
+                if (result && _isAdapterSendFailed(result)) {
+                  const fb = _withBase64FallbackForImages(normalizedParts);
+                  if (fb.changed) {
+                    const retryId = `${requestId}-base64`;
+                    normalizedParts = fb.parts;
+                    result = await sendAndWaitResult({
+                      type: "sdk",
+                      path: "send.group",
+                      args: [Number(rt.id), normalizedParts],
+                      requestId: retryId
+                    });
+                  }
+                }
+              }
+
+              emojiSentInSegmentFlow = true;
+              if (rt.isCurrent && replyMessageId && allowReply && finalReplyMode === 'first') {
+                usedReply = true;
+              }
+            } else {
+              logger.warn(`表情包文件不存在: ${emojiPath}`);
+            }
+          }
+        }
+      }
       
       if (i < segments.length - 1) {
         const delay = 800 + Math.random() * 2200; // 0.8-3秒随机间隔
@@ -545,8 +838,8 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
   }
   
   // 分类文件：媒体文件 vs 普通文件
-  const mediaFiles = protocolFiles.filter(f => ['image', 'video', 'record'].includes(f.fileType));
-  const uploadFiles = protocolFiles.filter(f => f.fileType === 'file');
+  const mediaFiles = deferredProtocolFiles.filter(f => ['image', 'video', 'record'].includes(f.fileType));
+  const uploadFiles = deferredProtocolFiles.filter(f => f.fileType === 'file');
   
   logger.debug(`媒体文件: ${mediaFiles.length}个, 普通文件: ${uploadFiles.length}个`);
   
@@ -610,13 +903,28 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         finalReplyMode === 'always' || (finalReplyMode === 'first' && !usedReply)
       );
 
-      if (rt.kind === 'private') {
-        const requestId = `private-media-${Date.now()}`;
-        let normalizedParts = _withNormalizedFileField(mediaMessageParts);
+      const prefixParts = [];
+      const mediaOnlyParts = [...mediaMessageParts];
+      while (mediaOnlyParts.length > 0 && mediaOnlyParts[0] && mediaOnlyParts[0].type === 'at') {
+        prefixParts.push(mediaOnlyParts.shift());
+      }
+      const mediaBatches = _splitBatches(mediaOnlyParts, maxMediaPartsPerMessage);
+
+      for (let bi = 0; bi < mediaBatches.length; bi++) {
+        const batch = mediaBatches[bi];
+        if (!Array.isArray(batch) || batch.length === 0) continue;
+        const useReply = replyForMedia && !usedReply;
+        const requestId = `${rt.kind}-media-${Date.now()}-${bi}`;
+        const parts = (bi === 0 && prefixParts.length > 0) ? [...prefixParts, ...batch] : batch;
+        let normalizedParts = _withNormalizedFileField(parts);
         let result = await sendAndWaitResult({
           type: "sdk",
-          path: replyForMedia ? "send.privateReply" : "send.private",
-          args: replyForMedia ? [Number(rt.id), replyMessageId, normalizedParts] : [Number(rt.id), normalizedParts],
+          path: rt.kind === 'private'
+            ? (useReply ? "send.privateReply" : "send.private")
+            : (useReply ? "send.groupReply" : "send.group"),
+          args: rt.kind === 'private'
+            ? (useReply ? [Number(rt.id), replyMessageId, normalizedParts] : [Number(rt.id), normalizedParts])
+            : (useReply ? [Number(rt.id), replyMessageId, normalizedParts] : [Number(rt.id), normalizedParts]),
           requestId
         });
         if (result && _isAdapterSendFailed(result)) {
@@ -626,12 +934,17 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
             normalizedParts = fb.parts;
             result = await sendAndWaitResult({
               type: "sdk",
-              path: replyForMedia ? "send.privateReply" : "send.private",
-              args: replyForMedia ? [Number(rt.id), replyMessageId, normalizedParts] : [Number(rt.id), normalizedParts],
+              path: rt.kind === 'private'
+                ? (useReply ? "send.privateReply" : "send.private")
+                : (useReply ? "send.groupReply" : "send.group"),
+              args: rt.kind === 'private'
+                ? (useReply ? [Number(rt.id), replyMessageId, normalizedParts] : [Number(rt.id), normalizedParts])
+                : (useReply ? [Number(rt.id), replyMessageId, normalizedParts] : [Number(rt.id), normalizedParts]),
               requestId: retryId
             });
           }
         }
+        if (useReply) usedReply = true;
         logger.debug('媒体发送结果', {
           ok: !!result?.ok,
           requestId,
@@ -639,35 +952,10 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
           message_id: result?.data?.message_id,
           data: result?.data
         });
-      } else if (rt.kind === 'group') {
-        const requestId = `group-media-${Date.now()}`;
-        let normalizedParts = _withNormalizedFileField(mediaMessageParts);
-        let result = await sendAndWaitResult({
-          type: "sdk",
-          path: replyForMedia ? "send.groupReply" : "send.group",
-          args: replyForMedia ? [Number(rt.id), replyMessageId, normalizedParts] : [Number(rt.id), normalizedParts],
-          requestId
-        });
-        if (result && _isAdapterSendFailed(result)) {
-          const fb = _withBase64FallbackForImages(normalizedParts);
-          if (fb.changed) {
-            const retryId = `${requestId}-base64`;
-            normalizedParts = fb.parts;
-            result = await sendAndWaitResult({
-              type: "sdk",
-              path: replyForMedia ? "send.groupReply" : "send.group",
-              args: replyForMedia ? [Number(rt.id), replyMessageId, normalizedParts] : [Number(rt.id), normalizedParts],
-              requestId: retryId
-            });
-          }
+        if (bi < mediaBatches.length - 1) {
+          const gap = 350 + Math.random() * 900;
+          await new Promise(resolve => setTimeout(resolve, gap));
         }
-        logger.debug('媒体发送结果', {
-          ok: !!result?.ok,
-          requestId,
-          target: { kind: rt.kind, id: String(rt.id), isCurrent: !!rt.isCurrent },
-          message_id: result?.data?.message_id,
-          data: result?.data
-        });
       }
     }
   }
@@ -750,7 +1038,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
   }
   
   // 发送表情包（如果有）
-  if (emoji && emoji.source) {
+  if (emoji && emoji.source && !emojiSentInSegmentFlow) {
     const extracted = _extractRoutePrefix(String(emoji.source || ''));
     const rt = _resolveRouteTargetWithDefault(msg, extracted, defaultRoute);
     const emojiPath = extracted.rest;
@@ -856,6 +1144,10 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
           message_id: result?.data?.message_id,
           data: result?.data
         });
+      }
+
+      if (rt.isCurrent && replyMessageId && allowReply && finalReplyMode === 'first') {
+        usedReply = true;
       }
     }
   }

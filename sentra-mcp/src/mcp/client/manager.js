@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
@@ -21,6 +22,119 @@ function ensureServersJsonExists(absPath) {
     if (!fs.existsSync(absPath)) fs.writeFileSync(absPath, '[]\n', 'utf-8');
   } catch {
     // ignore
+  }
+}
+
+class StdioClientTransportWinHidden {
+  constructor(server) {
+    this._serverParams = server;
+    this._abortController = new AbortController();
+    this._buffer = '';
+    this._process = undefined;
+    this.onmessage = undefined;
+    this.onerror = undefined;
+    this.onclose = undefined;
+  }
+
+  async start() {
+    if (this._process) {
+      throw new Error('StdioClientTransportWinHidden already started');
+    }
+    return new Promise((resolve, reject) => {
+      const env = this._serverParams.env || process.env;
+      this._process = spawn(this._serverParams.command, this._serverParams.args || [], {
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        signal: this._abortController.signal,
+      });
+
+      this._process.on('error', (error) => {
+        if (error?.name === 'AbortError') {
+          try { this.onclose?.(); } catch {}
+          return;
+        }
+        reject(error);
+        try { this.onerror?.(error); } catch {}
+      });
+
+      this._process.on('spawn', () => {
+        resolve();
+      });
+
+      this._process.on('close', () => {
+        this._process = undefined;
+        try { this.onclose?.(); } catch {}
+      });
+
+      this._process.stdin?.on('error', (error) => {
+        try { this.onerror?.(error); } catch {}
+      });
+
+      this._process.stdout?.on('data', (chunk) => {
+        try {
+          this._buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+          this._processReadBuffer();
+        } catch (error) {
+          try { this.onerror?.(error); } catch {}
+        }
+      });
+
+      this._process.stdout?.on('error', (error) => {
+        try { this.onerror?.(error); } catch {}
+      });
+
+      this._process.stderr?.on('data', (chunk) => {
+        try {
+          const s = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+          const line = String(s || '').trim();
+          if (line) {
+            logger.debug?.(line, { label: 'MCP' });
+          }
+        } catch {}
+      });
+
+      this._process.stderr?.on('error', (error) => {
+        try { this.onerror?.(error); } catch {}
+      });
+    });
+  }
+
+  _processReadBuffer() {
+    while (true) {
+      const idx = this._buffer.indexOf('\n');
+      if (idx === -1) return;
+      const line = this._buffer.slice(0, idx);
+      this._buffer = this._buffer.slice(idx + 1);
+      const trimmed = String(line || '').trim();
+      if (!trimmed) continue;
+      try {
+        const msg = JSON.parse(trimmed);
+        this.onmessage?.(msg);
+      } catch (error) {
+        try { this.onerror?.(error); } catch {}
+      }
+    }
+  }
+
+  async close() {
+    try { this._abortController.abort(); } catch {}
+    this._process = undefined;
+    this._buffer = '';
+  }
+
+  send(message) {
+    return new Promise((resolve) => {
+      if (!this._process?.stdin) {
+        throw new Error('Not connected');
+      }
+      const json = JSON.stringify(message) + '\n';
+      if (this._process.stdin.write(json)) {
+        resolve();
+      } else {
+        this._process.stdin.once('drain', resolve);
+      }
+    });
   }
 }
 
@@ -71,9 +185,12 @@ function readServersConfig() {
 export class MCPExternalManager {
   constructor() {
     this.clients = new Map(); // id -> { client, meta }
+    this._connectAllPromise = null;
   }
 
   async connectAll() {
+    if (this._connectAllPromise) return this._connectAllPromise;
+    this._connectAllPromise = (async () => {
     const defs = readServersConfig();
     if (defs.length) {
       logger.info('外部 MCP 连接开始', { label: 'MCP', count: defs.length });
@@ -97,6 +214,12 @@ export class MCPExternalManager {
     if (defs.length) {
       logger.info('外部 MCP 连接完成', { label: 'MCP', connected: this.clients.size });
     }
+    })();
+    try {
+      await this._connectAllPromise;
+    } finally {
+      this._connectAllPromise = null;
+    }
   }
 
   async connect(def) {
@@ -104,11 +227,17 @@ export class MCPExternalManager {
     const type = String(def?.type || '').trim() === 'streamable_http' ? 'http' : def?.type;
     if (!id) throw new Error('External MCP server missing id');
 
+    if (this.clients.has(id)) {
+      return;
+    }
+
     let transport;
     if (type === 'stdio') {
       if (!command) throw new Error(`MCP server ${id} stdio requires command`);
       const resolvedCommand = resolveWindowsCommand(command);
-      transport = new StdioClientTransport({ command: resolvedCommand, args });
+      transport = process.platform === 'win32'
+        ? new StdioClientTransportWinHidden({ command: resolvedCommand, args })
+        : new StdioClientTransport({ command: resolvedCommand, args });
     } else if (type === 'websocket') {
       if (!url) throw new Error(`MCP server ${id} websocket requires url`);
       transport = new WebSocketClientTransport({ url });

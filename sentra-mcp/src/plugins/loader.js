@@ -24,6 +24,8 @@ function normalizeTool(def) {
     timeoutMs: def.timeoutMs || 0,
     pluginEnv: def.pluginEnv || {},
     meta: def.meta || {},
+    _pluginDirName: def._pluginDirName,
+    _pluginAbsDir: def._pluginAbsDir,
     handler: def.handler,
   };
 }
@@ -168,6 +170,8 @@ export async function loadPlugins(pluginsDir) {
         timeoutMs,
         pluginEnv: penv,
         meta: cfg.meta || {},
+        _pluginDirName: dir,
+        _pluginAbsDir: base,
         handler,
       };
       const tool = normalizeTool(def);

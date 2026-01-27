@@ -8,6 +8,8 @@ import { startHotReloadWatchers } from '../config/hotReload.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+const __defaultCore = new MCPCore();
+
 function escapeXmlEntities(str) {
   return String(str ?? '')
     .replace(/&/g, '&amp;')
@@ -181,7 +183,7 @@ export class SentraMcpSDK {
    * @param {{ mcpcore?: MCPCore }} [options]
    */
   constructor(options = {}) {
-    this.mcpcore = options.mcpcore || new MCPCore();
+    this.mcpcore = options.mcpcore || __defaultCore;
     this._initialized = false;
   }
 

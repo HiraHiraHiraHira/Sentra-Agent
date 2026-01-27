@@ -1102,6 +1102,8 @@ export async function getSandboxSystemPrompt() {
       '  - `<type>`: one of `image|video|audio|file|link` (use exactly these words).\n' +
       '  - `<source>`: absolute local file path OR a `file://` URL OR an `http/https` URL.\n' +
       '- `<caption>` is OPTIONAL but recommended (one short sentence).\n' +
+      '- `<segment_index>` is OPTIONAL (1-based). If provided, the platform will try to deliver this resource right after `<textN>` (better conversational flow).\n' +
+      '  - If omitted, resources may be delivered after the text blocks (legacy behavior).\n' +
       '- Only include resources that truly exist / are accessible; do NOT invent file paths.\n' +
       '- **MANDATORY DELIVERY RULE**: If you want the user to actually receive an image/file/audio/video, you MUST include it here (or use `<emoji>`).\n' +
       '  - If you only mention a path/link in `<textN>` but do NOT put it into `<resources>`, the platform will NOT send the media/file.\n' +
@@ -1116,6 +1118,7 @@ export async function getSandboxSystemPrompt() {
       '      <type>image</type>\n' +
       '      <source>file:///C:/path/to/output.png</source>\n' +
       '      <caption>成图</caption>\n' +
+      '      <segment_index>1</segment_index>\n' +
       '    </resource>\n' +
       '  </resources>\n' +
       '</sentra-response>\n\n' +
@@ -1128,6 +1131,7 @@ export async function getSandboxSystemPrompt() {
       '### 3c) `<emoji>` rules (optional, at most one)\n' +
       '- Use `<emoji>` only when you want to send ONE sticker/image file as an extra message.\n' +
       '- `<source>` MUST be an ABSOLUTE local file path from the configured sticker pack. Do NOT use URLs and do NOT guess paths.\n' +
+      '- `<segment_index>` is OPTIONAL (1-based). If provided, the platform will try to send the emoji right after `<textN>`.\n' +
       '- If you are not sure the file exists, do NOT output `<emoji>`.\n\n' +
 
       '### 4) `<send>` directives (optional)\n' +

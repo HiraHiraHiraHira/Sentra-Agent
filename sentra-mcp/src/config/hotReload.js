@@ -42,15 +42,18 @@ export function startHotReloadWatchers(core) {
     }
   }, debounceMs);
 
+  const changedPluginDirs = new Set();
   const reloadPluginsDebounced = createDebounced(() => {
-    if (!core || typeof core.reloadLocalPlugins !== 'function') return;
+    if (!core || typeof core.reloadPluginEnvs !== 'function') return;
     try {
-      logger.info('检测到插件 .env 变更，重新加载本地插件', { label: 'MCP' });
-      core.reloadLocalPlugins().catch((e) => {
-        logger.error('本地插件热重载失败', { label: 'MCP', error: String(e) });
+      const dirs = Array.from(changedPluginDirs);
+      changedPluginDirs.clear();
+      logger.info('检测到插件 .env 变更，刷新插件环境变量', { label: 'MCP', count: dirs.length });
+      core.reloadPluginEnvs(dirs).catch((e) => {
+        logger.error('插件 env 热更新失败', { label: 'MCP', error: String(e) });
       });
     } catch (e) {
-      logger.error('调度插件热重载失败', { label: 'MCP', error: String(e) });
+      logger.error('调度插件 env 热更新失败', { label: 'MCP', error: String(e) });
     }
   }, debounceMs);
 
@@ -77,6 +80,7 @@ export function startHotReloadWatchers(core) {
           fs.watch(pluginDir, { persistent: false }, (_eventType, filename) => {
             if (!filename) return;
             if (filename === '.env' || filename === 'config.env') {
+              changedPluginDirs.add(ent.name);
               reloadPluginsDebounced();
             }
           });

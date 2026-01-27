@@ -9,6 +9,9 @@ import { config } from '../config/index.js';
 import { Governance } from '../governance/policy.js';
 import { embedTexts } from '../openai/client.js';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import dotenv from 'dotenv';
 
 function makeAINameLocal(name) {
   return `local__${name}`;
@@ -54,6 +57,26 @@ function __getLocalRemainMs(aiName) {
 }
 function sleep(ms) { return new Promise((r) => setTimeout(r, Math.max(0, ms))); }
 
+function __truncateText(s, maxChars) {
+  const max = Number(maxChars);
+  const m = Number.isFinite(max) && max > 0 ? Math.floor(max) : 4000;
+  const str = String(s ?? '');
+  if (str.length <= m) return str;
+  return str.slice(0, m) + `... (len=${str.length})`;
+}
+
+function __extractMcpTextFromContent(content, maxChars) {
+  if (!Array.isArray(content)) return '';
+  const parts = [];
+  for (const it of content) {
+    if (!it || typeof it !== 'object') continue;
+    if (it.type === 'text' && it.text != null) {
+      parts.push(String(it.text));
+    }
+  }
+  return __truncateText(parts.join('\n'), maxChars);
+}
+
 function cosineSim(a = [], b = []) {
   if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || a.length === 0) return 0;
   let dot = 0; let na = 0; let nb = 0;
@@ -71,6 +94,8 @@ export class MCPCore {
     this.externalMgr = new MCPExternalManager();
     this.externalTools = []; // { name, description, inputSchema, __provider: external:<id> }
     this.toolIndex = new Map(); // aiName -> descriptor
+    this._initialized = false;
+    this._initPromise = null;
   }
 
   static _looksLikeToolResult(v) {
@@ -101,12 +126,26 @@ export class MCPCore {
   }
 
   async init() {
-    // Load local plugins
-    this.localTools = await loadPlugins();
-    // Connect external servers and fetch their tools
-    await this.externalMgr.connectAll();
-    this.externalTools = await this.externalMgr.listAllTools();
-    this.rebuildIndex();
+    if (this._initialized) return;
+    if (this._initPromise) {
+      await this._initPromise;
+      return;
+    }
+    this._initPromise = (async () => {
+      // Load local plugins
+      this.localTools = await loadPlugins();
+      // Connect external servers and fetch their tools
+      await this.externalMgr.connectAll();
+      this.externalTools = await this.externalMgr.listAllTools();
+      this.rebuildIndex();
+      this._initialized = true;
+    })();
+    try {
+      await this._initPromise;
+    } finally {
+      // keep promise only while in-flight, allow retry if init failed
+      if (!this._initialized) this._initPromise = null;
+    }
   }
 
   async reloadLocalPlugins(pluginsDir) {
@@ -118,6 +157,84 @@ export class MCPCore {
     } catch (e) {
       logger.error?.('本地插件热重载失败', { label: 'MCP', error: String(e) });
     }
+  }
+
+  async reloadPluginEnvs(pluginDirNames = []) {
+    const dirs = Array.isArray(pluginDirNames) ? pluginDirNames.map(String).filter(Boolean) : [];
+    if (!dirs.length) return;
+
+    // Ensure initial load so localTools has plugin metadata
+    await this.init();
+
+    const rootDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+    const pluginsRoot = path.join(rootDir, 'plugins');
+
+    let needFullReload = false;
+    const toRemove = new Set();
+
+    for (const dirName of dirs) {
+      const absDir = path.join(pluginsRoot, dirName);
+      const envPath = path.join(absDir, '.env');
+      const envAltPath = path.join(absDir, 'config.env');
+
+      let penv = {};
+      try {
+        if (fs.existsSync(envPath)) {
+          penv = { ...penv, ...dotenv.parse(fs.readFileSync(envPath)) };
+        } else if (fs.existsSync(envAltPath)) {
+          penv = { ...penv, ...dotenv.parse(fs.readFileSync(envAltPath)) };
+        }
+      } catch (e) {
+        logger.warn?.('Failed to parse plugin env during hot reload', { label: 'MCP', dir: dirName, error: String(e) });
+        continue;
+      }
+
+      let enabled = true;
+      try {
+        const raw = penv.PLUGIN_ENABLED ?? penv.PLUGIN_ENABLE ?? penv.ENABLED;
+        if (raw !== undefined) {
+          const s = String(raw).trim().toLowerCase();
+          if (s === '0' || s === 'false' || s === 'off' || s === 'no') enabled = false;
+          else if (s === '1' || s === 'true' || s === 'on' || s === 'yes') enabled = true;
+        }
+      } catch {}
+
+      const matching = this.localTools.filter((t) => t && t._pluginDirName === dirName);
+      if (!matching.length) {
+        // Plugin enabled but not present: need a full reload to import handler
+        if (enabled) needFullReload = true;
+        continue;
+      }
+
+      if (!enabled) {
+        for (const t of matching) toRemove.add(t);
+        continue;
+      }
+
+      // Update env + timeout on matching tools
+      for (const t of matching) {
+        try { t.pluginEnv = penv; } catch {}
+
+        let timeoutMs = Number(t.timeoutMs) || 0;
+        const fromEnvA = Number(penv.PLUGIN_TIMEOUT_MS);
+        const fromEnvB = Number(penv.TOOL_TIMEOUT_MS);
+        if (!Number.isNaN(fromEnvA) && fromEnvA > 0) timeoutMs = fromEnvA;
+        else if (!Number.isNaN(fromEnvB) && fromEnvB > 0) timeoutMs = fromEnvB;
+        try { t.timeoutMs = timeoutMs; } catch {}
+      }
+    }
+
+    if (toRemove.size) {
+      this.localTools = this.localTools.filter((t) => !toRemove.has(t));
+    }
+
+    if (needFullReload) {
+      await this.reloadLocalPlugins();
+      return;
+    }
+
+    this.rebuildIndex();
+    logger.info?.('插件 env 已热更新', { label: 'MCP', plugins: dirs.length });
   }
 
   rebuildIndex() {
@@ -484,7 +601,24 @@ export class MCPCore {
           // 外部工具：移除 schedule 字段（不传递给下游服务器）
           const { schedule, ...forwardArgs } = args || {};
           const res = await executeToolWithTimeout(() => this.externalMgr.callTool(t.serverId, t.name, forwardArgs), config.planner.toolTimeoutMs);
-          const payload = res?.content ?? res?.result ?? res;
+
+          // MCP 标准 callTool 通常返回 { content: [{type:'text',text:'...'}], structuredContent?: any }
+          // 若直接把 content 数组塞进 data，会导致日志与上下文极其冗长。
+          const maxChars = Number(process.env.EXTERNAL_MCP_RESULT_MAX_CHARS || 4000);
+          let payload = res;
+          if (payload && typeof payload === 'object' && Array.isArray(payload.content)) {
+            const text = __extractMcpTextFromContent(payload.content, maxChars);
+            const contentCount = payload.content.length;
+            payload = {
+              text,
+              contentCount,
+              hasStructured: !!payload.structuredContent,
+            };
+          } else if (payload && typeof payload === 'object' && 'result' in payload) {
+            // 兼容少数实现把真正结果放在 result 字段
+            payload = payload.result;
+          }
+
           const outRaw = MCPCore._looksLikeToolResult(payload)
             ? { ...payload, provider: `external:${t.serverId}` }
             : ok(payload, 'OK', { provider: `external:${t.serverId}` });

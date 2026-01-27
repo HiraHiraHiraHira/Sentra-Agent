@@ -1,5 +1,16 @@
 [
   {
+    "id": "chrome-devtools",
+    "type": "stdio",
+    "command": "cmd",
+    "args": [
+      "/c",
+      "npx",
+      "-y",
+      "chrome-devtools-mcp@latest"
+    ]
+  },
+  {
     "id": "douyin-china-tiktok-all-api",
     "type": "stdio",
     "command": "cmd",
