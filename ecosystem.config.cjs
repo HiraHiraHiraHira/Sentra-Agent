@@ -1,5 +1,8 @@
 const path = require('path');
 
+const repoRoot = __dirname;
+const logsDir = path.join(repoRoot, 'logs');
+
 /**
  * PM2 生态配置文件
  * 用于管理 Sentra Agent 主进程
@@ -11,7 +14,7 @@ module.exports = {
       name: 'sentra-agent',
       script: './Main.js',
       interpreter: 'node',
-      cwd: __dirname,
+      cwd: repoRoot,
       instances: 1,
       exec_mode: 'fork',
       windowsHide: true,
@@ -37,8 +40,8 @@ module.exports = {
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor',
       },
-      error_file: './logs/pm2-error.log',
-      out_file: './logs/pm2-out.log',
+      error_file: path.join(logsDir, 'pm2-error.log'),
+      out_file: path.join(logsDir, 'pm2-out.log'),
       merge_logs: true,
       min_uptime: '10s',
       max_restarts: 10,
@@ -55,7 +58,7 @@ module.exports = {
       name: 'sentra-emo',
       script: 'run.py',
       interpreter: 'python',
-      cwd: path.join(__dirname, 'sentra-emo'),
+      cwd: path.join(repoRoot, 'sentra-emo'),
       instances: 1,
       exec_mode: 'fork',
       windowsHide: true,
@@ -83,8 +86,8 @@ module.exports = {
         PYTHONUNBUFFERED: '1',
         UVICORN_RELOAD: '1',
       },
-      error_file: path.join(__dirname, 'logs', 'pm2-emo-error.log'),
-      out_file: path.join(__dirname, 'logs', 'pm2-emo-out.log'),
+      error_file: path.join(logsDir, 'pm2-emo-error.log'),
+      out_file: path.join(logsDir, 'pm2-emo-out.log'),
       merge_logs: true,
       min_uptime: '10s',
       max_restarts: 10,
@@ -96,9 +99,9 @@ module.exports = {
     },
     {
       name: 'sentra-napcat',
-      script: './sentra-adapter/napcat/dist/src/main.js',
+      script: './dist/src/main.js',
       interpreter: 'node',
-      cwd: __dirname,
+      cwd: path.join(repoRoot, 'sentra-adapter', 'napcat'),
       instances: 1,
       exec_mode: 'fork',
       windowsHide: true,
@@ -129,8 +132,8 @@ module.exports = {
         NAPCAT_MODE: 'reverse',
         ENABLE_TEST_PLUGIN: 'true',
       },
-      error_file: './logs/pm2-napcat-error.log',
-      out_file: './logs/pm2-napcat-out.log',
+      error_file: path.join(logsDir, 'pm2-napcat-error.log'),
+      out_file: path.join(logsDir, 'pm2-napcat-out.log'),
       merge_logs: true,
       min_uptime: '10s',
       max_restarts: 10,
