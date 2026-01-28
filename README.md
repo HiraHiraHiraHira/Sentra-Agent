@@ -213,11 +213,6 @@ sentra-agent/
 
 ## 一次任务的完整执行流程（端到端）
 
-这一节不是“概念图”，而是基于当前代码（`Main.js` / `components/SocketHandlers.js` / `components/MessagePipeline.js` / `utils/replyPolicy.js` / `utils/messageBundler.js` / `utils/replySendQueue.js`）整理出的**真实执行链路**。
-
-> 如果你在本地预览里只看到“代码块”，没有看到图：这是因为你的 Markdown 预览器未启用 Mermaid 渲染。
-> 在 GitHub 网页上通常会直接渲染；本地需要 IDE/插件支持 Mermaid。
-
 你可以把一次“任务”的粒度理解为：
 
 - **私聊**：基本每条消息都会进入完整流程。
