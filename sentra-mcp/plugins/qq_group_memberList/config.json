@@ -46,15 +46,18 @@
       }
     },
     "anyOf": [
-      { "required": ["group_id"] },
-      { "required": ["group_ids"] }
+      {
+        "required": [
+          "group_id"
+        ]
+      },
+      {
+        "required": [
+          "group_ids"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "获取群成员列表",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已返回群成员列表"
-  }
+  "timeoutMs": 20000
 }

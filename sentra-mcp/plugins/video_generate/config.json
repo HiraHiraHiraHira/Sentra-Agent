@@ -43,9 +43,6 @@
   },
   "timeoutMs": 180000,
   "meta": {
-    "realWorldAction": "视频生成/制作",
-    "responseStyle": "纯文本（Markdown）",
-    "responseExample": "Here is a generated video preview and download link.\n\n[Download video](E:/sentra-agent/sentra-mcp/artifacts/video_1696231234567_0.mp4)",
     "streamSupport": true
   }
 }

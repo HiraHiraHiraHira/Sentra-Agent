@@ -9,6 +9,11 @@ function escapeXmlEntities(str) {
     .replace(/'/g, '&apos;');
 }
 
+function toXmlCData(text) {
+  const s = String(text ?? '');
+  return s.replace(/]]>/g, ']]]]><![CDATA[>');
+}
+
 function extractRequiredGroups(schema = {}) {
   try {
     const groups = [];
@@ -113,16 +118,27 @@ export function buildPlanningManifest(mcpcore) {
     description: t.description || '',
     inputSchema: requiredOnlySchema(t.inputSchema || {}),
     meta: t.meta || {},
+    skillDoc: t.skillDoc || null,
   }));
 }
 
 // 中文：将 manifest 渲染为简洁的项目符号文本（仅显示必填字段名）
 export function manifestToBulletedText(manifest = []) {
   const lines = [];
+  const cfg = (config && config.skillDoc && typeof config.skillDoc === 'object') ? config.skillDoc : {};
+  const includeDigest = cfg.includeDigest !== false;
+  const maxDigestChars = Number.isFinite(Number(cfg.maxDigestChars)) ? Number(cfg.maxDigestChars) : 0;
   for (const m of manifest) {
     const req = Array.isArray(m?.inputSchema?.required) ? m.inputSchema.required : [];
     lines.push(`- aiName: ${m.aiName} | name: ${m.name} | required: [${req.join(', ')}]`);
     if (m.description) lines.push(`  描述: ${m.description}`);
+    if (includeDigest && m.skillDoc && typeof m.skillDoc === 'object' && typeof m.skillDoc.digest === 'string' && m.skillDoc.digest.trim()) {
+      const d = String(m.skillDoc.digest).trim();
+      const clipped = maxDigestChars > 0 && d.length > maxDigestChars
+        ? d.slice(0, maxDigestChars) + ` ..(+${d.length - maxDigestChars})`
+        : d;
+      lines.push(`  技能摘要: ${clipped}`);
+    }
   }
   return lines.join('\n');
 }
@@ -190,6 +206,12 @@ export function manifestToXmlToolsCatalog(manifest = []) {
   try {
     const lines = [];
     const total = Array.isArray(manifest) ? manifest.length : 0;
+    const cfg = (config && config.skillDoc && typeof config.skillDoc === 'object') ? config.skillDoc : {};
+    const includeDigest = cfg.includeDigest !== false;
+    const includeMarkdown = cfg.includeMarkdown === true;
+    const maxDigestChars = Number.isFinite(Number(cfg.maxDigestChars)) ? Number(cfg.maxDigestChars) : 0;
+    const maxMarkdownChars = Number.isFinite(Number(cfg.maxMarkdownChars)) ? Number(cfg.maxMarkdownChars) : 0;
+
     lines.push('<sentra-mcp-tools>');
     lines.push(`  <summary>${escapeXmlEntities(`共有 ${total} 个 MCP 工具可用于本次任务。以下为工具清单和关键参数概览，仅供你在规划和参数生成时参考。`)}</summary>`);
     (manifest || []).forEach((m, idx) => {
@@ -200,11 +222,30 @@ export function manifestToXmlToolsCatalog(manifest = []) {
       const schema = m.inputSchema || {};
       const req = Array.isArray(schema.required) ? schema.required : [];
       const props = schema.properties || {};
+      const skill = m.skillDoc || null;
+      const digestRaw = skill && typeof skill.digest === 'string' ? skill.digest : '';
+      const digest = digestRaw
+        ? (maxDigestChars > 0 ? digestRaw.slice(0, maxDigestChars) : digestRaw)
+        : '';
+      const mdRaw = skill && typeof skill.raw === 'string' ? skill.raw : '';
+      const md = mdRaw
+        ? (maxMarkdownChars > 0 ? mdRaw.slice(0, maxMarkdownChars) : mdRaw)
+        : '';
       const index = idx + 1;
       lines.push(`  <tool index="${escapeXmlEntities(index)}">`);
       if (aiName) lines.push(`    <ai_name>${escapeXmlEntities(aiName)}</ai_name>`);
       if (name) lines.push(`    <name>${escapeXmlEntities(name)}</name>`);
       if (desc) lines.push(`    <description>${escapeXmlEntities(desc)}</description>`);
+      if (!includeMarkdown && includeDigest && digest) {
+        lines.push('    <skill_digest>');
+        lines.push(`${escapeXmlEntities(digest)}`);
+        lines.push('    </skill_digest>');
+      }
+      if (includeMarkdown && md) {
+        lines.push('    <skill_markdown><![CDATA[');
+        lines.push(`${toXmlCData(md)}`);
+        lines.push('    ]]></skill_markdown>');
+      }
       if (req.length) lines.push(`    <required_params>${escapeXmlEntities(req.join(', '))}</required_params>`);
       if (req.length) {
         lines.push('    <params>');

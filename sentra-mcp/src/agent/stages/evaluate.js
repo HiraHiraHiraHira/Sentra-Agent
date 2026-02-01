@@ -22,6 +22,26 @@ import { manifestToBulletedText, manifestToXmlToolsCatalog } from '../plan/manif
  * 评估运行结果
  */
 export async function evaluateRun(objective, plan, exec, runId, context = {}) {
+  const stepsArr = Array.isArray(plan?.steps) ? plan.steps : [];
+  const stepIdToIndex = new Map(stepsArr.map((s, idx) => [typeof s?.stepId === 'string' ? s.stepId : '', idx]).filter(([k]) => k));
+  const normalizeFailedSteps = (rawFailed) => {
+    const list = Array.isArray(rawFailed) ? rawFailed : [];
+    const out = [];
+    for (const it of list) {
+      const sid = (typeof it?.stepId === 'string' && it.stepId.trim()) ? it.stepId.trim() : '';
+      const idx = sid ? stepIdToIndex.get(sid) : undefined;
+      if (!sid || !Number.isFinite(idx) || idx < 0 || idx >= stepsArr.length) continue;
+      const step = stepsArr[idx] || {};
+      const stepId = typeof step.stepId === 'string' ? step.stepId : sid;
+      const displayIndex = Number.isFinite(Number(step.displayIndex)) ? Number(step.displayIndex) : (Number(idx) + 1);
+      const aiName = typeof it?.aiName === 'string' ? it.aiName : (typeof step.aiName === 'string' ? step.aiName : undefined);
+      const reason = String(it?.reason || '').trim();
+      if (!reason) continue;
+      out.push({ stepId, displayIndex, aiName, reason });
+    }
+    return out;
+  };
+
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const judgeToolDef = await loadToolDef({
     baseDir: __dirname,
@@ -105,9 +125,7 @@ export async function evaluateRun(objective, plan, exec, runId, context = {}) {
         const args = JSON.parse(call.function.arguments);
         const success = typeof args.success === 'boolean' ? args.success : (String(args.success).toLowerCase() === 'true');
         const incomplete = typeof args.incomplete === 'boolean' ? args.incomplete : (String(args.incomplete || '').toLowerCase() === 'true');
-        const failedSteps = Array.isArray(args.failedSteps) ? args.failedSteps.map((it) => ({
-          index: Number(it?.index), aiName: typeof it?.aiName === 'string' ? it.aiName : undefined, reason: String(it?.reason || '')
-        })).filter((it) => Number.isFinite(it.index) && it.reason) : [];
+        const failedSteps = normalizeFailedSteps(args.failedSteps);
         const summary = typeof args.summary === 'string' ? args.summary : '';
         result = { success: !!success, incomplete: !!incomplete, failedSteps, summary };
         
@@ -174,11 +192,7 @@ export async function evaluateRun(objective, plan, exec, runId, context = {}) {
       const args = call?.arguments || {};
       const success = typeof args.success === 'boolean' ? args.success : (String(args.success).toLowerCase() === 'true');
       const incomplete = typeof args.incomplete === 'boolean' ? args.incomplete : (String(args.incomplete || '').toLowerCase() === 'true');
-      const failedSteps = Array.isArray(args.failedSteps) ? args.failedSteps.map((it) => ({
-        index: Number(it?.index),
-        aiName: typeof it?.aiName === 'string' ? it.aiName : undefined,
-        reason: String(it?.reason || '')
-      })).filter((it) => Number.isFinite(it.index) && it.reason) : [];
+      const failedSteps = normalizeFailedSteps(args.failedSteps);
       const summary = typeof args.summary === 'string' ? args.summary : '';
       result = { success: !!success, incomplete: !!incomplete, failedSteps, summary };
       

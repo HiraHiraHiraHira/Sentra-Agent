@@ -56,15 +56,18 @@
       "group_id"
     ],
     "anyOf": [
-      { "required": ["user_id"] },
-      { "required": ["user_ids"] }
+      {
+        "required": [
+          "user_id"
+        ]
+      },
+      {
+        "required": [
+          "user_ids"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "查询群成员信息",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已返回成员信息"
-  }
+  "timeoutMs": 20000
 }

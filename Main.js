@@ -41,6 +41,7 @@ import { triggerPresetTeachingIfNeededCore } from './components/PresetTeachingTr
 import { handleOneMessageCore } from './components/MessagePipeline.js';
 import { setupSocketHandlers } from './components/SocketHandlers.js';
 import { initAgentPresetCore } from './components/AgentPresetInitializer.js';
+import { initWorldbookCore } from './components/WorldbookInitializer.js';
 import DesireManager from './utils/desireManager.js';
 import { buildProactiveRootDirectiveXml, checkProactiveWhitelistTarget } from './components/ProactiveDirectivePlanner.js';
 import { handleGroupReplyCandidate } from './utils/groupReplyMerger.js';
@@ -251,6 +252,14 @@ let AGENT_PRESET_SOURCE_PATH = '';
 let AGENT_PRESET_SOURCE_FILE_NAME = '';
 let AGENT_PRESET_WATCHER_STARTED = false;
 
+let WORLDBOOK_RAW_TEXT = '';
+let WORLDBOOK_JSON = null;
+let WORLDBOOK_XML = '';
+let WORLDBOOK_PLAIN_TEXT = '';
+let WORLDBOOK_SOURCE_PATH = '';
+let WORLDBOOK_SOURCE_FILE_NAME = '';
+let WORLDBOOK_WATCHER_STARTED = false;
+
 async function refreshAgentPreset() {
   const snapshot = await initAgentPresetCore(agent);
   AGENT_PRESET_RAW_TEXT = snapshot.rawText || '';
@@ -261,7 +270,18 @@ async function refreshAgentPreset() {
   AGENT_PRESET_SOURCE_FILE_NAME = snapshot.sourceFileName || '';
 }
 
+async function refreshWorldbook() {
+  const snapshot = await initWorldbookCore();
+  WORLDBOOK_RAW_TEXT = snapshot.rawText || '';
+  WORLDBOOK_JSON = snapshot.json || null;
+  WORLDBOOK_XML = snapshot.xml || '';
+  WORLDBOOK_PLAIN_TEXT = snapshot.plainText || '';
+  WORLDBOOK_SOURCE_PATH = snapshot.sourcePath || '';
+  WORLDBOOK_SOURCE_FILE_NAME = snapshot.sourceFileName || '';
+}
+
 await refreshAgentPreset();
+await refreshWorldbook();
 
 function initAgentPresetWatcher() {
   if (AGENT_PRESET_WATCHER_STARTED) return;
@@ -293,6 +313,37 @@ function initAgentPresetWatcher() {
 }
 
 initAgentPresetWatcher();
+
+function initWorldbookWatcher() {
+  if (WORLDBOOK_WATCHER_STARTED) return;
+  WORLDBOOK_WATCHER_STARTED = true;
+
+  const dir = './agent-presets';
+  try {
+    if (!fs.existsSync(dir)) {
+      logger.warn('WorldbookWatcher: 世界书目录不存在，跳过监听', { path: dir });
+      return;
+    }
+
+    fs.watch(dir, { persistent: false }, async (eventType, filename) => {
+      try {
+        logger.info('WorldbookWatcher: 检测到世界书目录变更', {
+          eventType,
+          filename: filename || ''
+        });
+        await refreshWorldbook();
+      } catch (e) {
+        logger.warn('WorldbookWatcher: 刷新世界书失败', { err: String(e) });
+      }
+    });
+
+    logger.info('WorldbookWatcher: 已启动世界书目录监听', { path: dir });
+  } catch (e) {
+    logger.warn('WorldbookWatcher: 启动监听失败', { err: String(e) });
+  }
+}
+
+initWorldbookWatcher();
 
 function getEmoRuntimeConfig() {
   const timeout = getEnvTimeoutMs('SENTRA_EMO_TIMEOUT', 180000, 900000);
@@ -617,6 +668,7 @@ async function runProactiveReply(candidate) {
 	  userId: userid,
 	  desireScore: candidate.desireScore,
 	  topicHint: plannerTopicHint,
+	  worldbookXml: WORLDBOOK_XML,
 	  presetPlainText: AGENT_PRESET_PLAIN_TEXT,
 	  presetXml: AGENT_PRESET_XML,
 	  personaXml,
@@ -667,6 +719,7 @@ async function handleOneMessage(msg, taskId) {
       personaManager,
       emo,
       buildSentraEmoSection,
+      WORLDBOOK_XML,
       AGENT_PRESET_XML,
       AGENT_PRESET_PLAIN_TEXT,
       AGENT_PRESET_RAW_TEXT,
@@ -788,6 +841,7 @@ const delayJobRunJob = createDelayJobRunJob({
   personaManager,
   emo,
   buildSentraEmoSection,
+  WORLDBOOK_XML,
   AGENT_PRESET_XML,
   baseSystem,
   CONTEXT_MEMORY_ENABLED: () => getMainRuntimeConfig().contextMemoryEnabled,

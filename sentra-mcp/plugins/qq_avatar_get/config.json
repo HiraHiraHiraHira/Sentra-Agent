@@ -49,15 +49,18 @@
       }
     },
     "anyOf": [
-      { "required": ["user_id"] },
-      { "required": ["user_ids"] }
+      {
+        "required": [
+          "user_id"
+        ]
+      },
+      {
+        "required": [
+          "user_ids"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 60000,
-  "meta": {
-    "realWorldAction": "获取 QQ 头像并保存到本地",
-    "responseStyle": "自然语言，附上图片路径",
-    "responseExample": "头像我已经下载好了，路径在本地图片里。"
-  }
+  "timeoutMs": 60000
 }

@@ -1,0 +1,34 @@
+{
+  "system": "# Sentra Worldbook Generator\n\n## MISSION\nGenerate ONE structured worldbook JSON for Sentra runtime injection.\n\n## CRITICAL: OUTPUT ONLY ONE XML BLOCK\n- Output ONLY ONE <sentra-worldbook> XML block.\n- Do NOT output Markdown fences, explanations, or any other text.\n- Do NOT use CDATA.\n- Do NOT escape JSON (no &lt; / &gt; / &amp;). Output raw JSON text.\n\n## REQUIRED OUTPUT FORMAT (STRICT)\n<sentra-worldbook>{JSON}</sentra-worldbook>\n\nWhere {JSON} is a single JSON object (not an array).\n\n## JSON SCHEMA (RECOMMENDED)\nThe JSON MUST be an object and should include:\n- meta: { title, version, description, language, tags }\n- entries: array of entry objects\n\nEntry schema (recommended):\n- id: stable short id (snake_case)\n- name: human readable\n- keywords: string[] (trigger words/phrases)\n- content: string (lore content)\n- priority: number (higher wins)\n- enabled: boolean\n- tags: string[]\n\n## QUALITY RULES\n- entries should be actionable: each entry must contain enough information to answer questions.\n- avoid contradictions; if unknown, keep generic and mark it as rumour/unknown.\n- keep keywords practical (3-12 per entry).\n- keep content information-dense; bullet-like paragraphs allowed.\n\n## LANGUAGE\n- Default zh-CN unless user requests otherwise.\n\n## OUTPUT TEMPLATE\n<sentra-worldbook>{\n  \"meta\": { ... },\n  \"entries\": [ ... ]\n}</sentra-worldbook>\n",
+  "meta": {
+    "name": "worldbook_generator",
+    "version": "1.0.0",
+    "description": "Generates a structured worldbook JSON wrapped in strict <sentra-worldbook>{JSON}</sentra-worldbook> XML (no CDATA)."
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "世界观：近未来赛博朋克\n语气：冷峻、硬核\n核心设定：巨型企业统治、义体改造普及、黑客与地下组织对抗\n需要包含：\n- 城市概览\n- 3 个巨企与业务\n- 2 个地下组织\n- 义体改造规则与风险\n- 常用术语表\n- 重要地点 5 个\n输出：世界书 JSON"
+    },
+    {
+      "role": "assistant",
+      "content": "<sentra-worldbook>{\n  \"meta\": {\n    \"title\": \"霓虹裂隙\",\n    \"version\": \"1.0.0\",\n    \"description\": \"近未来赛博朋克都市：巨企统治、义体改造、黑客与地下组织对抗\",\n    \"language\": \"zh-CN\",\n    \"tags\": [\"cyberpunk\", \"near_future\"]\n  },\n  \"entries\": [\n    {\n      \"id\": \"city_overview\",\n      \"name\": \"城市概览\",\n      \"keywords\": [\"城市\", \"霓虹\", \"塔区\", \"雾区\"],\n      \"content\": \"- 城市被分为上层塔区与下层雾区\n- 交通由磁悬轨与无人机廊道构成\n- 法律更像企业合同：谁掌握权限，谁就拥有正义\",\n      \"priority\": 80,\n      \"enabled\": true,\n      \"tags\": [\"overview\"]\n    }\n  ]\n}</sentra-worldbook>"
+    },
+    {
+      "role": "user",
+      "content": "世界观：古典奇幻（剑与魔法）\n语气：史诗、庄严\n需要包含：\n- 魔法体系（来源/限制/代价）\n- 王国 2 个、教会 1 个\n- 3 个关键人物（简短背景 + 关系）\n- 重要地名 6 个\n- 专有名词表\n输出：世界书 JSON"
+    },
+    {
+      "role": "assistant",
+      "content": "<sentra-worldbook>{\n  \"meta\": {\n    \"title\": \"银烬纪\",\n    \"version\": \"1.0.0\",\n    \"description\": \"古典奇幻大陆：王国、教会与魔法代价交织的史诗时代\",\n    \"language\": \"zh-CN\",\n    \"tags\": [\"fantasy\", \"epic\"]\n  },\n  \"entries\": [\n    {\n      \"id\": \"magic_system\",\n      \"name\": \"魔法体系：银烬与誓约\",\n      \"keywords\": [\"银烬\", \"誓约\", \"法术\", \"代价\"],\n      \"content\": \"来源：\n- 魔法来自‘银烬’——古星陨落后的灰烬能量\n限制：\n- 施法者必须立下誓约（不可违背的规则）\n代价：\n- 违誓会导致‘灰化’：记忆与情感逐步剥落\n\n常识：\n- 强力法术必须借助媒介（符印/圣器/血契）\n- 法术越具体、越强，誓约越苛刻\",\n      \"priority\": 95,\n      \"enabled\": true,\n      \"tags\": [\"rules\"]\n    }\n  ]\n}</sentra-worldbook>"
+    },
+    {
+      "role": "user",
+      "content": "世界观：现代校园恋爱\n语气：轻松、日常\n需要包含：\n- 学校概况\n- 班级/社团 4 个\n- 常见地点 8 个\n- 校园传闻 6 条（可真假混合）\n- 称呼/梗/规矩（例如‘学长/学姐’、‘社团活动日’）\n输出：世界书 JSON"
+    },
+    {
+      "role": "assistant",
+      "content": "<sentra-worldbook>{\n  \"meta\": {\n    \"title\": \"樱风学园\",\n    \"version\": \"1.0.0\",\n    \"description\": \"现代校园日常：社团活动、传闻与小小心动的发生地\",\n    \"language\": \"zh-CN\",\n    \"tags\": [\"campus\", \"slice_of_life\"]\n  },\n  \"entries\": [\n    {\n      \"id\": \"school_overview\",\n      \"name\": \"学校概况\",\n      \"keywords\": [\"樱风学园\", \"校规\", \"社团\"],\n      \"content\": \"- 市立重点高中，校风宽松但成绩压力大\n- 社团活动日为每周三，放学后校园更热闹\n- 校规里最常被提起的是‘不得在走廊奔跑’\",\n      \"priority\": 80,\n      \"enabled\": true,\n      \"tags\": [\"overview\"]\n    },\n    {\n      \"id\": \"rumours\",\n      \"name\": \"校园传闻（真假混合）\",\n      \"keywords\": [\"传闻\", \"旧校舍\", \"天台\", \"樱花树\"],\n      \"content\": \"1) 旧校舍音乐室半夜会响起钢琴声（可能是保安巡逻）\n2) 天台门只有在下雨天才会自己打开（多半是风压）\n3) 樱花树下写下名字，三天内会收到匿名情书（有人在恶作剧）\n\n提示：传闻通常被学生用来试探对方胆量或制造独处机会\",\n      \"priority\": 70,\n      \"enabled\": true,\n      \"tags\": [\"rumour\"]\n    }\n  ]\n}</sentra-worldbook>"
+    }
+  ]
+}

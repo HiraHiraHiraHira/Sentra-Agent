@@ -11,6 +11,7 @@ import { embedTexts } from '../openai/client.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 
 function makeAINameLocal(name) {
@@ -166,23 +167,67 @@ export class MCPCore {
     // Ensure initial load so localTools has plugin metadata
     await this.init();
 
-    const rootDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
-    const pluginsRoot = path.join(rootDir, 'plugins');
-
     let needFullReload = false;
     const toRemove = new Set();
 
+    const resolvePluginDirCandidates = (dirName) => {
+      const out = [];
+      try {
+        const __filename = fileURLToPath(import.meta.url);
+        const __dirname = path.dirname(__filename);
+        const libRoot = path.resolve(__dirname, '..', '..');
+        out.push(path.join(libRoot, 'plugins', dirName));
+      } catch {}
+      try {
+        if (process.env.PLUGINS_DIR) out.push(path.join(path.resolve(process.env.PLUGINS_DIR), dirName));
+      } catch {}
+      try {
+        out.push(path.join(path.resolve(process.cwd(), 'plugins'), dirName));
+      } catch {}
+      const seen = new Set();
+      return out.map((p) => path.resolve(p)).filter((p) => {
+        if (seen.has(p)) return false;
+        seen.add(p);
+        return true;
+      });
+    };
+
+    const isSensitiveKey = (k) => /key|token|secret|password/i.test(String(k || ''));
+    const safePreview = (k, v) => {
+      if (isSensitiveKey(k)) return '[REDACTED]';
+      const s = typeof v === 'string' ? v : JSON.stringify(v);
+      return String(s ?? '').slice(0, 160);
+    };
+
     for (const dirName of dirs) {
-      const absDir = path.join(pluginsRoot, dirName);
-      const envPath = path.join(absDir, '.env');
-      const envAltPath = path.join(absDir, 'config.env');
+      const matching = this.localTools.filter((t) => t && t._pluginDirName === dirName);
+
+      const absDir = matching.length
+        ? String(matching[0]?._pluginAbsDir || '')
+        : '';
+
+      const absDirCandidates = absDir ? [path.resolve(absDir)] : resolvePluginDirCandidates(dirName);
+
+      const pickEnvFiles = (base) => {
+        const envPath = path.join(base, '.env');
+        const envAltPath = path.join(base, 'config.env');
+        if (fs.existsSync(envPath)) return { envPath, envAltPath: null };
+        if (fs.existsSync(envAltPath)) return { envPath: null, envAltPath };
+        return { envPath: null, envAltPath: null };
+      };
 
       let penv = {};
       try {
-        if (fs.existsSync(envPath)) {
-          penv = { ...penv, ...dotenv.parse(fs.readFileSync(envPath)) };
-        } else if (fs.existsSync(envAltPath)) {
-          penv = { ...penv, ...dotenv.parse(fs.readFileSync(envAltPath)) };
+        for (const base of absDirCandidates) {
+          const { envPath, envAltPath } = pickEnvFiles(base);
+          if (envPath) {
+            penv = { ...penv, ...dotenv.parse(fs.readFileSync(envPath)) };
+            break;
+          }
+          if (envAltPath) {
+            penv = { ...penv, ...dotenv.parse(fs.readFileSync(envAltPath)) };
+            break;
+          }
         }
       } catch (e) {
         logger.warn?.('Failed to parse plugin env during hot reload', { label: 'MCP', dir: dirName, error: String(e) });
@@ -199,9 +244,7 @@ export class MCPCore {
         }
       } catch {}
 
-      const matching = this.localTools.filter((t) => t && t._pluginDirName === dirName);
       if (!matching.length) {
-        // Plugin enabled but not present: need a full reload to import handler
         if (enabled) needFullReload = true;
         continue;
       }
@@ -213,14 +256,52 @@ export class MCPCore {
 
       // Update env + timeout on matching tools
       for (const t of matching) {
-        try { t.pluginEnv = penv; } catch {}
+        const prevEnv = (() => {
+          try { return t.pluginEnv && typeof t.pluginEnv === 'object' ? t.pluginEnv : {}; } catch { return {}; }
+        })();
 
-        let timeoutMs = Number(t.timeoutMs) || 0;
+        const prevTimeoutMs = Number(t.timeoutMs) || 0;
+        let timeoutMs = prevTimeoutMs;
         const fromEnvA = Number(penv.PLUGIN_TIMEOUT_MS);
         const fromEnvB = Number(penv.TOOL_TIMEOUT_MS);
         if (!Number.isNaN(fromEnvA) && fromEnvA > 0) timeoutMs = fromEnvA;
         else if (!Number.isNaN(fromEnvB) && fromEnvB > 0) timeoutMs = fromEnvB;
+
+        try { t.pluginEnv = penv; } catch {}
         try { t.timeoutMs = timeoutMs; } catch {}
+
+        try {
+          const prevKeys = new Set(Object.keys(prevEnv || {}));
+          const nextKeys = new Set(Object.keys(penv || {}));
+          const allKeys = new Set([...prevKeys, ...nextKeys]);
+
+          const changedKeys = [];
+          const diffPreview = {};
+          for (const k of allKeys) {
+            const a = prevEnv?.[k];
+            const b = penv?.[k];
+            if (String(a ?? '') !== String(b ?? '')) {
+              changedKeys.push(k);
+              if (Object.keys(diffPreview).length < 12) {
+                diffPreview[k] = [safePreview(k, a), safePreview(k, b)];
+              }
+            }
+          }
+
+          const timeoutChanged = prevTimeoutMs !== timeoutMs;
+          if (changedKeys.length || timeoutChanged) {
+            logger.info?.('插件 env 更新明细', {
+              label: 'MCP',
+              plugin: dirName,
+              tool: t.name,
+              changedKeysCount: changedKeys.length,
+              changedKeysSample: changedKeys.slice(0, 20),
+              diffPreview,
+              timeoutMs,
+              prevTimeoutMs,
+            });
+          }
+        } catch {}
       }
     }
 
@@ -274,6 +355,8 @@ export class MCPCore {
         scope: item.scope || 'global',
         tenant: item.tenant || 'default',
         cooldownMs: Number(item.cooldownMs || config.planner.cooldownDefaultMs || 0),
+        meta: item.meta || {},
+        skillDoc: item.skillDoc || null,
       });
     }
     return out;
@@ -305,6 +388,7 @@ export class MCPCore {
         timeoutMs: Number(item.timeoutMs || 0),
         providerType: item.providerType,
         meta: item.meta || {},
+        skillDoc: item.skillDoc || null,
       };
       if (item.providerType === 'local') {
         out.push({ ...base, provider: 'local' });

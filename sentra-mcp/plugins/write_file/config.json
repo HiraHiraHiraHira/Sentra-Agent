@@ -70,10 +70,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 120000,
-  "meta": {
-    "realWorldAction": "操作电脑文件，支持发送文件给用户",
-    "responseStyle": "markdown结合自然语言(必须使用绝对路径反馈文件位置)",
-    "responseExample": "✅ 文件已保存：![快乐源泉.docx](E:/sentra-agent/sentra-mcp/artifacts/topic_happy.docx)\n\n注意：必须使用绝对路径（包含盘符），不要使用相对路径或省略盘符。"
-  }
+  "timeoutMs": 120000
 }

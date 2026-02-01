@@ -37,10 +37,5 @@
     },
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "获取最近联系人",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已返回最近联系人"
-  }
+  "timeoutMs": 20000
 }

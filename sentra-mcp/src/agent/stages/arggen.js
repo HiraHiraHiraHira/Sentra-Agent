@@ -14,19 +14,16 @@ import { loadPrompt, renderTemplate, composeSystem } from '../prompts/loader.js'
 import { compactMessages } from '../utils/messages.js';
 import { parseFunctionCalls, buildFunctionCallInstruction, buildFCPolicy, formatSentraUserQuestion } from '../../utils/fc.js';
 
-/**
- * 生成工具调用参数
- * @param {Object} params
- * @param {string} params.runId - 运行 ID
- * @param {number} params.stepIndex - 步骤索引
- * @param {string} params.objective - 总体目标
- * @param {Object} params.step - 当前步骤 { aiName, reason, draftArgs, dependsOn }
- * @param {Object} params.currentToolFull - 完整工具定义
- * @param {Object} params.manifestItem - 清单项
- * @param {Array} params.conv - 对话上下文
- * @param {number} params.totalSteps - 总步骤数
- * @returns {Promise<Object>} { toolArgs, reused }
- */
+function clipText(s, maxChars) {
+  const t = String(s ?? '');
+  const lim = Math.max(0, Number(maxChars) || 0);
+  if (!lim) return t;
+  return t.length > lim ? t.slice(0, lim) : t;
+}
+
+function toXmlCData(text) {
+  return String(text ?? '').replace(/]]>/g, ']]]]><![CDATA[>');
+}
 export async function generateToolArgs(params) {
   const {
     runId,
@@ -43,6 +40,17 @@ export async function generateToolArgs(params) {
 
   const { aiName, reason, draftArgs } = step;
   let toolArgs = draftArgs;
+
+  const skillDoc = currentToolFull?.skillDoc && typeof currentToolFull.skillDoc === 'object'
+    ? currentToolFull.skillDoc
+    : (manifestItem?.skillDoc && typeof manifestItem.skillDoc === 'object' ? manifestItem.skillDoc : null);
+  const skillDigest = (skillDoc && typeof skillDoc.digest === 'string') ? skillDoc.digest : '';
+  const skillMarkdownRaw = (skillDoc && typeof skillDoc.raw === 'string') ? skillDoc.raw : '';
+  const skillCfg = (config && config.skillDoc && typeof config.skillDoc === 'object') ? config.skillDoc : {};
+  const maxSkillDigestChars = Number.isFinite(Number(skillCfg.maxDigestChars)) ? Number(skillCfg.maxDigestChars) : 0;
+  const maxSkillMarkdownChars = Number.isFinite(Number(skillCfg.maxMarkdownChars)) ? Number(skillCfg.maxMarkdownChars) : 0;
+  const skillDigestClipped = clipText(skillDigest, maxSkillDigestChars);
+  const skillMarkdownClipped = clipText(skillMarkdownRaw, maxSkillMarkdownChars);
 
   const perStepTools = [{
     type: 'function',
@@ -67,7 +75,8 @@ export async function generateToolArgs(params) {
   // 🔥 重试模式：includeCurrentStep=true 包含当前步骤的失败历史，让 LLM 看到之前的尝试
   const isRetryMode = disableReuse === true;
   const dialogueMsgs = await buildToolDialogueMessages(runId, stepIndex, useFC, isRetryMode);
-  const depAppendText = await buildDependentContextText(runId, step.dependsOn, useFC);
+  const depRefs = Array.isArray(step?.dependsOnStepIds) ? step.dependsOnStepIds : [];
+  const depAppendText = await buildDependentContextText(runId, depRefs, useFC);
 
   if (isRetryMode && config.flags.enableVerboseSteps) {
     logger.info('重试模式：使用完整工具执行历史（包含失败尝试）', {
@@ -155,6 +164,8 @@ export async function generateToolArgs(params) {
       aiName,
       reason: reason || '',
       description: currentToolFull?.description || '',
+      skillDigest: skillDigestClipped || '(无)',
+      skillMarkdown: useFC ? toXmlCData(skillMarkdownClipped || '') : (skillMarkdownClipped || ''),
       draftArgs: draftArgs ? JSON.stringify(draftArgs, null, 2) : '(无)',
       requiredList: Array.isArray(requiredList) && requiredList.length ? requiredList.join(', ') : '(无)',
       requiredDetail: requiredDetail || '(无)',
@@ -490,6 +501,17 @@ export async function fixToolArgs(params) {
 
   const { aiName, reason } = step;
 
+  const skillDoc = currentToolFull?.skillDoc && typeof currentToolFull.skillDoc === 'object'
+    ? currentToolFull.skillDoc
+    : null;
+  const skillDigest = (skillDoc && typeof skillDoc.digest === 'string') ? skillDoc.digest : '';
+  const skillMarkdownRaw = (skillDoc && typeof skillDoc.raw === 'string') ? skillDoc.raw : '';
+  const skillCfg = (config && config.skillDoc && typeof config.skillDoc === 'object') ? config.skillDoc : {};
+  const maxSkillDigestChars = Number.isFinite(Number(skillCfg.maxDigestChars)) ? Number(skillCfg.maxDigestChars) : 0;
+  const maxSkillMarkdownChars = Number.isFinite(Number(skillCfg.maxMarkdownChars)) ? Number(skillCfg.maxMarkdownChars) : 0;
+  const skillDigestClipped = clipText(skillDigest, maxSkillDigestChars);
+  const skillMarkdownClipped = clipText(skillMarkdownRaw, maxSkillMarkdownChars);
+
   try {
     const requiredList = Array.isArray((schema || {}).required) ? schema.required : [];
 
@@ -529,14 +551,17 @@ export async function fixToolArgs(params) {
       reason: reason || '',
       description: currentToolFull?.description || '',
       draftArgs: draftArgs ? JSON.stringify(draftArgs, null, 2) : '(无)',
+      skillDigest: skillDigestClipped || '(无)',
+      skillMarkdown: useFC ? toXmlCData(skillMarkdownClipped || '') : (skillMarkdownClipped || ''),
       errors: JSON.stringify(ajvErrors || [], null, 2),
       requiredList: Array.isArray(requiredList) && requiredList.length ? requiredList.join(', ') : '(无)',
-      requiredDetail: requiredDetail || '(无)'
+      requiredDetail: requiredDetail || '(无)' 
     });
 
     // 构建上下文（FC 模式使用 XML 格式）
     const dialogueMsgs = await buildToolDialogueMessages(runId, stepIndex, useFC);
-    const depAppendText = await buildDependentContextText(runId, step.dependsOn, useFC);
+    const depRefs = Array.isArray(step?.dependsOnStepIds) ? step.dependsOnStepIds : [];
+    const depAppendText = await buildDependentContextText(runId, depRefs, useFC);
 
     const messagesFix = compactMessages([
       { role: 'system', content: sysFix },

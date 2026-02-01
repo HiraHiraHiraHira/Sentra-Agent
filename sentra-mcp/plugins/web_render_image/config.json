@@ -73,16 +73,19 @@
       }
     },
     "anyOf": [
-      { "required": ["html"] },
-      { "required": ["file"] }
+      {
+        "required": [
+          "html"
+        ]
+      },
+      {
+        "required": [
+          "file"
+        ]
+      }
     ],
     "required": [],
     "additionalProperties": true
   },
-  "timeoutMs": 60000,
-  "meta": {
-    "realWorldAction": "渲染 HTML（字符串或本地文件）为图片",
-    "responseStyle": "纯文本（Markdown 图片链接，必须使用绝对路径）",
-    "responseExample": "✅ 页面已渲染：![render](E:/sentra-agent/sentra-mcp/artifacts/render_1234567890.png)\n\n注意：必须使用绝对路径（包含盘符 E:/），不要使用相对路径。"
-  }
+  "timeoutMs": 60000
 }

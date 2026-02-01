@@ -61,8 +61,6 @@
   },
   "timeoutMs": 300000,
   "meta": {
-    "realWorldAction": "AI生成音乐并发送卡片",
-    "responseStyle": "结构化 JSON（中文键）",
     "streamSupport": true
   }
 }

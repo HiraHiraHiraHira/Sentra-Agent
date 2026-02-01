@@ -8,6 +8,11 @@ import { startHotReloadWatchers } from '../config/hotReload.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+function toXmlCData(text) {
+  const s = String(text ?? '');
+  return s.replace(/]]>/g, ']]]]><![CDATA[>');
+}
+
 const __defaultCore = new MCPCore();
 
 function escapeXmlEntities(str) {
@@ -69,13 +74,17 @@ function circledNum(n) {
 }
 
 function toMarkdownCatalog(items = []) {
+  const includeSkillMarkdown = String(process.env.MCP_EXPORT_INCLUDE_SKILL_MARKDOWN || '').trim().toLowerCase();
+  const includeFull = includeSkillMarkdown === '1' || includeSkillMarkdown === 'true' || includeSkillMarkdown === 'on' || includeSkillMarkdown === 'yes';
   const lines = ['# Sentra MCP 工具清单', '', `**可用工具总数**: ${items.length}`, '---', ''];
   for (const t of items) {
     lines.push(`### ${t.name} (${t.aiName})`);
     
-    if (t.meta?.realWorldAction) {
-      lines.push(`**映射真实能力**: ${t.meta.realWorldAction}`);
-    }
+    const skill = t.skillDoc && typeof t.skillDoc === 'object' ? t.skillDoc : null;
+    const attrs = skill && skill.attributes && typeof skill.attributes === 'object' ? skill.attributes : {};
+    const digest = typeof skill?.digest === 'string' ? skill.digest : '';
+    const rawMd = typeof skill?.raw === 'string' ? skill.raw : '';
+    void attrs;
     
     lines.push(`**描述**: ${t.description || '(无描述)'}`);
     lines.push(`**提供者**: ${t.provider}${t.serverId ? ` | serverId: ${t.serverId}` : ''}`);
@@ -100,17 +109,17 @@ function toMarkdownCatalog(items = []) {
     }
     
     lines.push(`**超时(ms)**: ${t.timeoutMs}ms`);
-    
-    // 元信息
-    if (t.meta && Object.keys(t.meta).length) {
-      if (t.meta.responseStyle) {
-        lines.push(`**回复格式**: ${t.meta.responseStyle}`);
-      }
-      if (t.meta.responseExample) {
-        lines.push('**示例回复**:');
-        const ex = String(t.meta.responseExample).split('\n').map((l) => `  ${l}`);
-        lines.push(...ex);
-      }
+
+    if (digest) {
+      lines.push('**技能摘要**:');
+      const ex = String(digest).split('\n').map((l) => `  ${l}`);
+      lines.push(...ex);
+    }
+
+    if (includeFull && rawMd) {
+      lines.push('**技能文档(skill.md)**:');
+      lines.push('');
+      lines.push(rawMd);
     }
     
     lines.push('');
@@ -119,6 +128,8 @@ function toMarkdownCatalog(items = []) {
 }
 
 function toXmlCatalog(items = []) {
+  const includeSkillMarkdown = String(process.env.MCP_EXPORT_INCLUDE_SKILL_MARKDOWN || '').trim().toLowerCase();
+  const includeFull = includeSkillMarkdown === '1' || includeSkillMarkdown === 'true' || includeSkillMarkdown === 'on' || includeSkillMarkdown === 'yes';
   const lines = [];
   lines.push('<sentra-mcp-tools>');
   lines.push(
@@ -133,7 +144,8 @@ function toXmlCatalog(items = []) {
     const provider = t.provider || '';
     const serverId = t.serverId || '';
     const desc = t.description || '';
-    const real = (t.meta && t.meta.realWorldAction) || '';
+    const skill = t.skillDoc && typeof t.skillDoc === 'object' ? t.skillDoc : null;
+    const attrs = skill && skill.attributes && typeof skill.attributes === 'object' ? skill.attributes : {};
     const cooldown = t.cooldownMs != null ? String(t.cooldownMs) : '';
     const timeout = t.timeoutMs != null ? String(t.timeoutMs) : '';
     const schema = t.inputSchema || {};
@@ -142,9 +154,9 @@ function toXmlCatalog(items = []) {
     const condLine = conditionalGroups.length
       ? `anyOf/oneOf: one of ${conditionalGroups.map((g) => `[${g.join(', ')}]`).join(' OR ')}`
       : '';
-    const responseStyle = (t.meta && t.meta.responseStyle) || '';
-    const responseExample =
-      t.meta && t.meta.responseExample != null ? String(t.meta.responseExample) : '';
+    const digest = typeof skill?.digest === 'string' ? skill.digest : '';
+    const rawMd = typeof skill?.raw === 'string' ? skill.raw : '';
+    void attrs;
 
     lines.push(`  <tool index="${escapeXmlEntities(index)}">`);
     if (aiName) lines.push(`    <ai_name>${escapeXmlEntities(aiName)}</ai_name>`);
@@ -152,22 +164,59 @@ function toXmlCatalog(items = []) {
     if (provider) lines.push(`    <provider>${escapeXmlEntities(provider)}</provider>`);
     if (serverId) lines.push(`    <server_id>${escapeXmlEntities(serverId)}</server_id>`);
     if (desc) lines.push(`    <description>${escapeXmlEntities(desc)}</description>`);
-    if (real) lines.push(`    <real_world_action>${escapeXmlEntities(real)}</real_world_action>`);
+    if (!includeFull && digest) {
+      lines.push('    <skill_digest>');
+      lines.push(`${escapeXmlEntities(String(digest))}`);
+      lines.push('    </skill_digest>');
+    }
+    if (includeFull && rawMd) {
+      lines.push('    <skill_markdown><![CDATA[');
+      lines.push(`${toXmlCData(String(rawMd))}`);
+      lines.push('    ]]></skill_markdown>');
+    }
     if (reqLine && reqLine !== '(无)') lines.push(`    <required_params>${escapeXmlEntities(reqLine)}</required_params>`);
     if (condLine) lines.push(`    <conditional_required>${escapeXmlEntities(condLine)}</conditional_required>`);
     if (cooldown) lines.push(`    <cooldown_ms>${escapeXmlEntities(cooldown)}</cooldown_ms>`);
     if (timeout) lines.push(`    <timeout_ms>${escapeXmlEntities(timeout)}</timeout_ms>`);
-    if (responseStyle || responseExample) {
-      lines.push('    <meta>');
-      if (responseStyle) lines.push(`      <response_style>${escapeXmlEntities(responseStyle)}</response_style>`);
-      if (responseExample) lines.push(`      <response_example>${escapeXmlEntities(responseExample)}</response_example>`);
-      lines.push('    </meta>');
-    }
     lines.push('  </tool>');
   });
 
   lines.push('</sentra-mcp-tools>');
   return lines.join('\n');
+}
+
+function toJsonCatalog(items = []) {
+  const includeSkillMarkdown = String(process.env.MCP_EXPORT_INCLUDE_SKILL_MARKDOWN || '').trim().toLowerCase();
+  const includeFull = includeSkillMarkdown === '1' || includeSkillMarkdown === 'true' || includeSkillMarkdown === 'on' || includeSkillMarkdown === 'yes';
+
+  return (items || []).map((t) => {
+    const skill = t && t.skillDoc && typeof t.skillDoc === 'object' ? t.skillDoc : null;
+    const digest = typeof skill?.digest === 'string' ? skill.digest : '';
+    const rawMd = typeof skill?.raw === 'string' ? skill.raw : '';
+    const schema = t?.inputSchema || {};
+    const { required, conditionalGroups } = formatRequiredHint(schema);
+
+    return {
+      aiName: t?.aiName || '',
+      name: t?.name || '',
+      description: t?.description || '',
+      provider: t?.provider || '',
+      serverId: t?.serverId || undefined,
+      scope: t?.scope || 'global',
+      tenant: t?.tenant || 'default',
+      cooldownMs: Number(t?.cooldownMs || 0),
+      timeoutMs: Number(t?.timeoutMs || 0),
+      inputSchema: schema,
+      requiredParams: required,
+      conditionalRequired: conditionalGroups,
+      skill: {
+        digest: digest || undefined,
+        markdown: includeFull ? (rawMd || undefined) : undefined,
+        updatedAt: skill?.updatedAt || undefined,
+        path: skill?.path || undefined,
+      },
+    };
+  });
 }
 /**
  * Sentra SDK wrapper
@@ -197,11 +246,11 @@ export class SentraMcpSDK {
 
   /**
    * Run plan-then-execute once and return the final result.
-   * @param {{ objective: string, conversation?: Array<{role:string,content:any}>, context?: object, overlays?: Record<string, any>, promptOverlays?: Record<string, any> }} params
+   * @param {{ objective: string, conversation?: Array<{role:string,content:any}>, context?: object, overlays?: Record<string, any>, promptOverlays?: Record<string, any>, forceNeedTools?: boolean }} params
    * overlays/promptOverlays: per-stage system overlays, e.g. { global: '...', plan: '...', emit_plan: '...', judge: '...', arggen: '...', final_judge: '...', final_summary: '...' }
    * @returns {Promise<import('../utils/result.js').Result>}
    */
-  async runOnce({ objective, conversation, context = {}, overlays, promptOverlays, channelId, identityKey }) {
+  async runOnce({ objective, conversation, context = {}, overlays, promptOverlays, channelId, identityKey, forceNeedTools }) {
     await this.init();
     const ov = promptOverlays || overlays;
     const ctx0 = (context && typeof context === 'object') ? context : {};
@@ -209,7 +258,7 @@ export class SentraMcpSDK {
       ? { ...ctx0, ...(channelId != null ? { channelId } : {}), ...(identityKey != null ? { identityKey } : {}) }
       : ctx0;
     const ctx = ov ? { ...ctx1, promptOverlays: { ...(ctx1.promptOverlays || {}), ...ov } } : ctx1;
-    return planThenExecute({ objective, context: ctx, mcpcore: this.mcpcore, conversation });
+    return planThenExecute({ objective, context: ctx, mcpcore: this.mcpcore, conversation, forceNeedTools });
   }
 
   /**
@@ -249,7 +298,7 @@ export class SentraMcpSDK {
     const items = this.mcpcore.getAvailableToolsDetailed();
     let content;
     if (format === 'json') {
-      content = JSON.stringify(items, null, pretty);
+      content = JSON.stringify(toJsonCatalog(items), null, pretty);
     } else if (format === 'md' || format === 'markdown') {
       content = toMarkdownCatalog(items);
     } else if (format === 'xml') {
@@ -268,10 +317,10 @@ export class SentraMcpSDK {
 
   /**
    * Stream events for a run as an async iterator.
-   * @param {{ objective: string, conversation?: Array<{role:string,content:any}>, context?: object, overlays?: Record<string, any>, promptOverlays?: Record<string, any> }} params
+   * @param {{ objective: string, conversation?: Array<{role:string,content:any}>, context?: object, overlays?: Record<string, any>, promptOverlays?: Record<string, any>, forceNeedTools?: boolean }} params
    * @returns {AsyncIterable<any>}
    */
-  stream({ objective, conversation, context = {}, overlays, promptOverlays, channelId, identityKey }) {
+  stream({ objective, conversation, context = {}, overlays, promptOverlays, channelId, identityKey, forceNeedTools }) {
     const self = this;
     async function* gen() {
       await self.init();
@@ -281,7 +330,7 @@ export class SentraMcpSDK {
         ? { ...ctx0, ...(channelId != null ? { channelId } : {}), ...(identityKey != null ? { identityKey } : {}) }
         : ctx0;
       const ctx = ov ? { ...ctx1, promptOverlays: { ...(ctx1.promptOverlays || {}), ...ov } } : ctx1;
-      for await (const ev of planThenExecuteStream({ objective, context: ctx, mcpcore: self.mcpcore, conversation })) {
+      for await (const ev of planThenExecuteStream({ objective, context: ctx, mcpcore: self.mcpcore, conversation, forceNeedTools })) {
         yield ev;
       }
     }
@@ -291,9 +340,9 @@ export class SentraMcpSDK {
   /**
    * Stream with callback helper. Returns controller with stop() and a completion promise.
    * Note: stop() only stops event consumption; the underlying run will continue to finish.
-   * @param {{ objective: string, conversation?: Array<{role:string,content:any}>, context?: object, overlays?: Record<string, any>, promptOverlays?: Record<string, any>, onEvent: (ev:any)=>void }} params
+   * @param {{ objective: string, conversation?: Array<{role:string,content:any}>, context?: object, overlays?: Record<string, any>, promptOverlays?: Record<string, any>, forceNeedTools?: boolean, onEvent: (ev:any)=>void }} params
    */
-  async streamWithCallback({ objective, conversation, context = {}, overlays, promptOverlays, onEvent, channelId, identityKey }) {
+  async streamWithCallback({ objective, conversation, context = {}, overlays, promptOverlays, onEvent, channelId, identityKey, forceNeedTools }) {
     await this.init();
     let stopped = false;
     const done = (async () => {
@@ -304,7 +353,7 @@ export class SentraMcpSDK {
           ? { ...ctx0, ...(channelId != null ? { channelId } : {}), ...(identityKey != null ? { identityKey } : {}) }
           : ctx0;
         const ctx = ov ? { ...ctx1, promptOverlays: { ...(ctx1.promptOverlays || {}), ...ov } } : ctx1;
-        for await (const ev of planThenExecuteStream({ objective, context: ctx, mcpcore: this.mcpcore, conversation })) {
+        for await (const ev of planThenExecuteStream({ objective, context: ctx, mcpcore: this.mcpcore, conversation, forceNeedTools })) {
           if (stopped) break;
           try { onEvent?.(ev); } catch {}
         }

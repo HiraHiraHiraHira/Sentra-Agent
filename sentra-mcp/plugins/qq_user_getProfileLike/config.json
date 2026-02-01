@@ -37,10 +37,5 @@
     },
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "获取资料点赞",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已返回点赞列表"
-  }
+  "timeoutMs": 20000
 }

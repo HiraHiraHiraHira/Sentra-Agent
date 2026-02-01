@@ -16,6 +16,7 @@ export function createDelayJobRunJob(ctx) {
     personaManager,
     emo,
     buildSentraEmoSection,
+    WORLDBOOK_XML,
     AGENT_PRESET_XML,
     baseSystem,
     CONTEXT_MEMORY_ENABLED,
@@ -68,6 +69,7 @@ export function createDelayJobRunJob(ctx) {
         memoryXml = await getDailyContextMemoryXml(groupIdKey);
       } catch {}
     }
+    const worldbookXml = WORLDBOOK_XML || '';
     const agentPresetXml = AGENT_PRESET_XML || '';
 
     let socialXml = '';
@@ -77,7 +79,7 @@ export function createDelayJobRunJob(ctx) {
       }
     } catch {}
 
-    const parts = [baseSystem, personaXml, emoXml, memoryXml, socialXml, agentPresetXml].filter(Boolean);
+    const parts = [baseSystem, personaXml, emoXml, memoryXml, socialXml, worldbookXml, agentPresetXml].filter(Boolean);
     return parts.join('\n\n');
   }
 

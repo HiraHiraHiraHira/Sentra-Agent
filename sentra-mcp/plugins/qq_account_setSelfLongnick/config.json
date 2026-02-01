@@ -43,10 +43,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "修改当前 QQ 的个性签名",
-    "responseStyle": "自然语言，简短确认已设置",
-    "responseExample": "个性签名已经更新好了。"
-  }
+  "timeoutMs": 20000
 }

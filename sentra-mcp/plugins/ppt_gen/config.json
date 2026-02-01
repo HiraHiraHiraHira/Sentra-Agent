@@ -21,7 +21,10 @@
       },
       "mode": {
         "type": "string",
-        "enum": ["ai_generate", "direct_render"],
+        "enum": [
+          "ai_generate",
+          "direct_render"
+        ],
         "default": "ai_generate",
         "description": "ai_generate: 根据主题+提纲自动生成每页内容; direct_render: 直接把提供的 markdown/html 渲染成 PPT。"
       },
@@ -31,10 +34,15 @@
         "items": {
           "type": "object",
           "properties": {
-            "title": { "type": "string" },
+            "title": {
+              "type": "string"
+            },
             "format": {
               "type": "string",
-              "enum": ["markdown", "html"],
+              "enum": [
+                "markdown",
+                "html"
+              ],
               "default": "markdown"
             },
             "content": {
@@ -42,7 +50,9 @@
               "description": "该页的 Markdown 或 HTML 代码。"
             }
           },
-          "required": ["content"],
+          "required": [
+            "content"
+          ],
           "additionalProperties": false
         }
       },
@@ -53,7 +63,12 @@
       },
       "theme": {
         "type": "string",
-        "enum": ["default", "dark", "business", "simple"],
+        "enum": [
+          "default",
+          "dark",
+          "business",
+          "simple"
+        ],
         "default": "default",
         "description": "PPT 主题/风格，映射到 PptxGenJS 的 slide master 或统一样式。"
       },
@@ -63,15 +78,19 @@
       }
     },
     "anyOf": [
-      { "required": ["subject", "outline"] },
-      { "required": ["slides"] }
+      {
+        "required": [
+          "subject",
+          "outline"
+        ]
+      },
+      {
+        "required": [
+          "slides"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 120000,
-  "meta": {
-    "realWorldAction": "生成可编辑的 PowerPoint 文件",
-    "responseStyle": "markdown结合自然语言",
-    "responseExample": "PPT 已生成，保存在本地：E:/sentra-agent/sentra-mcp/artifacts/ppt_1696231234567.pptx"
-  }
+  "timeoutMs": 120000
 }

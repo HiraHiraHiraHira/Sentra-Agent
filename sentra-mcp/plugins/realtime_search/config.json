@@ -90,17 +90,24 @@
       }
     },
     "anyOf": [
-      { "required": ["query"] },
-      { "required": ["queries"] },
-      { "required": ["rawRequest"] }
+      {
+        "required": [
+          "query"
+        ]
+      },
+      {
+        "required": [
+          "queries"
+        ]
+      },
+      {
+        "required": [
+          "rawRequest"
+        ]
+      }
     ],
     "additionalProperties": true
   },
   "cooldownMs": 0,
-  "timeoutMs": 70000,
-  "meta": {
-    "realWorldAction": "上网搜索资料",
-    "responseStyle": "自然语言 + 引用链接(可选, markdown)",
-    "responseExample": "为问题提供简明答案，如果用户需要，则指出参考链接, 使用markdown的形式来展示链接"
-  }
+  "timeoutMs": 70000
 }

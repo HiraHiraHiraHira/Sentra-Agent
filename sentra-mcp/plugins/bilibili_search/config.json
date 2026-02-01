@@ -65,15 +65,18 @@
       }
     },
     "anyOf": [
-      { "required": ["keyword"] },
-      { "required": ["keywords"] }
+      {
+        "required": [
+          "keyword"
+        ]
+      },
+      {
+        "required": [
+          "keywords"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 180000,
-  "meta": {
-    "realWorldAction": "下载视频",
-    "responseStyle": "纯文本",
-    "responseExample": "{ success: true, data: { path: 'E:/.../video.mp4', path_markdown: '![video.mp4](E:/.../video.mp4)', bvid: 'BV...', url: 'https://www.bilibili.com/video/BV...' } }"
-  }
+  "timeoutMs": 180000
 }

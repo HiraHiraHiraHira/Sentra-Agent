@@ -50,17 +50,24 @@
       }
     },
     "anyOf": [
-      { "required": ["nickname"] },
-      { "required": ["personal_note"] },
-      { "required": ["sex"] }
+      {
+        "required": [
+          "nickname"
+        ]
+      },
+      {
+        "required": [
+          "personal_note"
+        ]
+      },
+      {
+        "required": [
+          "sex"
+        ]
+      }
     ],
     "required": [],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "修改当前 QQ 的个人资料",
-    "responseStyle": "自然语言，简短确认已更新",
-    "responseExample": "资料已经更新好了。"
-  }
+  "timeoutMs": 20000
 }

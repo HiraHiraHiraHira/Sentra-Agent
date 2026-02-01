@@ -135,15 +135,18 @@
       "bingImageType"
     ],
     "anyOf": [
-      { "required": ["query"] },
-      { "required": ["queries"] }
+      {
+        "required": [
+          "query"
+        ]
+      },
+      {
+        "required": [
+          "queries"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 180000,
-  "meta": {
-    "realWorldAction": "下载图片",
-    "responseStyle": "纯文本",
-    "responseExample": "{ success: true, data: { files: [{path: 'E:/.../img.jpg', path_markdown: '![...](...)'}], zip_path: 'E:/.../images.zip' } }"
-  }
+  "timeoutMs": 180000
 }

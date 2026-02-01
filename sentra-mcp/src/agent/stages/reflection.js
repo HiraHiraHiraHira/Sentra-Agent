@@ -28,6 +28,7 @@ export async function checkTaskCompleteness(runId, objective = '', manifest = {}
   try {
     // 读取执行历史
     const history = await HistoryStore.list(runId, 0, -1);
+    const plan = await HistoryStore.getPlan(runId);
     
     // 过滤出工具执行结果
     const toolResults = history.filter(h => h.type === 'tool_result');
@@ -47,16 +48,16 @@ export async function checkTaskCompleteness(runId, objective = '', manifest = {}
     const availableTools = manifestToXmlToolsCatalog(Array.isArray(manifest) ? manifest : []);
     
     // 构建工具执行历史（Sentra XML 格式）
+    const stepsArr = Array.isArray(plan?.steps) ? plan.steps : [];
     const toolHistoryXML = toolResults.map((h, idx) => {
-      const step = history.filter(x => x.type === 'args' && x.aiName === h.aiName).findIndex(x => x.stepIndex === h.stepIndex);
-      const stepIndex = step >= 0 ? step : idx;
-      const reasonEntry = history.find(x => x.type === 'args' && x.stepIndex === h.stepIndex);
-      const reason = Array.isArray(reasonEntry?.reason) 
-        ? reasonEntry.reason.join('; ') 
-        : String(reasonEntry?.reason || '执行工具');
-      
+      const plannedIdx = Number.isFinite(Number(h.plannedStepIndex)) ? Number(h.plannedStepIndex) : idx;
+      const step = (plannedIdx >= 0 && plannedIdx < stepsArr.length) ? stepsArr[plannedIdx] : {};
+      const displayIndex = Number.isFinite(Number(step?.displayIndex)) ? Number(step.displayIndex) : (plannedIdx + 1);
+      const reason = Array.isArray(step?.reason) ? step.reason.join('; ') : String(step?.reason || '执行工具');
+
       return formatSentraResult({
-        stepIndex,
+        stepIndex: displayIndex,
+        stepId: (typeof step?.stepId === 'string' ? step.stepId : h?.stepId),
         aiName: h.aiName,
         reason,
         args: h.args || {},

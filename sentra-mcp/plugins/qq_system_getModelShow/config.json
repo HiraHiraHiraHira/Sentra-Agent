@@ -37,10 +37,5 @@
     },
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "查看当前 QQ 的设备展示",
-    "responseStyle": "自然语言，简短说明当前设置",
-    "responseExample": "我已经查到当前设备展示信息了。"
-  }
+  "timeoutMs": 20000
 }

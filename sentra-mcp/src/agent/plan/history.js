@@ -22,29 +22,33 @@ function formatReason(reason) {
 /**
  * @param {Object} options
  * @param {string} options.runId - Run ID
- * @param {Array} options.dependsOn - Dependency indices
+ * @param {Array<string>} options.dependsOnStepIds - Dependency stepIds
  * @param {boolean} options.useFC - Use Sentra XML format (FC mode)
  */
-export async function buildDependentContextText(runId, dependsOn = [], useFC = false) {
-  if (!Array.isArray(dependsOn) || dependsOn.length === 0) return '';
+export async function buildDependentContextText(runId, dependsOnStepIds = [], useFC = false) {
+  if (!Array.isArray(dependsOnStepIds) || dependsOnStepIds.length === 0) return '';
   try {
-    const indices = Array.from(new Set(dependsOn.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n >= 0))).sort((a, b) => a - b);
-    if (indices.length === 0) return '';
+    const raw = Array.from(new Set(dependsOnStepIds));
+    const ids = raw
+      .map((x) => (typeof x === 'string' ? x.trim() : ''))
+      .filter(Boolean);
+    if (ids.length === 0) return '';
     const history = await HistoryStore.list(runId, 0, -1);
     const plan = await HistoryStore.getPlan(runId);
-    // 取每个索引的“最新” tool_result
-    const lastByIndex = new Map();
+    // 取每个 stepId 的“最新” tool_result
+    const lastByStepId = new Map();
     for (const h of history) {
       if (h.type !== 'tool_result') continue;
-      const idx = Number(h.plannedStepIndex);
-      if (!Number.isFinite(idx)) continue;
-      lastByIndex.set(idx, h);
+      if (typeof h.stepId === 'string' && h.stepId.trim()) {
+        lastByStepId.set(h.stepId.trim(), h);
+      }
     }
     const items = [];
-    for (const idx of indices) {
-      const h = lastByIndex.get(idx);
+    for (const sid of ids) {
+      const h = lastByStepId.get(sid);
       if (!h) continue;
-      const r = (plan?.steps && plan.steps[Number(idx)]) ? plan.steps[Number(idx)].reason : '';
+      const idx = Number(h.plannedStepIndex);
+      const r = (Number.isFinite(idx) && plan?.steps && plan.steps[idx]) ? plan.steps[idx].reason : '';
       items.push({ idx, h, reason: r });
     }
     if (!items.length) return '';
@@ -54,6 +58,7 @@ export async function buildDependentContextText(runId, dependsOn = [], useFC = f
       const xmlResults = items.map(({ idx, h, reason }) =>
         formatSentraResult({
           stepIndex: idx, // XML 中仍使用 step 属性
+          stepId: h?.stepId,
           aiName: h.aiName,
           reason,
           args: h.args,
@@ -66,6 +71,7 @@ export async function buildDependentContextText(runId, dependsOn = [], useFC = f
     // 默认：JSON 格式
     const jsonItems = items.map(({ idx, h, reason }) => ({
       plannedStepIndex: idx,
+      stepId: h?.stepId,
       aiName: h.aiName,
       reason: clip(reason),
       argsPreview: clip(h.args),
@@ -90,33 +96,35 @@ export async function buildToolDialogueMessages(runId, upToStepIndex, useFC = fa
     
     // 🔧 修复并发问题：只包含依赖链上的步骤，避免并发分支污染
     const currentStep = plan?.steps?.[upToStepIndex];
-    const dependsOn = Array.isArray(currentStep?.dependsOn) ? currentStep.dependsOn : [];
+    const dependsOnStepIds = Array.isArray(currentStep?.dependsOnStepIds) ? currentStep.dependsOnStepIds : [];
     
     // 构建依赖链（包括间接依赖）
     const dependencyChain = new Set();
+    const planStepIdToIdx = new Map((plan?.steps || []).map((s, idx) => [typeof s?.stepId === 'string' ? s.stepId : '', idx]).filter(([k]) => k));
     const addDependencies = (stepIdx) => {
       if (dependencyChain.has(stepIdx)) return;
       dependencyChain.add(stepIdx);
       const step = plan?.steps?.[stepIdx];
-      if (step && Array.isArray(step.dependsOn)) {
-        step.dependsOn.forEach(dep => {
-          const depNum = Number(dep);
-          if (Number.isFinite(depNum) && depNum >= 0 && depNum < upToStepIndex) {
-            addDependencies(depNum);
-          }
-        });
+      const deps = Array.isArray(step?.dependsOnStepIds) ? step.dependsOnStepIds : [];
+      for (const sid of deps) {
+        const k = typeof sid === 'string' ? sid.trim() : '';
+        const idx = planStepIdToIdx.get(k);
+        if (Number.isFinite(idx) && idx >= 0 && idx < upToStepIndex) {
+          addDependencies(idx);
+        }
       }
     };
-    dependsOn.forEach(dep => {
-      const depNum = Number(dep);
-      if (Number.isFinite(depNum) && depNum >= 0 && depNum < upToStepIndex) {
-        addDependencies(depNum);
+    dependsOnStepIds.forEach((sid) => {
+      const k = typeof sid === 'string' ? sid.trim() : '';
+      const idx = planStepIdToIdx.get(k);
+      if (Number.isFinite(idx) && idx >= 0 && idx < upToStepIndex) {
+        addDependencies(idx);
       }
     });
     
     // 选择策略：
-    // - 若声明了 dependsOn（dependencyChain 非空），仅包含依赖链上的“最新”步骤历史
-    // - 若未声明 dependsOn（dependencyChain 为空），回退到包含所有之前步骤（idx < upToStepIndex）的“最新”历史
+    // - 若声明了 dependsOnStepIds（dependencyChain 非空），仅包含依赖链上的“最新”步骤历史
+    // - 若未声明 dependsOnStepIds（dependencyChain 为空），回退到包含所有之前步骤（idx < upToStepIndex）的“最新”历史
     // 先构建每个索引的“最新” tool_result 映射
     const lastByIndex = new Map();
     for (const h of history) {
@@ -156,6 +164,7 @@ export async function buildToolDialogueMessages(runId, upToStepIndex, useFC = fa
         // 工具结果 XML
         const resultXml = formatSentraResult({
           stepIndex: plannedStepIndex,  // XML 中仍使用 step 属性
+          stepId: h?.stepId,
           aiName,
           reason: reasonRaw,
           args: h.args,
@@ -180,19 +189,27 @@ export async function buildToolDialogueMessages(runId, upToStepIndex, useFC = fa
   }
 }
 
-// 中文：将 dependsOn 指定的上游步骤结果，整理为一个“依赖结果(JSON)”的 assistant 消息，便于参数生成阶段作为证据使用
-export async function buildDependentContextMessages(runId, dependsOn = []) {
-  if (!Array.isArray(dependsOn) || dependsOn.length === 0) return [];
+// 中文：将 dependsOnStepIds 指定的上游步骤结果，整理为一个“依赖结果(JSON)”的 assistant 消息，便于参数生成阶段作为证据使用
+export async function buildDependentContextMessages(runId, dependsOnStepIds = []) {
+  if (!Array.isArray(dependsOnStepIds) || dependsOnStepIds.length === 0) return [];
   try {
-    const indices = Array.from(new Set(dependsOn.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n >= 0))).sort((a, b) => a - b);
-    if (indices.length === 0) return [];
+    const ids = Array.from(new Set(dependsOnStepIds.map((x) => (typeof x === 'string' ? x.trim() : '')).filter(Boolean)));
+    if (ids.length === 0) return [];
     const history = await HistoryStore.list(runId, 0, -1);
+    const lastByStepId = new Map();
+    for (const h of history) {
+      if (h.type !== 'tool_result') continue;
+      if (typeof h.stepId === 'string' && h.stepId.trim()) {
+        lastByStepId.set(h.stepId.trim(), h);
+      }
+    }
     const items = [];
-    for (const idx of indices) {
-      const h = history.find((x) => x.type === 'tool_result' && Number(x.plannedStepIndex) === idx);
+    for (const sid of ids) {
+      const h = lastByStepId.get(sid);
       if (!h) continue;
       items.push({
-        plannedStepIndex: idx,
+        stepId: sid,
+        plannedStepIndex: Number(h.plannedStepIndex),
         aiName: h.aiName,
         argsPreview: clip(h.args),
         resultPreview: clip(h.result?.data ?? h.result),

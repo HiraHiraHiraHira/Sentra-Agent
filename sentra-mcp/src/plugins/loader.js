@@ -5,6 +5,7 @@ import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import logger from '../logger/index.js';
 import dotenv from 'dotenv';
+import { readSkillDocFromPluginDir } from '../utils/skillDoc.js';
 
 const ajv = new Ajv({ allErrors: true, strict: false });
 addFormats(ajv);
@@ -24,6 +25,7 @@ function normalizeTool(def) {
     timeoutMs: def.timeoutMs || 0,
     pluginEnv: def.pluginEnv || {},
     meta: def.meta || {},
+    skillDoc: def.skillDoc || null,
     _pluginDirName: def._pluginDirName,
     _pluginAbsDir: def._pluginAbsDir,
     handler: def.handler,
@@ -170,6 +172,7 @@ export async function loadPlugins(pluginsDir) {
         timeoutMs,
         pluginEnv: penv,
         meta: cfg.meta || {},
+        skillDoc: readSkillDocFromPluginDir(base) || null,
         _pluginDirName: dir,
         _pluginAbsDir: base,
         handler,

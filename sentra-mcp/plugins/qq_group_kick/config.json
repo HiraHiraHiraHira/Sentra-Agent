@@ -51,10 +51,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "移除群成员",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已移除成员"
-  }
+  "timeoutMs": 20000
 }

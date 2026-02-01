@@ -11,6 +11,9 @@
       "items": {
         "type": "object",
         "properties": {
+          "stepId": {
+            "type": "string"
+          },
           "aiName": { "type": "string" },
           "reason": { 
             "type": "array",
@@ -22,9 +25,9 @@
             "description": "当前步骤完成后的下一步行动计划。可以描述如何使用本步骤的执行结果，但避免预测具体的结果数据。示例：'根据识别结果选择合适的表情' 而非 '使用返回的76,66,356这三个表情ID'。"
           },
           "draftArgs": { "type": "object", "additionalProperties": true },
-          "dependsOn": { "type": "array", "items": { "type": "integer" } }
+          "dependsOnStepIds": { "type": "array", "items": { "type": "string" } }
         },
-        "required": ["aiName", "reason", "nextStep", "draftArgs"]
+        "required": ["stepId", "aiName", "reason", "nextStep", "draftArgs"]
       }
     }
   },

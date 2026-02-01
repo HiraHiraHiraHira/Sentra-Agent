@@ -118,10 +118,5 @@
     "additionalProperties": true
   },
   "cooldownMs": 0,
-  "timeoutMs": 30000,
-  "meta": {
-    "realWorldAction": "查看电脑系统信息",
-    "responseStyle": "自然语言描述",
-    "responseExample": "系统是Windows 11 Pro 64位哦"
-  }
+  "timeoutMs": 30000
 }

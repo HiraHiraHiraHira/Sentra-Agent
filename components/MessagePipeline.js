@@ -8,6 +8,7 @@ import {
 } from '../utils/protocolUtils.js';
 import { judgeReplySimilarity } from '../utils/replySimilarityJudge.js';
 import { generateToolPreReply } from './ToolPreReplyGenerator.js';
+import { decideReplyOrTools } from './ToolRoutingDecider.js';
 
 import { createRagSdk } from 'sentra-rag';
 import { textSegmentation } from '../src/segmentation.js';
@@ -175,6 +176,7 @@ function buildRagSystemBlock({ queryText, contextText, stats, maxChars }) {
 }
 
 function tryEnqueueRagIngestAfterSave({ logger, conversationId, groupId, userid, userObjective, msg, response } = {}) {
+  if (!getEnvBool('ENABLE_RAG', true)) return;
   try {
     logger.info('RAG: post-save hook reached', { conversationId, groupId });
     logger.info('RAG: preparing ingest payload', { conversationId });
@@ -478,6 +480,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
     personaManager,
     emo,
     buildSentraEmoSection,
+    WORLDBOOK_XML,
     AGENT_PRESET_XML,
     AGENT_PRESET_PLAIN_TEXT,
     AGENT_PRESET_RAW_TEXT,
@@ -563,34 +566,44 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
         s.matchAll(/<invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/invoke>/gi)
       );
       if (!invokes.length) {
-        return `请根据下面的工具请求，按需执行工具并给出最终回复：\n\n${s}`;
+        const lines = [];
+        lines.push(s);
+        lines.push('');
+        lines.push('<sentra-tools-guidance>');
+        lines.push('  <language>zh</language>');
+        lines.push('  <note>上面的 <sentra-tools> 仅为参考示例（不一定完整），你可以根据实际任务自由删减、合并或新增 invoke，以更好完成用户目标。</note>');
+        lines.push('  <rules>');
+        lines.push('    <item>不要编造参数/路径/账号；信息不足时先在后续的 <sentra-response> 里向用户追问。</item>');
+        lines.push('    <item>如果某些 invoke 没必要或会显著增加成本，请主动删减或替换为更合适的工具调用。</item>');
+        lines.push('  </rules>');
+        lines.push('</sentra-tools-guidance>');
+        return lines.join('\n');
       }
-
-      const lines = ['请根据下面的工具请求，按需执行工具并给出最终回复：'];
-      for (const inv of invokes) {
-        const toolName = String(inv[1] || '').trim();
-        const inner = String(inv[2] || '');
-        const argsObj = {};
-        const params = Array.from(
-          inner.matchAll(/<parameter\s+name="([^"]+)">([\s\S]*?)<\/parameter>/gi)
-        );
-        for (const p of params) {
-          const k = String(p[1] || '').trim();
-          const v = String(p[2] || '').trim();
-          if (k) argsObj[k] = v;
-        }
-        const argsText = (() => {
-          try {
-            return JSON.stringify(argsObj);
-          } catch {
-            return String(argsObj);
-          }
-        })();
-        lines.push(`- tool: ${toolName || '(unknown)'}, args: ${argsText}`);
-      }
+      const lines = [];
+      lines.push(s);
+      lines.push('');
+      lines.push('<sentra-tools-guidance>');
+      lines.push('  <language>zh</language>');
+      lines.push('  <note>上面的 <sentra-tools> 仅为参考示例（不一定完整），你可以根据实际任务自由删减、合并或新增 invoke，以更好完成用户目标。</note>');
+      lines.push('  <rules>');
+      lines.push('    <item>不要编造参数/路径/账号；信息不足时先在后续的 <sentra-response> 里向用户追问。</item>');
+      lines.push('    <item>如果某些 invoke 没必要或会显著增加成本，请主动删减或替换为更合适的工具调用。</item>');
+      lines.push('  </rules>');
+      lines.push('</sentra-tools-guidance>');
       return lines.join('\n');
     } catch {
-      return `请根据下面的工具请求，按需执行工具并给出最终回复：\n\n${s}`;
+      const lines = [];
+      lines.push(s);
+      lines.push('');
+      lines.push('<sentra-tools-guidance>');
+      lines.push('  <language>zh</language>');
+      lines.push('  <note>上面的 <sentra-tools> 仅为参考示例（不一定完整），你可以根据实际任务自由删减、合并或新增 invoke，以更好完成用户目标。</note>');
+      lines.push('  <rules>');
+      lines.push('    <item>不要编造参数/路径/账号；信息不足时先在后续的 <sentra-response> 里向用户追问。</item>');
+      lines.push('    <item>如果某些 invoke 没必要或会显著增加成本，请主动删减或替换为更合适的工具调用。</item>');
+      lines.push('  </rules>');
+      lines.push('</sentra-tools-guidance>');
+      return lines.join('\n');
     }
   };
 
@@ -745,10 +758,12 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
 
     // 复用构建逻辑：pending-messages（如果有） + sentra-user-question（当前消息）
     const latestMsg = senderMessages[senderMessages.length - 1] || msg;
+    let userContentNoRootForRouter = '';
 
     if (isProactive && !isProactiveFirst) {
       // 后续主动回合：仅依赖 root 指令和系统上下文，不再重新注入用户问题
       currentUserContent = proactiveRootXml || '';
+      userContentNoRootForRouter = '';
     } else {
       // 群聊：pendingContextXml 会包含“其他成员消息(上) + 该用户累计消息(下)”两段；私聊：只包含该用户历史
       const pendingContextXml = historyManager.getPendingMessagesContext(groupId, userid);
@@ -757,6 +772,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
       const combinedUserContent = pendingContextXml
         ? pendingContextXml + '\n\n' + userQuestionXml
         : userQuestionXml;
+      userContentNoRootForRouter = combinedUserContent;
       currentUserContent = proactiveRootXml
         ? `${proactiveRootXml}\n\n${combinedUserContent}`
         : combinedUserContent;
@@ -797,95 +813,101 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
     }
 
     const agentPresetXml = AGENT_PRESET_XML || '';
+    const worldbookXml = WORLDBOOK_XML || '';
 
     let ragBlock = '';
-    const ragCfg = getRagRuntimeConfig();
+    const ragEnabled = getEnvBool('ENABLE_RAG', true);
+    const ragCfg = ragEnabled ? getRagRuntimeConfig() : null;
     {
-      logger.info('RAG: pipeline reached', { conversationId });
-
-      const fallbackQueryRaw = String(msg?.text || msg?.summary || '').trim();
-      const queryText = normalizeRagQueryText(userObjective) || normalizeRagQueryText(fallbackQueryRaw);
-      if (queryText) {
-        logger.info('RAG: 尝试检索', { conversationId, queryPreview: queryText.slice(0, 120) });
-        const cacheKey = `${conversationId}::${queryText}`;
-        const cached = ragCacheByConversation.get(cacheKey);
-        if (cached && typeof cached === 'object' && Number.isFinite(cached.at) && cached.block) {
-          if (Date.now() - cached.at <= ragCfg.cacheTtlMs) {
-            ragBlock = cached.block;
-            logger.info('RAG: 命中缓存', { conversationId });
-          } else {
-            ragCacheByConversation.delete(cacheKey);
-          }
-        }
-
-        if (!ragBlock) {
-          try {
-            const rag = await withTimeout(getRagSdk(), ragCfg.timeoutMs);
-            const keywords = extractRagKeywords(queryText, ragCfg.keywordTopN);
-
-            if (Array.isArray(keywords) && keywords.length > 0) {
-              logger.info('RAG: keywords', { conversationId, keywords: keywords.join(', ') });
-            }
-
-            const hybridPromise = rag.getContextHybrid(queryText);
-            const keywordPromises = keywords.map((k) =>
-              rag.getContextFromFulltext(k, { limit: ragCfg.keywordFulltextLimit, expandParent: true })
-            );
-
-            const settled = await withTimeout(
-              Promise.allSettled([hybridPromise, ...keywordPromises]),
-              ragCfg.timeoutMs
-            );
-
-            const hybridRes = settled[0] && settled[0].status === 'fulfilled' ? settled[0].value : null;
-            const extraContexts = [];
-            for (let i = 1; i < settled.length; i++) {
-              const it = settled[i];
-              if (it && it.status === 'fulfilled' && it.value && it.value.contextText) {
-                extraContexts.push(String(it.value.contextText || '').trim());
-              }
-            }
-
-            const mergedExtra = Array.from(new Set(extraContexts.filter(Boolean))).join('\n\n');
-            const mergedContext = [
-              hybridRes && hybridRes.contextText ? String(hybridRes.contextText || '').trim() : '',
-              mergedExtra
-            ]
-              .filter(Boolean)
-              .join('\n\n')
-              .trim();
-
-            if (!mergedContext) {
-              logger.info('RAG: 检索完成但无可用上下文', {
-                conversationId,
-                keywords: Array.isArray(keywords) ? keywords.join(', ') : ''
-              });
-            }
-
-            ragBlock = buildRagSystemBlock({
-              queryText,
-              contextText: mergedContext,
-              stats: hybridRes && hybridRes.stats ? hybridRes.stats : null,
-              maxChars: ragCfg.maxContextChars
-            });
-
-            if (ragBlock) {
-              ragCacheByConversation.set(cacheKey, { at: Date.now(), block: ragBlock });
-              logger.info('RAG: 上下文已注入', { conversationId, queryPreview: queryText.slice(0, 120) });
-              logger.info('RAG: context preview', {
-                conversationId,
-                contextChars: mergedContext ? String(mergedContext).length : 0,
-                preview: mergedContext ? String(mergedContext).slice(0, 320) : ''
-              });
-            } else {
-              logger.info('RAG: 未注入（ragBlock为空）', { conversationId });
-            }
-          } catch (e) {
-            logger.warn('RAG: 检索失败（已忽略）', { err: String(e) });
-          }
-        }
+      if (!ragEnabled) {
+        logger.info('RAG: disabled', { conversationId });
       } else {
-        logger.info('RAG: skip（empty query）', { conversationId });
+        logger.info('RAG: pipeline reached', { conversationId });
+
+        const fallbackQueryRaw = String(msg?.text || msg?.summary || '').trim();
+        const queryText = normalizeRagQueryText(userObjective) || normalizeRagQueryText(fallbackQueryRaw);
+        if (queryText) {
+          logger.info('RAG: 尝试检索', { conversationId, queryPreview: queryText.slice(0, 120) });
+          const cacheKey = `${conversationId}::${queryText}`;
+          const cached = ragCacheByConversation.get(cacheKey);
+          if (cached && typeof cached === 'object' && Number.isFinite(cached.at) && cached.block) {
+            if (Date.now() - cached.at <= ragCfg.cacheTtlMs) {
+              ragBlock = cached.block;
+              logger.info('RAG: 命中缓存', { conversationId });
+            } else {
+              ragCacheByConversation.delete(cacheKey);
+            }
+          }
+
+          if (!ragBlock) {
+            try {
+              const rag = await withTimeout(getRagSdk(), ragCfg.timeoutMs);
+              const keywords = extractRagKeywords(queryText, ragCfg.keywordTopN);
+
+              if (Array.isArray(keywords) && keywords.length > 0) {
+                logger.info('RAG: keywords', { conversationId, keywords: keywords.join(', ') });
+              }
+
+              const hybridPromise = rag.getContextHybrid(queryText);
+              const keywordPromises = keywords.map((k) =>
+                rag.getContextFromFulltext(k, { limit: ragCfg.keywordFulltextLimit, expandParent: true })
+              );
+
+              const settled = await withTimeout(
+                Promise.allSettled([hybridPromise, ...keywordPromises]),
+                ragCfg.timeoutMs
+              );
+
+              const hybridRes = settled[0] && settled[0].status === 'fulfilled' ? settled[0].value : null;
+              const extraContexts = [];
+              for (let i = 1; i < settled.length; i++) {
+                const it = settled[i];
+                if (it && it.status === 'fulfilled' && it.value && it.value.contextText) {
+                  extraContexts.push(String(it.value.contextText || '').trim());
+                }
+              }
+
+              const mergedExtra = Array.from(new Set(extraContexts.filter(Boolean))).join('\n\n');
+              const mergedContext = [
+                hybridRes && hybridRes.contextText ? String(hybridRes.contextText || '').trim() : '',
+                mergedExtra
+              ]
+                .filter(Boolean)
+                .join('\n\n')
+                .trim();
+
+              if (!mergedContext) {
+                logger.info('RAG: 检索完成但无可用上下文', {
+                  conversationId,
+                  keywords: Array.isArray(keywords) ? keywords.join(', ') : ''
+                });
+              }
+
+              ragBlock = buildRagSystemBlock({
+                queryText,
+                contextText: mergedContext,
+                stats: hybridRes && hybridRes.stats ? hybridRes.stats : null,
+                maxChars: ragCfg.maxContextChars
+              });
+
+              if (ragBlock) {
+                ragCacheByConversation.set(cacheKey, { at: Date.now(), block: ragBlock });
+                logger.info('RAG: 上下文已注入', { conversationId, queryPreview: queryText.slice(0, 120) });
+                logger.info('RAG: context preview', {
+                  conversationId,
+                  contextChars: mergedContext ? String(mergedContext).length : 0,
+                  preview: mergedContext ? String(mergedContext).slice(0, 320) : ''
+                });
+              } else {
+                logger.info('RAG: 未注入（ragBlock为空）', { conversationId });
+              }
+            } catch (e) {
+              logger.warn('RAG: 检索失败（已忽略）', { err: String(e) });
+            }
+          }
+        } else {
+          logger.info('RAG: skip（empty query）', { conversationId });
+        }
       }
     }
 
@@ -896,7 +918,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
       }
     } catch {}
 
-    // 组合系统提示词：baseSystem + persona + emo + memory + agent-preset(最后)
+    // 组合系统提示词：baseSystem + persona + emo + memory + social + worldbook + agent-preset + rag
     let memoryXml = '';
     if (CONTEXT_MEMORY_ENABLED) {
       try {
@@ -909,7 +931,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
       }
     }
 
-    const systemParts = [baseSystem, personaContext, emoXml, memoryXml, socialXml, agentPresetXml, ragBlock].filter(Boolean);
+    const systemParts = [baseSystem, personaContext, emoXml, memoryXml, socialXml, worldbookXml, agentPresetXml, ragBlock].filter(Boolean);
     const systemContent = systemParts.join('\n\n');
 
     const maybeRewriteSentraResponse = async (rawResponse) => {
@@ -1070,25 +1092,137 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
 
     // 记录初始消息数量
     const initialMessageCount = senderMessages.length;
+    const replyAnchorMsg = senderMessages[senderMessages.length - 1] || msg;
+
+    let forceNeedTools = false;
+    try {
+      const routerStartAt = Date.now();
+      logger.debug('ToolRouter: begin', {
+        groupId,
+        hasProactiveRoot: !!proactiveRootXml,
+        userPreview: String(userContentNoRootForRouter || '').slice(0, 160)
+      });
+      const routed = await decideReplyOrTools({
+        chatWithRetry,
+        model: MAIN_AI_MODEL,
+        groupId,
+        baseConversations: conversations,
+        userContentNoRoot: userContentNoRootForRouter,
+        originalRootXml: proactiveRootXml,
+        timeoutMs: getEnvTimeoutMs('TIMEOUT', 180000, 900000)
+      });
+
+      logger.debug('ToolRouter: done', {
+        groupId,
+        ms: Date.now() - routerStartAt,
+        kind: routed && typeof routed === 'object' ? routed.kind : null
+      });
+
+      if (routed && routed.kind === 'reply' && typeof routed.response === 'string') {
+        if (!convId) convId = randomUUID();
+        pairId = await historyManager.startAssistantMessage(groupId);
+
+        try {
+          await historyManager.appendToConversationPairMessages(groupId, pairId, 'user', currentUserContent || '');
+        } catch {}
+
+        let response = routed.response;
+        const noReply = !!routed.noReply;
+
+        const rewritten = await maybeRewriteSentraResponse(response);
+        if (rewritten && typeof rewritten === 'string') {
+          response = rewritten;
+        }
+
+        response = ensureSentraResponseHasTarget(response, msg);
+
+        const responseForHistory = normalizeAssistantContentForHistory(response);
+        await historyManager.appendToAssistantMessage(groupId, responseForHistory, pairId);
+
+        if (!noReply) {
+          await maybeWaitForSupplementBeforeSend();
+
+          const finalMsg = replyAnchorMsg;
+          const swallow = shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTask);
+          if (!swallow) {
+            await smartSend(finalMsg, response, sendAndWaitWithConv, true, { hasTool: false });
+            hasReplied = true;
+            if (ctx.desireManager) {
+              try {
+                await ctx.desireManager.onBotMessage(finalMsg, { proactive: !!msg?._proactive });
+              } catch (e) {
+                logger.debug('DesireManager onBotMessage(ToolRouter) failed', { err: String(e) });
+              }
+            }
+            markReplySentForConversation(conversationId);
+          }
+        }
+
+        const saved = await historyManager.finishConversationPair(groupId, pairId, null);
+        if (saved) {
+          const chatType = msg?.group_id ? 'group' : 'private';
+          const userIdForMemory = userid || '';
+          if (isGroupChat && userid) {
+            try {
+              await historyManager.promoteScopedConversationsToShared(groupId, userid);
+            } catch {}
+          }
+          triggerContextSummarizationIfNeeded({ groupId, chatType, userId: userIdForMemory }).catch((e) => {
+            logger.debug(`ContextMemory: 异步摘要触发失败 ${groupId}`, { err: String(e) });
+          });
+          triggerPresetTeachingIfNeeded({
+            groupId,
+            chatType,
+            userId: userIdForMemory,
+            userContent: currentUserContent,
+            assistantContent: response
+          }).catch((e) => {
+            logger.debug(`PresetTeaching: 异步教导触发失败 ${groupId}`, { err: String(e) });
+          });
+          tryEnqueueRagIngestAfterSave({
+            logger,
+            conversationId,
+            groupId,
+            userid: userIdForMemory,
+            userObjective,
+            msg,
+            response
+          });
+        }
+
+        pairId = null;
+        return;
+      }
+
+      if (routed && routed.kind === 'tools' && typeof routed.toolsXml === 'string' && routed.toolsXml.trim()) {
+        userObjective = convertToolsXmlToObjective(routed.toolsXml);
+        forceNeedTools = true;
+      }
+    } catch (e) {
+      logger.debug('ToolRouter: failed (ignored)', { groupId, err: String(e) });
+    }
 
     // 在 Judge / ToolResult 最终发送前，按需做一次额外静默等待：
     // - 若在 SWALLOW_ON_SUPPLEMENT_MAX_WAIT_MS 时间内检测到新消息，则标记 hasSupplementDuringTask=true，触发单次吞吐逻辑；
     // - 若未检测到新消息，则直接发送当前结果，避免无限等待。
-    const maybeWaitForSupplementBeforeSend = async () => {
+    async function maybeWaitForSupplementBeforeSend() {
       const cfg = getSwallowOnSupplementRuntimeConfig();
-      if (!cfg.enabled || cfg.maxWaitMs <= 0) {
+      if (!cfg.enabled) {
         return;
       }
 
       const baseMessages = getAllSenderMessages();
       const baseCount = Array.isArray(baseMessages) ? baseMessages.length : 0;
 
-      // 若此时已经出现补充消息，则无需额外等待，直接让吞吐策略生效
       if (baseCount > initialMessageCount) {
         hasSupplementDuringTask = true;
         ctx.logger.info(
           `补充消息静默等待: ${groupId} 发送前已存在补充消息 ${initialMessageCount} -> ${baseCount}，无需额外等待`
         );
+        return;
+      }
+
+      if (cfg.maxWaitMs <= 0) {
         return;
       }
 
@@ -1121,7 +1255,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
       ctx.logger.debug(
         `补充消息静默等待: ${groupId} 等待 ${Date.now() - startWaitAt}ms 内未检测到新消息，直接发送`
       );
-    };
+    }
 
     const waitForToolResultOrTimeout = (timeoutMs) => {
       const ms = Number(timeoutMs);
@@ -1157,6 +1291,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
         objective: userObjective,
         conversation: conversation,
         overlays,
+        forceNeedTools,
         channelId,
         identityKey
       })) {
@@ -1346,7 +1481,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
                 }
 
                 const latestSenderMessages = getAllSenderMessages();
-                const finalMsg = latestSenderMessages[latestSenderMessages.length - 1] || msg;
+                const finalMsg = replyAnchorMsg;
                 const swallow = shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTask);
                 if (!swallow) {
                   try {
@@ -1396,7 +1531,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
               }
 
               const latestSenderMessages = getAllSenderMessages();
-              const finalMsg = latestSenderMessages[latestSenderMessages.length - 1] || msg;
+              const finalMsg = replyAnchorMsg;
               const swallow = shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTask);
               if (!swallow) {
                 try {
@@ -1471,8 +1606,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
           if (!noReply) {
             await maybeWaitForSupplementBeforeSend();
 
-            senderMessages = getAllSenderMessages();
-            const finalMsg = senderMessages[senderMessages.length - 1] || msg;
+            const finalMsg = replyAnchorMsg;
             const allowReply = true;
 
             const swallow = shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTask);
@@ -1961,9 +2095,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
                 try {
                   const parsedForced = parseSentraResponse(forced);
                   if (parsedForced && !parsedForced.shouldSkip) {
-                    const latestSenderMessages = getAllSenderMessages();
-                    const finalMsgProgress =
-                      latestSenderMessages[latestSenderMessages.length - 1] || msg;
+                    const finalMsgProgress = replyAnchorMsg;
                     await smartSend(finalMsgProgress, forced, sendAndWaitWithConv, true, { hasTool: true });
                     hasReplied = true;
                   }
@@ -1995,9 +2127,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
               try {
                 const parsedPromised = parseSentraResponse(promised);
                 if (parsedPromised && !parsedPromised.shouldSkip) {
-                  const latestSenderMessages = getAllSenderMessages();
-                  const finalMsgProgress =
-                    latestSenderMessages[latestSenderMessages.length - 1] || msg;
+                  const finalMsgProgress = replyAnchorMsg;
                   await smartSend(finalMsgProgress, promised, sendAndWaitWithConv, true, { hasTool: true });
                   hasReplied = true;
                 }
@@ -2046,9 +2176,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
           }
 
           if (!scheduleNoReply) {
-            const latestSenderMessages = getAllSenderMessages();
-            const finalMsgProgress =
-              latestSenderMessages[latestSenderMessages.length - 1] || msg;
+            const finalMsgProgress = replyAnchorMsg;
             const allowReplyProgress = true;
 
             await smartSend(
@@ -2270,9 +2398,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
                     try {
                       const parsedForced = parseSentraResponse(forced);
                       if (parsedForced && !parsedForced.shouldSkip) {
-                        const latestSenderMessagesForSend = getAllSenderMessages();
-                        const finalMsgTool =
-                          latestSenderMessagesForSend[latestSenderMessagesForSend.length - 1] || msg;
+                        const finalMsgTool = replyAnchorMsg;
                         await smartSend(finalMsgTool, forced, sendAndWaitWithConv, true, { hasTool: true });
                         hasReplied = true;
                       }
@@ -2318,9 +2444,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
                     try {
                       const parsedPromised = parseSentraResponse(promised);
                       if (parsedPromised && !parsedPromised.shouldSkip) {
-                        const latestSenderMessagesForSend = getAllSenderMessages();
-                        const finalMsgTool =
-                          latestSenderMessagesForSend[latestSenderMessagesForSend.length - 1] || msg;
+                        const finalMsgTool = replyAnchorMsg;
                         await smartSend(finalMsgTool, promised, sendAndWaitWithConv, true, { hasTool: true });
                         hasReplied = true;
                       }
@@ -2370,9 +2494,7 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
             if (!toolNoReply) {
               await maybeWaitForSupplementBeforeSend();
 
-              const latestSenderMessagesForSend = getAllSenderMessages();
-              const finalMsgTool =
-                latestSenderMessagesForSend[latestSenderMessagesForSend.length - 1] || msg;
+              const finalMsgTool = replyAnchorMsg;
               const swallow = shouldSwallowReplyForConversation(
                 conversationId,
                 hasSupplementDuringTask

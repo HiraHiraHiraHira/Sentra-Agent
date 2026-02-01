@@ -6,6 +6,7 @@ import websocket from '@fastify/websocket';
 import { configRoutes } from './routes/config';
 import { scriptRoutes } from './routes/scripts';
 import { presetRoutes } from './routes/presets';
+import { worldbookRoutes } from './routes/worldbook';
 import { fileRoutes } from './routes/files';
 import { deepWikiRoutes } from './routes/deepwiki';
 import { systemRoutes } from './routes/system.ts';
@@ -447,6 +448,7 @@ async function start() {
   await fastify.register(scriptRoutes);
   await fastify.register(terminalExecutorRoutes);
   await fastify.register(presetRoutes);
+  await fastify.register(worldbookRoutes);
   await fastify.register(fileRoutes);
   await fastify.register(deepWikiRoutes);
   await fastify.register(systemRoutes);

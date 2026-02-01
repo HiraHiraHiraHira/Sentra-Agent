@@ -46,6 +46,21 @@ export function buildAgentPresetXml(preset) {
   }
 }
 
+export function buildWorldbookXml(worldbook) {
+  if (!worldbook || typeof worldbook !== 'object') return '';
+
+  try {
+    const lines = [];
+    lines.push('<sentra-worldbook>');
+    lines.push(...jsonToXMLLines(worldbook, 1));
+    lines.push('</sentra-worldbook>');
+    return lines.join('\n');
+  } catch (e) {
+    logger.warn('buildWorldbookXml: 生成 XML 失败，跳过注入', { err: String(e) });
+    return '';
+  }
+}
+
 /**
  * 将 JSON 角色卡压缩成一段中文文本，用于：
  * - 上下文压缩系统提示中的 persona 追加
@@ -101,6 +116,32 @@ export function formatPresetJsonAsPlainText(preset) {
 
   if (!parts.length && typeof preset.raw_preset_text === 'string') {
     return preset.raw_preset_text;
+  }
+
+  return parts.join('\n');
+}
+
+export function formatWorldbookJsonAsPlainText(worldbook) {
+  if (!worldbook || typeof worldbook !== 'object') return '';
+
+  const parts = [];
+  const meta = worldbook.meta && typeof worldbook.meta === 'object' ? worldbook.meta : {};
+
+  if (meta.title) {
+    parts.push(`世界书：${meta.title}`);
+  }
+  if (meta.description) {
+    parts.push(`背景简介：${meta.description}`);
+  }
+  if (meta.version) {
+    parts.push(`版本：${meta.version}`);
+  }
+
+  if (!parts.length) {
+    try {
+      const raw = JSON.stringify(worldbook);
+      if (raw && raw.length <= 800) return raw;
+    } catch {}
   }
 
   return parts.join('\n');

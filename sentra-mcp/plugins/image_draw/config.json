@@ -41,10 +41,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 120000,
-  "meta": {
-    "realWorldAction": "图像生成/绘制",
-    "responseStyle": "纯文本（Markdown）",
-    "responseExample": "Here is a drawing of a cat:\n\n![image](E:/sentra-agent/sentra-mcp/artifacts/draw_1696231234567_0.png)"
-  }
+  "timeoutMs": 120000
 }

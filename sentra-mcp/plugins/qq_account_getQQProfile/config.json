@@ -50,15 +50,18 @@
       }
     },
     "anyOf": [
-      { "required": ["user_id"] },
-      { "required": ["user_ids"] }
+      {
+        "required": [
+          "user_id"
+        ]
+      },
+      {
+        "required": [
+          "user_ids"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "查询 QQ 个人资料",
-    "responseStyle": "自然语言，简短返回资料要点",
-    "responseExample": "我已经查到对方的个人资料了。"
-  }
+  "timeoutMs": 20000
 }

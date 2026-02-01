@@ -68,10 +68,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 150000,
-  "meta": {
-    "realWorldAction": "绘制思维导图",
-    "responseStyle": "markdown结合自然语言",
-    "responseExample": "![思维导图](E:/sentra-agent/sentra-mcp/artifacts/topic_1696231234567.png)"
-  }
+  "timeoutMs": 150000
 }

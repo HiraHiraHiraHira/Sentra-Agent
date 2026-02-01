@@ -408,10 +408,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 15000,
-  "meta": {
-    "realWorldAction": "给消息贴表情",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已给消息贴上表情"
-  }
+  "timeoutMs": 15000
 }

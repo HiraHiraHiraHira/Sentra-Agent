@@ -19,6 +19,7 @@ function now() { return Date.now(); }
 // reason 最终仍要求是 string[]，但为了避免模型偶尔输出纯字符串
 // 直接导致整份计划被丢弃，这里用 preprocess 把 string 自动收敛为 [string]。
 const PlanStepSchema = z.object({
+  stepId: z.string().min(1),
   aiName: z.string().min(1),
   reason: z.preprocess(
     (v) => {
@@ -33,14 +34,12 @@ const PlanStepSchema = z.object({
   ),
   nextStep: z.string().optional().default(''),
   draftArgs: z.record(z.any()).optional().default({}),
-  dependsOn: z.array(z.number()).optional(),
+  dependsOnStepIds: z.array(z.string()).optional(),
 });
 
 const EmitPlanSchema = z.object({
   overview: z.string().optional(),
   steps: z.array(PlanStepSchema).optional().default([]),
-  // Backward compatibility: some models may still nest steps under plan.steps
-  plan: z.object({ steps: z.array(PlanStepSchema).optional().default([]) }).partial().optional(),
 }).passthrough();
 
 /**
@@ -149,17 +148,15 @@ async function generateSinglePlan({
         lastSchemaErrors = null;
       }
 
-      // 新协议：优先使用顶层 steps；兼容旧协议：如果 steps 为空但存在 plan.steps，则回退使用 plan.steps
-      const topSteps = Array.isArray(parsed?.steps) ? parsed.steps : [];
-      const legacySteps = Array.isArray(parsed?.plan?.steps) ? parsed.plan.steps : [];
-      const stepsArr = topSteps.length ? topSteps : legacySteps;
+      const stepsArr = Array.isArray(parsed?.steps) ? parsed.steps : [];
 
       candidate = stepsArr.map((s) => ({
+        stepId: s?.stepId,
         aiName: s?.aiName,
         reason: normalizeReason(s?.reason),
         nextStep: s?.nextStep || '',
         draftArgs: s?.draftArgs || {},
-        dependsOn: Array.isArray(s?.dependsOn) ? s.dependsOn : undefined,
+        dependsOnStepIds: Array.isArray(s?.dependsOnStepIds) ? s.dependsOnStepIds : undefined,
       }));
     } catch {}
 
@@ -367,6 +364,7 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
       if (toolResults.length > 0) {
         const xml = toolResults.map(h => formatSentraResult({
           stepIndex: Number(h.plannedStepIndex ?? h.stepIndex ?? 0),
+          stepId: h?.stepId,
           aiName: h.aiName,
           reason: h.reason,
           args: h.args || {},

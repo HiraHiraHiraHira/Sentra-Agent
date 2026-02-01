@@ -47,10 +47,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "修改当前 QQ 的设备展示",
-    "responseStyle": "自然语言，简短确认已设置",
-    "responseExample": "我已经把 QQ 设备展示改好了。"
-  }
+  "timeoutMs": 20000
 }

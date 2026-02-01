@@ -47,10 +47,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "设置群名称",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已设置群名称"
-  }
+  "timeoutMs": 20000
 }

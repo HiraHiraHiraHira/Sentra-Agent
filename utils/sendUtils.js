@@ -17,6 +17,255 @@ import { randomUUID } from 'crypto';
 
 const logger = createLogger('SendUtils');
 
+let _fetchCached = null;
+async function _getFetch() {
+  if (_fetchCached) return _fetchCached;
+  if (typeof globalThis.fetch === 'function') {
+    _fetchCached = globalThis.fetch.bind(globalThis);
+    return _fetchCached;
+  }
+  const mod = await import('node-fetch');
+  _fetchCached = mod.default;
+  return _fetchCached;
+}
+
+async function _fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  const fetchFn = await _getFetch();
+  const timeout = Number(timeoutMs || 0);
+  if (!Number.isFinite(timeout) || timeout <= 0) return await fetchFn(url, options);
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeout);
+  try {
+    return await fetchFn(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function _readFirstBytesFromResponse(res, maxBytes = 2048) {
+  const max = Math.max(1, Number(maxBytes || 2048));
+  const body = res?.body;
+  if (!body) return Buffer.alloc(0);
+
+  if (typeof body.getReader === 'function') {
+    const reader = body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      while (total < max) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) {
+          const buf = Buffer.from(value);
+          chunks.push(buf);
+          total += buf.length;
+        }
+      }
+    } finally {
+      try { await reader.cancel(); } catch {}
+    }
+    return Buffer.concat(chunks).subarray(0, max);
+  }
+
+  if (typeof body.on === 'function') {
+    return await new Promise((resolve) => {
+      const chunks = [];
+      let total = 0;
+      const cleanup = () => {
+        try { body.off('data', onData); } catch {}
+        try { body.off('end', onEnd); } catch {}
+        try { body.off('error', onErr); } catch {}
+      };
+      const finish = () => {
+        cleanup();
+        resolve(Buffer.concat(chunks).subarray(0, max));
+      };
+      const onErr = () => finish();
+      const onEnd = () => finish();
+      const onData = (chunk) => {
+        try {
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          chunks.push(buf);
+          total += buf.length;
+          if (total >= max) {
+            try { body.destroy(); } catch {}
+            finish();
+          }
+        } catch {
+          finish();
+        }
+      };
+      try {
+        body.on('data', onData);
+        body.on('end', onEnd);
+        body.on('error', onErr);
+      } catch {
+        finish();
+      }
+    });
+  }
+
+  try {
+    const ab = await res.arrayBuffer();
+    return Buffer.from(ab).subarray(0, max);
+  } catch {
+    return Buffer.alloc(0);
+  }
+}
+
+function _stripMimeParams(contentType) {
+  const raw = String(contentType || '').trim();
+  if (!raw) return '';
+  return raw.split(';')[0].trim().toLowerCase();
+}
+
+function _parseContentDispositionFilename(headerValue) {
+  const raw = String(headerValue || '').trim();
+  if (!raw) return '';
+  const star = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(raw);
+  if (star && star[2]) {
+    try {
+      return decodeURIComponent(star[2].trim().replace(/^"|"$/g, ''));
+    } catch {
+      return star[2].trim().replace(/^"|"$/g, '');
+    }
+  }
+  const m = /filename\s*=\s*([^;]+)/i.exec(raw);
+  if (!m || !m[1]) return '';
+  return m[1].trim().replace(/^"|"$/g, '');
+}
+
+function _detectByMagic(buf) {
+  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || []);
+  if (!b.length) return { mime: '', ext: '' };
+
+  const startsWith = (hex) => {
+    const bytes = Buffer.from(hex.replace(/\s+/g, ''), 'hex');
+    if (bytes.length > b.length) return false;
+    return b.subarray(0, bytes.length).equals(bytes);
+  };
+
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return { mime: 'image/jpeg', ext: '.jpg' };
+  if (startsWith('89504e470d0a1a0a')) return { mime: 'image/png', ext: '.png' };
+  if (b.length >= 6 && (b.subarray(0, 6).toString('ascii') === 'GIF87a' || b.subarray(0, 6).toString('ascii') === 'GIF89a')) {
+    return { mime: 'image/gif', ext: '.gif' };
+  }
+  if (b.length >= 12 && b.subarray(0, 4).toString('ascii') === 'RIFF' && b.subarray(8, 12).toString('ascii') === 'WEBP') {
+    return { mime: 'image/webp', ext: '.webp' };
+  }
+  if (b.length >= 2 && b.subarray(0, 2).toString('ascii') === 'BM') return { mime: 'image/bmp', ext: '.bmp' };
+  if (startsWith('00000100')) return { mime: 'image/x-icon', ext: '.ico' };
+
+  if (startsWith('25504446')) return { mime: 'application/pdf', ext: '.pdf' };
+  if (startsWith('504b0304')) return { mime: 'application/zip', ext: '.zip' };
+  if (startsWith('377abcaf271c')) return { mime: 'application/x-7z-compressed', ext: '.7z' };
+  if (startsWith('526172211a0700') || startsWith('526172211a0701')) return { mime: 'application/x-rar-compressed', ext: '.rar' };
+  if (startsWith('1f8b')) return { mime: 'application/gzip', ext: '.gz' };
+
+  if (b.length >= 12 && b.subarray(4, 8).toString('ascii') === 'ftyp') return { mime: 'video/mp4', ext: '.mp4' };
+  if (b.length >= 4 && b.subarray(0, 4).toString('ascii') === 'OggS') return { mime: 'audio/ogg', ext: '.ogg' };
+  if (b.length >= 12 && b.subarray(0, 4).toString('ascii') === 'RIFF' && b.subarray(8, 12).toString('ascii') === 'WAVE') {
+    return { mime: 'audio/wav', ext: '.wav' };
+  }
+  if (b.length >= 3 && b.subarray(0, 3).toString('ascii') === 'ID3') return { mime: 'audio/mpeg', ext: '.mp3' };
+
+  return { mime: '', ext: '' };
+}
+
+function _inferFileTypeFromMime(mime) {
+  const m = String(mime || '').toLowerCase();
+  if (!m) return 'file';
+  if (m.startsWith('image/')) return 'image';
+  if (m.startsWith('video/')) return 'video';
+  if (m.startsWith('audio/')) return 'record';
+  return 'file';
+}
+
+function _isLikelyHtml({ mime, buf }) {
+  const m = String(mime || '').toLowerCase();
+  if (m === 'text/html') return true;
+  if (!buf || !Buffer.isBuffer(buf) || buf.length === 0) return false;
+  const text = buf.subarray(0, 256).toString('utf8').trim().toLowerCase();
+  if (!text) return false;
+  if (text.startsWith('<!doctype html')) return true;
+  if (text.startsWith('<html')) return true;
+  return false;
+}
+
+async function _probeHttpResource(url, options = {}) {
+  const timeoutMs = Number(options.timeoutMs || 10000);
+  const maxBytes = Number(options.maxBytes || 2048);
+
+  const baseHeaders = {
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0',
+    accept: '*/*'
+  };
+
+  let headHeaders = null;
+  try {
+    const headRes = await _fetchWithTimeout(url, { method: 'HEAD', redirect: 'follow', headers: baseHeaders }, timeoutMs);
+    if (headRes && headRes.headers) headHeaders = headRes.headers;
+  } catch {}
+
+  let getHeaders = null;
+  let firstBytes = Buffer.alloc(0);
+  try {
+    const range = `bytes=0-${Math.max(0, Math.floor(maxBytes) - 1)}`;
+    const getRes = await _fetchWithTimeout(
+      url,
+      { method: 'GET', redirect: 'follow', headers: { ...baseHeaders, range } },
+      timeoutMs
+    );
+    if (getRes && getRes.headers) getHeaders = getRes.headers;
+    firstBytes = await _readFirstBytesFromResponse(getRes, maxBytes);
+  } catch {}
+
+  const getCt = _stripMimeParams(getHeaders?.get?.('content-type'));
+  const headCt = _stripMimeParams(headHeaders?.get?.('content-type'));
+  const magic = _detectByMagic(firstBytes);
+  const mime = magic.mime || getCt || headCt || '';
+
+  const cd = getHeaders?.get?.('content-disposition') || headHeaders?.get?.('content-disposition') || '';
+  const fileNameFromCd = _parseContentDispositionFilename(cd);
+
+  const isHtml = _isLikelyHtml({ mime, buf: firstBytes });
+  const fileType = _inferFileTypeFromMime(mime);
+  const extFromMime = mime ? `.${mimeTypes.extension(mime) || ''}` : '';
+  const ext = magic.ext || ((extFromMime && extFromMime !== '.') ? extFromMime : '');
+
+  return {
+    ok: !!(mime || fileNameFromCd || firstBytes.length),
+    mime,
+    fileType,
+    isHtml,
+    ext,
+    fileNameFromCd
+  };
+}
+
+function _probeLocalFileType(localPath) {
+  try {
+    const fd = fs.openSync(localPath, 'r');
+    try {
+      const buf = Buffer.alloc(4096);
+      const bytes = fs.readSync(fd, buf, 0, buf.length, 0);
+      const sample = buf.subarray(0, Math.max(0, bytes));
+      const magic = _detectByMagic(sample);
+      const mime = magic.mime || '';
+      return {
+        ok: !!mime,
+        mime,
+        fileType: _inferFileTypeFromMime(mime),
+        ext: magic.ext || ''
+      };
+    } finally {
+      try { fs.closeSync(fd); } catch {}
+    }
+  } catch {
+    return { ok: false, mime: '', fileType: 'file', ext: '' };
+  }
+}
+
 let _cfgCache = null;
 function _getCfg() {
   if (_cfgCache) return _cfgCache;
@@ -315,7 +564,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
   const protocolFiles = [];
   const linkSegments = [];
   const segmentCountHint = Array.isArray(textSegments) ? textSegments.length : 0;
-  protocolResources.forEach(res => {
+  for (const res of protocolResources) {
     const parsedRoute = _extractRoutePrefix(String(res.source || ''));
     const routeTarget = _resolveRouteTargetWithDefault(msg, parsedRoute, defaultRoute);
     const source = parsedRoute.rest;
@@ -335,10 +584,12 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         });
       }
 
+      const normalizedResType = String(res?.type || '').trim().toLowerCase();
+      const isLinkType = normalizedResType === 'link' || normalizedResType === 'url';
+
+      let httpProbe = null;
       if (isHttpUrl) {
         const urlPath = source.split('?')[0];
-        const t = String(res?.type || '').trim().toLowerCase();
-        const isLinkType = t === 'link' || t === 'url';
 
         if (isLinkType) {
           const cap = (typeof res?.caption === 'string' && res.caption.trim()) ? `${res.caption.trim()}\n` : '';
@@ -348,16 +599,33 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
             segmentIndex: segmentIndexOk ? segmentIndex : null
           });
           logger.debug(`HTTP link 资源将作为文本发送: ${source}`);
-          return;
+          continue;
         }
 
         const inferredMime = mimeTypes.lookup(urlPath);
-        const mime = typeof inferredMime === 'string' ? inferredMime : '';
-        const isHtml = mime === 'text/html';
+        const guessedMime = typeof inferredMime === 'string' ? inferredMime : '';
+        const guessedHtml = guessedMime === 'text/html';
 
-        if (!mime || isHtml) {
-          logger.warn(`HTTP 资源无法推断有效文件 MIME，已跳过: ${source}`, { mime: mime || '(unknown)' });
-          return;
+        if (!guessedMime || guessedHtml) {
+          try {
+            httpProbe = await _probeHttpResource(source, {
+              timeoutMs: getEnvInt('SEND_HTTP_PROBE_TIMEOUT_MS', 10000),
+              maxBytes: getEnvInt('SEND_HTTP_PROBE_BYTES', 2048)
+            });
+          } catch (e) {
+            logger.warn('HTTP 资源探针失败', { url: source, err: String(e) });
+          }
+
+          if (httpProbe?.isHtml) {
+            const cap = (typeof res?.caption === 'string' && res.caption.trim()) ? `${res.caption.trim()}\n` : '';
+            linkSegments.push({
+              text: `${cap}${source}`,
+              routeTarget,
+              segmentIndex: segmentIndexOk ? segmentIndex : null
+            });
+            logger.debug(`HTTP 资源探测为 HTML，将作为链接文本发送: ${source}`);
+            continue;
+          }
         }
       }
       
@@ -366,7 +634,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         logger.warn(`协议资源文件不存在: ${source}`, {
           resolvedLocalPath: resolvedLocalPath || '(empty)'
         });
-        return;
+        continue;
       }
       
       // 提取文件扩展名（支持 URL 中的扩展名）
@@ -379,24 +647,44 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         ext = path.extname(resolvedLocalPath || source).toLowerCase();
       }
       
-      // 根据扩展名判断文件类型
+      // 根据扩展名 / 探针 / magic number 判断文件类型
       let fileType = 'file';
       {
         const inferredMime = mimeTypes.lookup(isHttpUrl ? (source.split('?')[0]) : (resolvedLocalPath || source));
         const mime = typeof inferredMime === 'string' ? inferredMime : '';
-        if (mime.startsWith('image/')) fileType = 'image';
-        else if (mime.startsWith('video/')) fileType = 'video';
-        else if (mime.startsWith('audio/')) fileType = 'record';
+        const forcedByResType = (() => {
+          if (normalizedResType === 'image') return 'image';
+          if (normalizedResType === 'video') return 'video';
+          if (normalizedResType === 'record' || normalizedResType === 'audio') return 'record';
+          return '';
+        })();
+
+        if (forcedByResType) {
+          fileType = forcedByResType;
+        } else if (httpProbe?.mime) {
+          fileType = _inferFileTypeFromMime(httpProbe.mime);
+        } else if (mime) {
+          fileType = _inferFileTypeFromMime(mime);
+        } else if (!isHttpUrl && resolvedLocalPath) {
+          const localProbe = _probeLocalFileType(resolvedLocalPath);
+          if (localProbe?.ok) fileType = localProbe.fileType;
+        }
       }
       
       // 提取文件名
       let fileName = '';
       if (isHttpUrl) {
-        // 从 URL 中提取文件名
         const urlPath = source.split('?')[0];
-        fileName = path.basename(urlPath) || 'download' + ext;
+        fileName = (httpProbe?.fileNameFromCd || '').trim() || path.basename(urlPath) || 'download';
       } else {
         fileName = path.basename(resolvedLocalPath || source);
+      }
+
+      if (isHttpUrl && httpProbe?.ext) {
+        const currentExt = path.extname(fileName).toLowerCase();
+        if (!currentExt) {
+          fileName = `${fileName}${httpProbe.ext}`;
+        }
       }
       
       protocolFiles.push({
@@ -415,7 +703,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         logger.debug(`添加本地文件: ${fileType} ${fileName}`);
       }
     }
-  });
+  }
   
   // 解析文本段落
   const segments = parseTextSegments(textSegments)
@@ -533,6 +821,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       let messageParts = buildSegmentMessage(segment);
       
       if (messageParts.length === 0) continue;
+      const segKey = `${i + 1}|${routeTarget.kind}:${routeTarget.id}`;
       
       logger.debug(`发送第${i+1}段: ${messageParts.map(p => p.type).join(', ')}`);
       
@@ -608,7 +897,6 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         logger.debug(`第${i+1}段发送成功，消息ID: ${sentMessageId}`);
       }
 
-      const segKey = `${i + 1}|${routeTarget.kind}:${routeTarget.id}`;
       const attachedLinks = attachedLinksBySegAndTarget.get(segKey) || [];
       const attachedFiles = attachedFilesBySegAndTarget.get(segKey) || [];
 
@@ -657,8 +945,10 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
 
         const mediaParts = [];
         const normalFiles = [];
+        const mediaFilesOnly = [];
         for (const file of attachedFiles) {
           if (['image', 'video', 'record'].includes(file.fileType)) {
+            mediaFilesOnly.push(file);
             if (file.fileType === 'image') mediaParts.push({ type: 'image', data: { file: _toFileUrlIfLikelyLocal(file.path) } });
             else if (file.fileType === 'video') mediaParts.push({ type: 'video', data: { file: _toFileUrlIfLikelyLocal(file.path) } });
             else if (file.fileType === 'record') mediaParts.push({ type: 'record', data: { file: _toFileUrlIfLikelyLocal(file.path) } });
@@ -674,11 +964,28 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         if (mediaParts.length > 0) {
           const batches = _splitBatches(mediaParts, maxMediaPartsPerMessage);
           logger.debug(`分批发送媒体: 总数=${mediaParts.length}, 单批上限=${maxMediaPartsPerMessage}, 批次数=${batches.length}`);
+
+          const shouldAttachCaptionToSingleImage = (() => {
+            if (mediaFilesOnly.length !== 1) return false;
+            const f = mediaFilesOnly[0];
+            if (!f || f.fileType !== 'image') return false;
+            const cap = typeof f.caption === 'string' ? f.caption.trim() : '';
+            if (!cap) return false;
+            return true;
+          })();
+          const singleImageCaption = shouldAttachCaptionToSingleImage
+            ? mediaFilesOnly[0].caption.trim()
+            : '';
+
           for (let bi = 0; bi < batches.length; bi++) {
             const batch = batches[bi];
             const useReply = shouldReplyForMedia && !usedReply;
             const requestId = `${routeTarget.kind}-segmedia-${Date.now()}-${i}-${bi}`;
-            let normalizedParts = _withNormalizedFileField(batch);
+            let partsToSend = batch;
+            if (shouldAttachCaptionToSingleImage && bi === 0 && Array.isArray(batch) && batch.length === 1 && batch[0]?.type === 'image') {
+              partsToSend = [{ type: 'text', data: { text: singleImageCaption } }, ...batch];
+            }
+            let normalizedParts = _withNormalizedFileField(partsToSend);
             let result = await sendAndWaitResult({
               type: "sdk",
               path: routeTarget.kind === 'private'

@@ -686,6 +686,7 @@ function buildPlannerRootDirectiveXml(options) {
 
 function buildPlannerSystemContextXml(options) {
   const {
+    worldbookXml,
     presetXml,
     personaXml,
     emoXml,
@@ -695,6 +696,10 @@ function buildPlannerSystemContextXml(options) {
   } = options || {};
 
   const pieces = [];
+
+  if (worldbookXml && typeof worldbookXml === 'string' && worldbookXml.trim()) {
+    pieces.push(worldbookXml.trim());
+  }
 
   if (presetXml && typeof presetXml === 'string' && presetXml.trim()) {
     pieces.push(presetXml.trim());
@@ -752,6 +757,7 @@ export async function planProactiveObjective(payload = {}) {
     topicHint = '',
     presetPlainText = '',
     presetXml = '',
+    worldbookXml = '',
     personaXml = '',
     emoXml = '',
     memoryXml = '',
@@ -792,6 +798,7 @@ export async function planProactiveObjective(payload = {}) {
   });
 
   const systemContextXml = buildPlannerSystemContextXml({
+    worldbookXml,
     presetXml: effectivePresetXml,
     personaXml,
     emoXml,
@@ -855,6 +862,7 @@ export async function buildProactiveRootDirectiveXml(payload = {}) {
     topicHint = '',
     presetPlainText = '',
     presetXml = '',
+    worldbookXml = '',
     personaXml = '',
     emoXml = '',
     memoryXml = '',
@@ -933,6 +941,7 @@ export async function buildProactiveRootDirectiveXml(payload = {}) {
       topicHint,
       presetPlainText,
       presetXml,
+      worldbookXml,
       personaXml,
       emoXml,
       memoryXml,

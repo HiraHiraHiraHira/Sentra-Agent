@@ -115,14 +115,18 @@
       }
     },
     "anyOf": [
-      { "required": ["repoUrl"] },
-      { "required": ["repoUrls"] }
+      {
+        "required": [
+          "repoUrl"
+        ]
+      },
+      {
+        "required": [
+          "repoUrls"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 90000,
-  "meta": {
-    "realWorldAction": "调用 GitHub API 查询仓库信息",
-    "responseStyle": "结构化 JSON（中文键）"
-  }
+  "timeoutMs": 90000
 }

@@ -31,7 +31,15 @@ export function startHotReloadWatchers(core) {
   const __dirname = path.dirname(__filename);
   const mcpRootDir = path.resolve(__dirname, '../..');
   const envPath = path.join(mcpRootDir, '.env');
-  const pluginsDir = path.join(mcpRootDir, 'plugins');
+
+  // Plugins can be loaded from multiple roots (see loadPlugins candidates). Watch them all.
+  const pluginRootCandidates = [];
+  pluginRootCandidates.push(path.join(mcpRootDir, 'plugins'));
+  try {
+    if (process.env.PLUGINS_DIR) pluginRootCandidates.push(path.resolve(process.env.PLUGINS_DIR));
+  } catch {}
+  pluginRootCandidates.push(path.resolve(process.cwd(), 'plugins'));
+  const pluginRoots = Array.from(new Set(pluginRootCandidates.map((p) => path.resolve(p))));
 
   const reloadConfigDebounced = createDebounced(() => {
     try {
@@ -57,6 +65,18 @@ export function startHotReloadWatchers(core) {
     }
   }, debounceMs);
 
+  const reloadLocalPluginsDebounced = createDebounced(() => {
+    if (!core || typeof core.reloadLocalPlugins !== 'function') return;
+    try {
+      logger.info('检测到插件 skill.md 变更，重新加载本地插件', { label: 'MCP' });
+      core.reloadLocalPlugins().catch((e) => {
+        logger.error('本地插件热重载失败', { label: 'MCP', error: String(e) });
+      });
+    } catch (e) {
+      logger.error('调度本地插件热重载失败', { label: 'MCP', error: String(e) });
+    }
+  }, debounceMs);
+
   // 根 .env 监控
   try {
     if (fs.existsSync(envPath)) {
@@ -69,28 +89,66 @@ export function startHotReloadWatchers(core) {
     logger.warn('根 .env 监控失败（将不支持自动热更新）', { label: 'MCP', error: String(e) });
   }
 
-  // 插件 .env 监控（仅在存在 plugins 目录时启用）
-  try {
-    if (fs.existsSync(pluginsDir)) {
-      const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
-      for (const ent of entries) {
-        if (!ent.isDirectory()) continue;
-        const pluginDir = path.join(pluginsDir, ent.name);
-        try {
-          fs.watch(pluginDir, { persistent: false }, (_eventType, filename) => {
-            if (!filename) return;
-            if (filename === '.env' || filename === 'config.env') {
-              changedPluginDirs.add(ent.name);
-              reloadPluginsDebounced();
-            }
-          });
-        } catch (e) {
-          logger.warn('插件目录监控失败', { label: 'MCP', dir: pluginDir, error: String(e) });
-        }
-      }
-      logger.info('已开启插件 .env 热更新监控', { label: 'MCP', pluginsDir });
+  const watchedPluginDirs = new Set();
+
+  const watchPluginDir = (pluginRoot, dirName) => {
+    const pluginDir = path.join(pluginRoot, dirName);
+    const key = `${path.resolve(pluginDir)}`;
+    if (watchedPluginDirs.has(key)) return;
+    if (!fs.existsSync(pluginDir)) return;
+    try {
+      if (!fs.statSync(pluginDir).isDirectory()) return;
+    } catch {
+      return;
     }
+    watchedPluginDirs.add(key);
+    try {
+      fs.watch(pluginDir, { persistent: false }, (_eventType, filename) => {
+        if (!filename) return;
+        if (filename === '.env' || filename === 'config.env') {
+          changedPluginDirs.add(dirName);
+          reloadPluginsDebounced();
+        }
+        if (filename === 'skill.md') {
+          reloadLocalPluginsDebounced();
+        }
+      });
+    } catch (e) {
+      logger.warn('插件目录监控失败', { label: 'MCP', dir: pluginDir, error: String(e) });
+    }
+  };
+
+  const scanAndWatchPluginRoots = () => {
+    for (const pluginRoot of pluginRoots) {
+      try {
+        if (!fs.existsSync(pluginRoot)) continue;
+        const entries = fs.readdirSync(pluginRoot, { withFileTypes: true });
+        for (const ent of entries) {
+          if (!ent.isDirectory()) continue;
+          watchPluginDir(pluginRoot, ent.name);
+        }
+      } catch (e) {
+        logger.warn('插件根目录监控失败（将不支持插件热更新）', { label: 'MCP', dir: pluginRoot, error: String(e) });
+      }
+    }
+  };
+
+  // 插件 .env 监控（覆盖所有可能的 plugins root，并支持新增插件目录）
+  try {
+    scanAndWatchPluginRoots();
+    for (const pluginRoot of pluginRoots) {
+      try {
+        if (!fs.existsSync(pluginRoot)) continue;
+        fs.watch(pluginRoot, { persistent: false }, () => {
+          // new plugin dir or file changes under root
+          scanAndWatchPluginRoots();
+        });
+      } catch (e) {
+        logger.warn('插件根目录监控失败（将不支持插件热更新）', { label: 'MCP', dir: pluginRoot, error: String(e) });
+      }
+    }
+    logger.info('已开启插件 .env 热更新监控', { label: 'MCP', pluginsDirCandidates: pluginRoots });
   } catch (e) {
-    logger.warn('插件根目录监控失败（将不支持插件热更新）', { label: 'MCP', dir: pluginsDir, error: String(e) });
+    logger.warn('插件热更新监控初始化失败（将不支持插件热更新）', { label: 'MCP', error: String(e) });
   }
 }

@@ -63,10 +63,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "设置当前 QQ 的自定义在线状态",
-    "responseStyle": "自然语言，简短确认已设置",
-    "responseExample": "自定义在线状态已经设置好了。"
-  }
+  "timeoutMs": 20000
 }

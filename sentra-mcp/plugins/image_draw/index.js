@@ -314,9 +314,16 @@ export default async function handler(args = {}, options = {}) {
   const penv = options?.pluginEnv || {};
   const apiKey = penv.DRAW_API_KEY || process.env.DRAW_API_KEY || config.llm.apiKey;
   const baseURL = penv.DRAW_BASE_URL || process.env.DRAW_BASE_URL || config.llm.baseURL;
-  const model = String(penv.DRAW_MODEL || process.env.DRAW_MODEL || config.llm.model || '').trim();
-   const mode = String(penv.DRAW_MODE || process.env.DRAW_MODE || 'chat').toLowerCase();
-   const imageSize = String(penv.DRAW_IMAGE_SIZE || process.env.DRAW_IMAGE_SIZE || '1024x1024');
+  const model = String(penv.DRAW_MODEL || process.env.DRAW_MODEL || '').trim();
+  const mode = String(penv.DRAW_MODE || process.env.DRAW_MODE || 'images').toLowerCase();
+  const imageSize = String(penv.DRAW_IMAGE_SIZE || process.env.DRAW_IMAGE_SIZE || '1024x1024');
+
+  if (!model) {
+    return fail('DRAW_MODEL is required for image_draw', 'CONFIG', {
+      detail: { mode, baseURL },
+      advice: buildAdvice('ERR', { tool: 'image_draw', prompt, mode, baseURL })
+    });
+  }
 
   const oai = new OpenAI({ apiKey, baseURL });
 
@@ -394,7 +401,7 @@ export default async function handler(args = {}, options = {}) {
     }
     return ok({ prompt, content: localMarkdown });
   } catch (e) {
-    logger.warn?.('image_draw:request_failed', { label: 'PLUGIN', error: String(e?.message || e) });
+    logger.warn?.('image_draw:request_failed', { label: 'PLUGIN', mode, model, baseURL, error: String(e?.message || e) });
     const isTimeout = isTimeoutError(e);
     return fail(e, isTimeout ? 'TIMEOUT' : 'ERR', { advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { tool: 'image_draw', prompt }) });
   }

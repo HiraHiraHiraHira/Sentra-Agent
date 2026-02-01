@@ -43,10 +43,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "删除好友",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已删除好友"
-  }
+  "timeoutMs": 20000
 }

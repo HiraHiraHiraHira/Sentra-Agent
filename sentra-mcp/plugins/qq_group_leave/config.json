@@ -47,10 +47,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "退出群聊",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已退群/已解散"
-  }
+  "timeoutMs": 20000
 }

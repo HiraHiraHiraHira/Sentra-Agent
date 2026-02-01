@@ -71,15 +71,18 @@
       }
     },
     "anyOf": [
-      { "required": ["city"] },
-      { "required": ["cities"] }
+      {
+        "required": [
+          "city"
+        ]
+      },
+      {
+        "required": [
+          "cities"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 12000,
-  "meta": {
-    "realWorldAction": "查看天气预报",
-    "responseStyle": "自然语言描述",
-    "responseExample": "今天北京晴转多云，气温15-25℃，空气质量良好"
-  }
+  "timeoutMs": 12000
 }

@@ -44,10 +44,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "撤回消息",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已撤回消息"
-  }
+  "timeoutMs": 20000
 }

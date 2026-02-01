@@ -52,16 +52,19 @@
       "prompt"
     ],
     "anyOf": [
-      { "required": ["url"] },
-      { "required": ["urls"] }
+      {
+        "required": [
+          "url"
+        ]
+      },
+      {
+        "required": [
+          "urls"
+        ]
+      }
     ],
     "additionalProperties": false
   },
   "cooldownMs": 0,
-  "timeoutMs": 35000,
-  "meta": {
-    "realWorldAction": "浏览网页内容",
-    "responseStyle": "自然语言 + 结构化内容",
-    "responseExample": "我已经查看了这个网页，内容主要是..."
-  }
+  "timeoutMs": 35000
 }

@@ -81,11 +81,12 @@ export async function buildPlanFunctionCallInstruction({ allowedAiNames = [], lo
     overview: 'string (可选，总体目标与策略简述)',
     steps: [
       {
+        stepId: 'string (必须，唯一 stepId)',
         aiName: 'string (必须在允许列表中)',
         reason: ['string', 'string', '...'] + ' (数组，每项为一个具体操作或理由)',
         nextStep: 'string',
         draftArgs: { '...': '...' },
-        dependsOn: ['number 索引数组，可省略']
+        dependsOnStepIds: ['string stepId 数组，可省略，仅引用前序步骤的 stepId']
       }
     ]
   }, null, 2);
@@ -173,6 +174,16 @@ const sentraToolsXmlParser = new XMLParser({
   allowBooleanAttributes: true,
   parseTagValue: false,
   parseAttributeValue: false,
+});
+
+const sentraResultXmlParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '@_',
+  trimValues: false,
+  allowBooleanAttributes: true,
+  parseTagValue: false,
+  parseAttributeValue: false,
+  stopNodes: ['*.arguments', '*.data']
 });
 
 // Best-effort parser for typed XML value blocks like
@@ -556,19 +567,21 @@ ${params}
  * @param {Object} params.result - Tool execution result
  * @returns {string} XML formatted result
  */
-export function formatSentraResult({ stepIndex, aiName, reason, args, result }) {
+export function formatSentraResult({ stepIndex, stepId, aiName, reason, args, result }) {
   const reasonText = Array.isArray(reason) ? reason.join('; ') : String(reason || '');
   const resultData = result?.data !== undefined ? result.data : result;
   const success = result?.success !== false;
 
   const safeStep = escapeXmlEntities(String(stepIndex ?? 0));
+  const safeStepId = (typeof stepId === 'string' && stepId.trim()) ? escapeXmlEntities(stepId.trim()) : '';
   const safeTool = escapeXmlEntities(String(aiName ?? ''));
   const safeSuccess = escapeXmlEntities(String(success));
   const safeReason = escapeXmlEntities(reasonText);
   const argsXml = valueToTypedXml(args || {});
   const dataXml = valueToTypedXml(resultData);
+  const stepIdAttr = safeStepId ? ` step_id="${safeStepId}"` : '';
   
-  return `<sentra-result step="${safeStep}" tool="${safeTool}" success="${safeSuccess}">
+  return `<sentra-result step="${safeStep}"${stepIdAttr} tool="${safeTool}" success="${safeSuccess}">
   <reason>${safeReason}</reason>
   <arguments>${argsXml}</arguments>
   <data>${dataXml}</data>
@@ -591,60 +604,116 @@ export function formatSentraUserQuestion(question) {
 export function parseSentraResult(text) {
   if (!text || typeof text !== 'string') return null;
   const withoutFences = stripCodeFences(text);
-  
-  // Match <sentra-result step="..." tool="..." success="..."> ... </sentra-result>
-  const reResult = /<\s*sentra-result\s+step\s*=\s*["']([^"']+)["']\s+tool\s*=\s*["']([^"']+)["'](?:\s+success\s*=\s*["']([^"']+)["'])?[^>]*>([\s\S]*?)<\s*\/\s*sentra-result\s*>/i;
-  const mResult = withoutFences.match(reResult);
-  if (!mResult) return null;
-  
-  const stepIndex = parseInt(mResult[1], 10);
-  const aiName = String(mResult[2] || '').trim();
-  const success = String(mResult[3] || 'true').toLowerCase() === 'true';
-  const contentBlock = mResult[4] || '';
-  
-  // Extract <reason>, <arguments>, <data>
-  const reReason = /<\s*reason\s*>([\s\S]*?)<\s*\/\s*reason\s*>/i;
-  const reArgs = /<\s*arguments\s*>([\s\S]*?)<\s*\/\s*arguments\s*>/i;
-  const reData = /<\s*data\s*>([\s\S]*?)<\s*\/\s*data\s*>/i;
-  
-  const mReason = contentBlock.match(reReason);
-  const mArgs = contentBlock.match(reArgs);
-  const mData = contentBlock.match(reData);
-  
-  const reason = mReason ? String(mReason[1] || '').trim() : '';
-  let args = {};
-  if (mArgs) {
-    const rawArgs = mArgs[1] || '';
-    const jsonArgs = safeParseJson(rawArgs);
-    if (jsonArgs && typeof jsonArgs === 'object') {
-      args = jsonArgs;
-    } else {
-      const parsed = parseStructuredXmlValue(rawArgs);
-      if (parsed && parsed.matched) {
-        args = parsed.value;
-      } else {
-        args = {};
-      }
-    }
-  }
 
-  let data = null;
-  if (mData) {
-    const rawData = mData[1] || '';
-    const jsonData = safeParseJson(rawData);
-    if (jsonData !== null) {
-      data = jsonData;
-    } else {
-      const parsed = parseStructuredXmlValue(rawData);
-      if (parsed && parsed.matched) {
-        data = parsed.value;
+  try {
+    const wrapped = `<root>${withoutFences}</root>`;
+    const doc = sentraResultXmlParser.parse(wrapped);
+    const node = doc?.root?.['sentra-result'];
+    const sr = Array.isArray(node) ? node[0] : node;
+    if (!sr || typeof sr !== 'object') return null;
+
+    const stepIndex = parseInt(String(sr['@_step'] ?? '0'), 10);
+    const stepId = (typeof sr['@_step_id'] === 'string' && sr['@_step_id'].trim()) ? sr['@_step_id'].trim() : '';
+    const aiName = typeof sr['@_tool'] === 'string' ? sr['@_tool'].trim() : '';
+    const success = String(sr['@_success'] ?? 'true').toLowerCase() === 'true';
+    if (!aiName) return null;
+
+    const reason = typeof sr.reason === 'string' ? unescapeXmlEntities(sr.reason) : '';
+    const rawArgs = typeof sr.arguments === 'string' ? sr.arguments : '';
+    const rawData = typeof sr.data === 'string' ? sr.data : '';
+
+    let args = {};
+    if (rawArgs) {
+      const jsonArgs = safeParseJson(rawArgs);
+      if (jsonArgs && typeof jsonArgs === 'object') {
+        args = jsonArgs;
       } else {
-        data = rawData;
+        const parsed = parseStructuredXmlValue(rawArgs);
+        if (parsed && parsed.matched) {
+          args = parsed.value;
+        }
       }
     }
+
+    let data = null;
+    if (rawData) {
+      const jsonData = safeParseJson(rawData);
+      if (jsonData !== null && jsonData !== undefined) {
+        data = jsonData;
+      } else {
+        const parsed = parseStructuredXmlValue(rawData);
+        if (parsed && parsed.matched) {
+          data = parsed.value;
+        } else {
+          data = rawData;
+        }
+      }
+    }
+
+    return { stepIndex, stepId: stepId || undefined, aiName, reason, args, result: data, success };
+  } catch {
+    try {
+      const reResult = /<\s*sentra-result\b([^>]*)>([\s\S]*?)<\s*\/\s*sentra-result\s*>/i;
+      const mResult = withoutFences.match(reResult);
+      if (!mResult) return null;
+      const attrs = mResult[1] || '';
+      const contentBlock = mResult[2] || '';
+      const mStep = attrs.match(/\bstep\s*=\s*["']([^"']+)["']/i);
+      const mStepId = attrs.match(/\bstep_id\s*=\s*["']([^"']+)["']/i);
+      const mTool = attrs.match(/\btool\s*=\s*["']([^"']+)["']/i);
+      const mSuccess = attrs.match(/\bsuccess\s*=\s*["']([^"']+)["']/i);
+
+      const stepIndex = mStep ? parseInt(mStep[1], 10) : 0;
+      const stepId = mStepId ? String(mStepId[1] || '').trim() : '';
+      const aiName = mTool ? String(mTool[1] || '').trim() : '';
+      const success = String(mSuccess?.[1] || 'true').toLowerCase() === 'true';
+      if (!aiName) return null;
+
+      const reReason = /<\s*reason\s*>([\s\S]*?)<\s*\/\s*reason\s*>/i;
+      const reArgs = /<\s*arguments\s*>([\s\S]*?)<\s*\/\s*arguments\s*>/i;
+      const reData = /<\s*data\s*>([\s\S]*?)<\s*\/\s*data\s*>/i;
+
+      const mReason = contentBlock.match(reReason);
+      const mArgs = contentBlock.match(reArgs);
+      const mData = contentBlock.match(reData);
+
+      const reason = mReason ? String(mReason[1] || '').trim() : '';
+
+      let args = {};
+      if (mArgs) {
+        const rawArgs = mArgs[1] || '';
+        const jsonArgs = safeParseJson(rawArgs);
+        if (jsonArgs && typeof jsonArgs === 'object') {
+          args = jsonArgs;
+        } else {
+          const parsed = parseStructuredXmlValue(rawArgs);
+          if (parsed && parsed.matched) {
+            args = parsed.value;
+          }
+        }
+      }
+
+      let data = null;
+      if (mData) {
+        const rawData = mData[1] || '';
+        const jsonData = safeParseJson(rawData);
+        if (jsonData !== null && jsonData !== undefined) {
+          data = jsonData;
+        } else {
+          const parsed = parseStructuredXmlValue(rawData);
+          if (parsed && parsed.matched) {
+            data = parsed.value;
+          } else {
+            data = rawData;
+          }
+        }
+      }
+
+      return { stepIndex, stepId: stepId || undefined, aiName, reason, args, result: data, success };
+    } catch {
+      return null;
+    }
   }
-  
-  return { stepIndex, aiName, reason, args, result: { success, data }, success };
 }
 
 /**

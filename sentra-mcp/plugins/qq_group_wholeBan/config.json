@@ -50,10 +50,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "设置全员禁言",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已切换全体禁言"
-  }
+  "timeoutMs": 20000
 }

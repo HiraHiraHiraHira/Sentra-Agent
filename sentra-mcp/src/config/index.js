@@ -97,6 +97,8 @@ function buildConfigFromEnv() {
     enableRepair: bool(process.env.RUN_ENABLE_REPAIR, true),
     maxRepairs: int(process.env.RUN_MAX_REPAIRS, 1),
     retryDiversify: bool(process.env.RETRY_DIVERSIFY, true),
+    enablePlanPatch: bool(process.env.ENABLE_PLAN_PATCH, false),
+    planPatchTriggerMode: String(process.env.PLAN_PATCH_TRIGGER_MODE || 'on_error'),
   },
   // 专用于 FC (<function_call>) 模式下的提供商配置；未设置时回退到 llm 配置
   fcLlm: {
@@ -304,10 +306,12 @@ function buildConfigFromEnv() {
     contextPreviewArrayItems: int(process.env.CONTEXT_PREVIEW_ARRAY_ITEMS, 3),
     recentContextLimit: int(process.env.RECENT_CONTEXT_LIMIT, 5),
     // Evaluation & retry controls
+    enableEval: bool(process.env.ENABLE_EVAL, false),
     evalRetryOnFail: bool(process.env.EVAL_RETRY_ON_FAIL, true),
     evalMaxRetries: int(process.env.EVAL_MAX_RETRIES, 1),
     // Whether to inject preThought into evaluation/summarizer stages
     evalUsePreThought: bool(process.env.EVAL_USE_PRETHOUGHT, false),
+    enableSummary: bool(process.env.ENABLE_SUMMARY, false),
     summaryUsePreThought: bool(process.env.SUMMARY_USE_PRETHOUGHT, false),
     // Whether to run preThought in planning stages (native & FC)
     planUsePreThought: bool(process.env.PLAN_USE_PRETHOUGHT, false),

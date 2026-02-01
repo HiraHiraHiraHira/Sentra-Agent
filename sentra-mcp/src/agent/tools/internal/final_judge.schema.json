@@ -15,9 +15,13 @@
       "items": {
         "type": "object",
         "properties": {
-          "index": { 
+          "displayIndex": {
             "type": "integer",
-            "description": "步骤索引（从 0 开始，对应执行历史中的位置）"
+            "description": "展示用步骤序号（从 1 开始，仅用于人类/模型阅读）"
+          },
+          "stepId": {
+            "type": "string",
+            "description": "稳定步骤ID（唯一身份标识，用于依赖/引用/补计划 patch）。格式示例：s_01J..."
           },
           "aiName": { 
             "type": "string",
@@ -28,7 +32,7 @@
             "description": "具体失败原因（如“超时”、“文件不存在”、“API 错误”），不要简单写“失败”"
           }
         },
-        "required": ["index", "reason"]
+        "required": ["stepId", "reason"]
       }
     },
     "summary": { 

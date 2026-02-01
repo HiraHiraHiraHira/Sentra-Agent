@@ -66,15 +66,18 @@
       }
     },
     "anyOf": [
-      { "required": ["file"] },
-      { "required": ["files"] }
+      {
+        "required": [
+          "file"
+        ]
+      },
+      {
+        "required": [
+          "files"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 60000,
-  "meta": {
-    "realWorldAction": "解析文档内容",
-    "responseStyle": "纯文本",
-    "responseExample": "文档内容：标题...\n第一段...\n第二段..."
-  }
+  "timeoutMs": 60000
 }

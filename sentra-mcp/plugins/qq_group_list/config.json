@@ -37,10 +37,5 @@
     },
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "获取群列表",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已返回群列表"
-  }
+  "timeoutMs": 20000
 }

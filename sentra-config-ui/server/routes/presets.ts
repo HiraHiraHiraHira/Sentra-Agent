@@ -572,14 +572,7 @@ export async function presetRoutes(fastify: FastifyInstance) {
                 ? (maxTokensFromBody as number)
                 : (Number.isFinite(maxTokensFromEnv) && maxTokensFromEnv > 0 ? maxTokensFromEnv : undefined);
 
-            const userContent = [
-                '下面是 Agent 的完整中文预设文本（可能是 Markdown 或自然语言，描述外貌、人设、身份、兴趣、性格、说话风格、行为规则等）：',
-                '---',
-                rawText,
-                '---',
-                '',
-                '请你只输出一个结构完整、可机读的 <sentra-agent-preset> XML 块，不要输出任何额外解释或 JSON。'
-            ].join('\n');
+            const userContent = rawText;
 
             const messages = baseMessages
                 ? baseMessages.concat([{ role: 'user', content: userContent }])

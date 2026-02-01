@@ -1,6 +1,5 @@
 import logger from '../logger/index.js';
 
-// 简单的运行级取消标记：供执行器在内部轮询使用
 const cancelledRuns = new Set();
 
 export function cancelRun(runId) {

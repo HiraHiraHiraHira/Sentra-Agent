@@ -50,15 +50,18 @@
       }
     },
     "anyOf": [
-      { "required": ["group_id"] },
-      { "required": ["group_ids"] }
+      {
+        "required": [
+          "group_id"
+        ]
+      },
+      {
+        "required": [
+          "group_ids"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "查询群信息",
-    "responseStyle": "自然语言（简洁）",
-    "responseExample": "已返回群信息"
-  }
+  "timeoutMs": 20000
 }

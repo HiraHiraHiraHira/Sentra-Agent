@@ -82,14 +82,18 @@
     },
     "required": [],
     "anyOf": [
-      { "required": ["keyword"] },
-      { "required": ["keywords"] }
+      {
+        "required": [
+          "keyword"
+        ]
+      },
+      {
+        "required": [
+          "keywords"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 40000,
-  "meta": {
-    "realWorldAction": "搜索并发送音乐卡片",
-    "responseStyle": "结构化 JSON（中文键）"
-  }
+  "timeoutMs": 40000
 }

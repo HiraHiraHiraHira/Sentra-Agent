@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { newStepId } from '../utils/stepIds.js';
 import { config, getStageTimeoutMs } from '../config/index.js';
 import logger from '../logger/index.js';
 import { chatCompletion } from '../openai/client.js';
@@ -35,6 +36,37 @@ import { registerRunStart, markRunFinished, removeRun, buildConcurrencyOverlay }
 
 function now() { return Date.now(); }
 
+function isPlanPatchEnabled() {
+  const s1 = String(config.runner?.enablePlanPatch ?? '').trim().toLowerCase();
+  const s2 = String(process.env.ENABLE_PLAN_PATCH ?? '').trim().toLowerCase();
+  return s1 === '1' || s1 === 'true' || s1 === 'yes' || s1 === 'on' || s2 === '1' || s2 === 'true' || s2 === 'yes' || s2 === 'on';
+}
+
+function normalizePlanStepIds(plan) {
+  const p = (plan && typeof plan === 'object') ? plan : { steps: [], manifest: [] };
+  const steps = Array.isArray(p.steps) ? p.steps : [];
+  const withIds = steps.map((s) => {
+    const step = (s && typeof s === 'object') ? s : {};
+    const sid = (typeof step.stepId === 'string' && step.stepId.trim()) ? step.stepId.trim() : newStepId();
+    return { ...step, stepId: sid };
+  });
+  const idToIndex = new Map(withIds.map((s, idx) => [s.stepId, idx]));
+  const finalSteps = withIds.map((s, idx0) => {
+    const rest = s;
+    const depsIdsRaw = Array.isArray(rest.dependsOnStepIds) ? rest.dependsOnStepIds : [];
+    const cleanedIds = depsIdsRaw
+      .map((x) => (typeof x === 'string' ? x.trim() : ''))
+      .filter(Boolean)
+      .filter((x) => idToIndex.has(x))
+      .filter((x) => x !== rest.stepId);
+    const uniq = Array.from(new Set(cleanedIds));
+    const displayIndex = Number.isFinite(Number(rest.displayIndex)) ? Number(rest.displayIndex) : (idx0 + 1);
+    return { ...rest, displayIndex, dependsOnStepIds: uniq.length ? uniq : undefined };
+  });
+
+  return { ...p, steps: finalSteps };
+}
+
 function mergeGlobalOverlay(context, overlayText) {
   if (!overlayText) return context;
   const ctx0 = (context && typeof context === 'object') ? context : {};
@@ -67,8 +99,105 @@ function normalizeReason(reason) {
   if (Array.isArray(reason)) {
     return reason.filter(r => typeof r === 'string' && r.trim()).map(r => r.trim());
   }
-  // 不再兼容字符串格式，直接返回空数组
+
   return [];
+}
+
+function shouldTriggerPlanPatch({ result, triggerMode } = {}) {
+  const mode = String(triggerMode || '').trim().toLowerCase();
+  if (mode === 'always') return true;
+  if (mode === 'never') return false;
+  if (!result || typeof result !== 'object') return false;
+  if (result.success === false) return true;
+  if (result.success === true) return false;
+  const code = String(result.code || '').toUpperCase();
+  if (code && code !== 'OK' && code !== 'SUCCESS') return true;
+  return false;
+}
+
+function isResultOk(result) {
+  if (!result || typeof result !== 'object') return false;
+  if (result.success === false) return false;
+  if (result.success === true) return true;
+  const code = String(result.code || '').toUpperCase();
+  if (!code) return true;
+  return code === 'OK' || code === 'SUCCESS';
+}
+
+function applyDisplayIndex(steps) {
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i];
+    if (s && typeof s === 'object') {
+      s.displayIndex = i + 1;
+    }
+  }
+}
+
+function buildStepIdIndexMap(steps) {
+  return new Map((steps || []).map((s, idx) => [typeof s?.stepId === 'string' ? s.stepId : '', idx]).filter(([k]) => k));
+}
+
+function sanitizeDependsOnStepIds(step, steps) {
+  const m = buildStepIdIndexMap(steps);
+  const ids = Array.isArray(step?.dependsOnStepIds) ? step.dependsOnStepIds : [];
+  const cleaned = ids.map((x) => (typeof x === 'string' ? x.trim() : '')).filter(Boolean).filter((x) => m.has(x));
+  const uniq = Array.from(new Set(cleaned));
+  step.dependsOnStepIds = uniq.length ? uniq : undefined;
+}
+
+function computeDependsOnIndicesFromStep({ step, steps, selfIndex }) {
+  const m = buildStepIdIndexMap(steps);
+  const out = [];
+  if (Array.isArray(step?.dependsOnStepIds) && step.dependsOnStepIds.length) {
+    for (const sid of step.dependsOnStepIds) {
+      const idx = m.get(sid);
+      if (Number.isInteger(idx) && idx >= 0 && idx !== selfIndex) out.push(idx);
+    }
+  }
+  return Array.from(new Set(out)).sort((a, b) => a - b);
+}
+
+function canTargetPending(targetIdx, currentIdx) {
+  return Number.isFinite(targetIdx) && targetIdx > currentIdx;
+}
+
+function guardPlanPatchOps(ops) {
+  const out = [];
+  for (const op of (Array.isArray(ops) ? ops : [])) {
+    const kind = String(op?.op || '').trim();
+    if (!kind) continue;
+    if (kind === 'append') {
+      const steps = Array.isArray(op?.steps) ? op.steps : [];
+      if (steps.length === 0) continue;
+      out.push({ op: 'append', steps });
+    } else if (kind === 'replace') {
+      const targetStepId = typeof op?.targetStepId === 'string' ? op.targetStepId.trim() : '';
+      const step = op?.step;
+      if (!targetStepId || !step) continue;
+      out.push({ op: 'replace', targetStepId, step });
+    } else if (kind === 'delete') {
+      const targetStepId = typeof op?.targetStepId === 'string' ? op.targetStepId.trim() : '';
+      if (!targetStepId) continue;
+      out.push({ op: 'delete', targetStepId });
+    }
+  }
+  return out;
+}
+
+function normalizePlanPatchStepInput(raw) {
+  const s = (raw && typeof raw === 'object') ? raw : {};
+  return {
+    stepId: typeof s.stepId === 'string' && s.stepId.trim() ? s.stepId.trim() : newStepId(),
+    displayIndex: Number.isFinite(Number(s.displayIndex)) ? Number(s.displayIndex) : undefined,
+    aiName: typeof s.aiName === 'string' ? s.aiName : '',
+    reason: normalizeReason(s.reason),
+    draftArgs: (s.draftArgs && typeof s.draftArgs === 'object') ? s.draftArgs : {},
+    dependsOnStepIds: Array.isArray(s.dependsOnStepIds)
+      ? s.dependsOnStepIds.map(x => (typeof x === 'string' ? x.trim() : '')).filter(Boolean)
+      : undefined,
+    nextStep: typeof s.nextStep === 'string' ? s.nextStep : '',
+    skip: s.skip === true,
+  };
 }
 
 /**
@@ -80,6 +209,7 @@ function normalizeReason(reason) {
 function buildDependencyChain(steps, sourceIndices) {
   const result = new Set(sourceIndices);
   const total = steps.length;
+  const stepIdToIdx = new Map((steps || []).map((s, idx) => [typeof s?.stepId === 'string' ? s.stepId : '', idx]).filter(([k]) => k));
   
   // 递归查找下游依赖
   let changed = true;
@@ -89,10 +219,13 @@ function buildDependencyChain(steps, sourceIndices) {
       if (result.has(i)) continue; // 已在结果集中
       
       const step = steps[i];
-      const deps = Array.isArray(step.dependsOn) ? step.dependsOn : [];
+      const depsIds = Array.isArray(step?.dependsOnStepIds) ? step.dependsOnStepIds : [];
+      const depsIdx = depsIds
+        .map((sid) => (typeof sid === 'string' ? stepIdToIdx.get(sid.trim()) : undefined))
+        .filter((x) => Number.isInteger(x));
       
       // 如果该步骤依赖任何已在结果集中的步骤，则添加到结果集
-      if (deps.some(d => result.has(d))) {
+      if (depsIdx.some((d) => result.has(d))) {
         result.add(i);
         changed = true;
       }
@@ -159,15 +292,14 @@ async function generateSingleNativePlan({ messages, tools, allowedAiNames, tempe
   });
   const call = res.choices?.[0]?.message?.tool_calls?.[0];
   let parsed; try { parsed = call?.function?.arguments ? JSON.parse(call.function.arguments) : {}; } catch { parsed = {}; }
-  const stepsArr = Array.isArray(parsed?.steps)
-    ? parsed.steps
-    : (Array.isArray(parsed?.plan?.steps) ? parsed.plan.steps : []);
+  const stepsArr = Array.isArray(parsed?.steps) ? parsed.steps : [];
   let rawSteps = stepsArr.map((s) => ({
+    stepId: (typeof s?.stepId === 'string' && s.stepId.trim()) ? s.stepId.trim() : newStepId(),
     aiName: s?.aiName,
     reason: normalizeReason(s?.reason),
     nextStep: s?.nextStep || '',
     draftArgs: s?.draftArgs || {},
-    dependsOn: Array.isArray(s?.dependsOn) ? s.dependsOn : undefined
+    dependsOnStepIds: Array.isArray(s?.dependsOnStepIds) ? s.dependsOnStepIds : undefined
   }));
   // 过滤未知工具
   const validNames = new Set(allowedAiNames || []);
@@ -531,7 +663,7 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
       if (config.flags.enableVerboseSteps) {
         const allSteps = Array.isArray(parsed?.steps)
           ? parsed.steps
-          : (Array.isArray(parsed?.plan?.steps) ? parsed.plan.steps : []);
+          : [];
         const dropped = allSteps.filter((s) => !validNames.has(s?.aiName)).map((s) => s?.aiName);
         logger.warn?.('触发严格重规划：上次计划包含未知工具或为空', { label: 'PLAN', dropped, allowedAiNames });
       }
@@ -545,18 +677,24 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
         { role: 'assistant', content: '严格约束：只能从以下 aiName 中选择，并且每步仅包含一个工具。若无合适工具可输出空计划。可选 aiName 列表:\n' + (allowedAiNames.join(', ')) },
         { role: 'user', content: ep.user_request }
       ]);
-      const re2 = await chatCompletion({ messages: replanMessages2, tools, tool_choice: { type: 'function', function: { name: 'emit_plan' } }, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1), timeoutMs: getStageTimeoutMs('plan'), model: planModel });
+      const re2 = await chatCompletion({
+        messages: replanMessages2,
+        tools,
+        tool_choice: { type: 'function', function: { name: 'emit_plan' } },
+        temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1),
+        timeoutMs: getStageTimeoutMs('plan'),
+        model: planModel
+      });
       const rcall2 = re2.choices?.[0]?.message?.tool_calls?.[0];
       let reparsed2; try { reparsed2 = rcall2?.function?.arguments ? JSON.parse(rcall2.function.arguments) : {}; } catch { reparsed2 = {}; }
-      const stepsArr2 = Array.isArray(reparsed2?.steps)
-        ? reparsed2.steps
-        : (Array.isArray(reparsed2?.plan?.steps) ? reparsed2.plan.steps : []);
+      const stepsArr2 = Array.isArray(reparsed2?.steps) ? reparsed2.steps : [];
       let rsteps2 = stepsArr2.map((s) => ({
+        stepId: (typeof s?.stepId === 'string' && s.stepId.trim()) ? s.stepId.trim() : newStepId(),
         aiName: s?.aiName,
         reason: normalizeReason(s?.reason),
         nextStep: s?.nextStep || '',
         draftArgs: s?.draftArgs || {},
-        dependsOn: Array.isArray(s?.dependsOn) ? s.dependsOn : undefined
+        dependsOnStepIds: Array.isArray(s?.dependsOnStepIds) ? s.dependsOnStepIds : undefined
       }));
       const rfiltered2 = rsteps2.filter((s) => s.aiName && validNames.has(s.aiName));
       steps = rfiltered2;
@@ -565,43 +703,36 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
     }
   }
 
-  // 依赖校验：越界/自依赖/环
-  const validateDepends = (arr) => {
-    const n = arr.length;
-    const edges = new Map();
-    const indeg = Array(n).fill(0);
+  // 依赖校验（stepId-only）：
+  // - dependsOnStepIds 只能引用“前序步骤”的 stepId（保证无环）
+  // - 禁止自依赖
+  // - 依赖 stepId 必须存在
+  const validateDependsOnStepIds = (arr) => {
+    const stepIdToIndex = new Map((arr || []).map((s, idx) => [typeof s?.stepId === 'string' ? s.stepId.trim() : '', idx]).filter(([k]) => k));
     let invalid = false;
-    for (let i = 0; i < n; i++) {
-      const deps = Array.isArray(arr[i].dependsOn) ? arr[i].dependsOn : [];
+    for (let i = 0; i < (arr || []).length; i++) {
+      const s = arr[i] || {};
+      const sid = typeof s?.stepId === 'string' ? s.stepId.trim() : '';
+      const raw = Array.isArray(s?.dependsOnStepIds) ? s.dependsOnStepIds : [];
       const cleaned = [];
-      for (const d of deps) {
-        const k = Number(d);
-        if (!Number.isInteger(k) || k < 0 || k >= n || k === i) { invalid = true; continue; }
-        cleaned.push(k);
+      for (const d of raw) {
+        const depId = typeof d === 'string' ? d.trim() : '';
+        if (!depId) { invalid = true; continue; }
+        if (depId === sid) { invalid = true; continue; }
+        const di = stepIdToIndex.get(depId);
+        if (!Number.isInteger(di)) { invalid = true; continue; }
+        if (di >= i) { invalid = true; continue; }
+        cleaned.push(depId);
       }
-      arr[i].dependsOn = cleaned.length ? cleaned : undefined;
-      for (const d of (arr[i].dependsOn || [])) {
-        if (!edges.has(d)) edges.set(d, []);
-        edges.get(d).push(i);
-        indeg[i]++;
-      }
+      const uniq = Array.from(new Set(cleaned));
+      s.dependsOnStepIds = uniq.length ? uniq : undefined;
     }
-    // Kahn 拓扑
-    const q = [];
-    for (let i = 0; i < n; i++) if (indeg[i] === 0) q.push(i);
-    let visited = 0;
-    while (q.length) {
-      const u = q.shift();
-      visited++;
-      for (const v of (edges.get(u) || [])) { if (--indeg[v] === 0) q.push(v); }
-    }
-    const hasCycle = visited !== n;
-    return { ok: !hasCycle && !invalid, hasCycle, invalidRefs: invalid };
+    return { ok: !invalid, invalidRefs: invalid };
   };
 
-  let vres = validateDepends(steps);
+  let vres = validateDependsOnStepIds(steps);
   if (!vres.ok) {
-    logger.warn?.('规划依赖校验未通过，尝试一次重规划', { label: 'PLAN', hasCycle: vres.hasCycle, invalidRefs: vres.invalidRefs });
+    logger.warn?.('规划依赖校验未通过（dependsOnStepIds），尝试一次重规划', { label: 'PLAN', invalidRefs: vres.invalidRefs });
     // 一次性重规划：追加严格依赖约束
     const replanMessages = compactMessages([
       { role: 'system', content: sys },
@@ -610,33 +741,39 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
         { role: 'assistant', content: renderTemplate(ep.assistant_thought, { preThought: preThought || '' }) },
       ] : []),
       { role: 'assistant', content: renderTemplate(ep.assistant_manifest, { manifestBulleted: manifestToBulletedText(manifest) }) },
-      { role: 'assistant', content: '上一个计划的 dependsOn 存在越界/环/自依赖问题。请重新生成一个满足以下严格约束的计划：\n1) 每一步的 dependsOn 仅引用小于当前步索引的步骤；\n2) 禁止任何形式的环；\n3) 避免自依赖；\n4) 若不需要依赖请省略 dependsOn 字段；\n5) 仅输出必需字段并符合 emit_plan 的 JSON 结构。' },
+      { role: 'assistant', content: '上一个计划的 dependsOnStepIds 存在无效引用/自依赖/引用非前序步骤的问题。请重新生成一个满足以下严格约束的计划：\n1) 每一步的 dependsOnStepIds 只能引用前序步骤（在 steps 数组中排在当前步之前）的 stepId；\n2) 禁止自依赖；\n3) 若不需要依赖请省略 dependsOnStepIds 字段；\n4) 每一步必须提供唯一的 stepId；\n5) 仅输出必需字段并符合 emit_plan 的 JSON 结构。' },
       { role: 'user', content: ep.user_request }
     ]);
-    const re = await chatCompletion({ messages: replanMessages, tools, tool_choice: { type: 'function', function: { name: 'emit_plan' } }, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1), timeoutMs: getStageTimeoutMs('plan'), model: planModel });
+    const re = await chatCompletion({
+      messages: replanMessages,
+      tools,
+      tool_choice: { type: 'function', function: { name: 'emit_plan' } },
+      temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1),
+      timeoutMs: getStageTimeoutMs('plan'),
+      model: planModel
+    });
     const rcall = re.choices?.[0]?.message?.tool_calls?.[0];
     let reparsed; try { reparsed = rcall?.function?.arguments ? JSON.parse(rcall.function.arguments) : {}; } catch { reparsed = {}; }
-    const stepsArr = Array.isArray(reparsed?.steps)
-      ? reparsed.steps
-      : (Array.isArray(reparsed?.plan?.steps) ? reparsed.plan.steps : []);
+    const stepsArr = Array.isArray(reparsed?.steps) ? reparsed.steps : [];
     let rsteps = stepsArr.map((s) => ({
+      stepId: (typeof s?.stepId === 'string' && s.stepId.trim()) ? s.stepId.trim() : newStepId(),
       aiName: s?.aiName,
       reason: normalizeReason(s?.reason),
       nextStep: s?.nextStep || '',
       draftArgs: s?.draftArgs || {},
-      dependsOn: Array.isArray(s?.dependsOn) ? s.dependsOn : undefined
+      dependsOnStepIds: Array.isArray(s?.dependsOnStepIds) ? s.dependsOnStepIds : undefined
     }));
     // 过滤未知工具
     const rfiltered = rsteps.filter((s) => s.aiName && validNames.has(s.aiName));
     rsteps = rfiltered;
-    const v2 = validateDepends(rsteps);
+    const v2 = validateDependsOnStepIds(rsteps);
     if (v2.ok) {
       steps = rsteps;
       logger.info('重规划成功，依赖校验通过', { label: 'PLAN', steps: steps.length });
     } else {
       logger.warn?.('重规划仍未通过依赖校验，将执行兜底修正', { label: 'PLAN' });
-      // 兜底修正：移除全部 dependsOn，避免运行期死锁
-      steps = (steps || []).map((s) => ({ ...s, dependsOn: undefined }));
+      // 兜底修正：移除全部 dependsOnStepIds，避免运行期死锁
+      steps = (steps || []).map((s) => ({ ...s, dependsOnStepIds: undefined }));
     }
   }
 
@@ -659,6 +796,19 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
   const startIndex = Math.max(0, Number(opts.startIndex) || 0);
   // 中文：重试模式 - 仅执行指定的失败步骤
   const retrySteps = Array.isArray(opts.retrySteps) ? new Set(opts.retrySteps.map(Number)) : null;
+  const enablePlanPatchHook = isPlanPatchEnabled() && !retrySteps;
+  const triggerMode = String(config.runner?.planPatchTriggerMode || process.env.PLAN_PATCH_TRIGGER_MODE || 'on_error');
+  const maxPatches = 12;
+  const maxPlanPatchCalls = 40;
+  let appliedPatches = 0;
+  let planPatchCalls = 0;
+  let stopRequested = false;
+  let pauseForPlanPatch = false;
+  let pendingPlanPatch = null;
+  const retryBudgetByStepId = new Map();
+  const initialPlanSnapshot = enablePlanPatchHook
+    ? JSON.parse(JSON.stringify(plan && typeof plan === 'object' ? plan : { manifest: [], steps: [] }))
+    : null;
   const used = [];
   let succeeded = 0;
   const conv = normalizeConversation(opts.conversation);
@@ -666,7 +816,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
   // 重试模式下，跟踪已执行步骤的成功/失败状态，用于智能跳过依赖失败的步骤
   const stepStatus = new Map(); // stepIndex -> { success: boolean, reason: string }
 
-  const total = plan.steps.length;
+  let total = plan.steps.length;
   const maxConc = Math.max(1, Number(config.planner?.maxConcurrency ?? 3));
   const finished = new Set();
   const started = new Set();
@@ -689,52 +839,266 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
   const getToolLimit = (aiName) => Number(toolOverride[normKey(aiName)] ?? toolConcDefault);
   const getProvLimit = (provLabel) => Number(provOverride[normKey(provLabel)] ?? provConcDefault);
 
-  // ========= 实时通讯优化：基于依赖关系的“组”缓冲与按序发送 =========
-  // 中文：预计算依赖、反向依赖、连通分量（存在依赖边的连通子图视为一组）。
-  // - 若某步既不依赖他人，也没有被他人依赖，则为“孤立”步骤：实时结果即时发送（优先反馈）。
-  // - 若存在依赖关系（直接/间接），归入对应“依赖组”。组内结果先缓冲；当组所有步骤执行完毕后，按拓扑顺序统一发送。
-  const depsArr = plan.steps.map((s, idx) => {
-    const raw = Array.isArray(s?.dependsOn) ? s.dependsOn : [];
-    const norm = [];
-    for (const d of raw) {
-      const k = Number(d);
-      if (Number.isInteger(k) && k >= 0 && k < total && k !== idx) norm.push(k);
-    }
-    return norm;
-  });
-  const revDepsArr = Array.from({ length: total }, () => []);
-  for (let i = 0; i < total; i++) {
-    for (const d of depsArr[i]) revDepsArr[d].push(i);
-  }
-  const isIsolated = Array.from({ length: total }, (_, i) => (depsArr[i].length === 0 && revDepsArr[i].length === 0));
-  // 构造无向邻接用于识别连通分量
-  const undirected = Array.from({ length: total }, () => new Set());
-  for (let i = 0; i < total; i++) {
-    for (const d of depsArr[i]) { undirected[i].add(d); undirected[d].add(i); }
-  }
-  const groupOf = new Array(total).fill(null); // 步骤 -> 组ID（null 表示孤立步）
-  const groups = []; // { id, nodes: number[], flushed }
-  for (let i = 0; i < total; i++) {
-    if (isIsolated[i] || groupOf[i] !== null) continue;
-    const gid = groups.length;
-    const nodes = [];
-    const q = [i];
-    groupOf[i] = gid;
-    while (q.length) {
-      const u = q.shift();
-      nodes.push(u);
-      for (const v of undirected[u]) {
-        if (!isIsolated[v] && groupOf[v] === null) {
-          groupOf[v] = gid;
-          q.push(v);
-        }
+  let depsArr = [];
+  let revDepsArr = [];
+  let groupOf = [];
+  let groups = [];
+  let groupPending = new Map();
+  const groupBuffers = new Map();
+  const groupArgsBuffers = new Map();
+
+  const forceFlushAllBuffersAsSingleEvents = () => {
+    for (const [, buf] of groupArgsBuffers.entries()) {
+      for (const [, ev] of buf.entries()) {
+        emitRunEvent(runId, ev);
       }
     }
-    groups.push({ id: gid, nodes, flushed: false });
-  }
-  const groupPending = new Map(groups.map((g) => [g.id, g.nodes.length])); // 组内尚未完成的步数
-  const groupBuffers = new Map(); // gid -> Map(stepIndex -> tool_result event)
-  const groupArgsBuffers = new Map(); // gid -> Map(stepIndex -> args event)
+    for (const [, buf] of groupBuffers.entries()) {
+      for (const [, ev] of buf.entries()) {
+        emitRunEvent(runId, ev);
+      }
+    }
+    groupArgsBuffers.clear();
+    groupBuffers.clear();
+  };
+
+  const rebuildGroupingState = () => {
+    total = plan.steps.length;
+    depsArr = plan.steps.map((s, idx) => computeDependsOnIndicesFromStep({ step: s, steps: plan.steps, selfIndex: idx }));
+    revDepsArr = Array.from({ length: total }, () => []);
+    for (let i = 0; i < total; i++) {
+      for (const d of depsArr[i]) revDepsArr[d].push(i);
+    }
+    const isIsolated = Array.from({ length: total }, (_, i) => (depsArr[i].length === 0 && revDepsArr[i].length === 0));
+    const undirected = Array.from({ length: total }, () => new Set());
+    for (let i = 0; i < total; i++) {
+      for (const d of depsArr[i]) { undirected[i].add(d); undirected[d].add(i); }
+    }
+    groupOf = new Array(total).fill(null);
+    groups = [];
+    for (let i = 0; i < total; i++) {
+      if (isIsolated[i] || groupOf[i] !== null) continue;
+      const gid = groups.length;
+      const nodes = [];
+      const q = [i];
+      groupOf[i] = gid;
+      while (q.length) {
+        const u = q.shift();
+        nodes.push(u);
+        for (const v of undirected[u]) {
+          if (!isIsolated[v] && groupOf[v] === null) {
+            groupOf[v] = gid;
+            q.push(v);
+          }
+        }
+      }
+      groups.push({ id: gid, nodes, flushed: false });
+    }
+    groupPending = new Map(groups.map((g) => {
+      const remaining = (g.nodes || []).filter((idx) => !finished.has(idx)).length;
+      return [g.id, remaining];
+    }));
+    groupArgsBuffers.clear();
+    groupBuffers.clear();
+    for (const s of (plan.steps || [])) {
+      sanitizeDependsOnStepIds(s, plan.steps);
+    }
+    applyDisplayIndex(plan.steps);
+  };
+
+  rebuildGroupingState();
+
+  const buildPlanPatchContext = async (atIndex) => {
+    const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+    const currentStep = steps[Number(atIndex)] || {};
+    const dependsOnStepIds = Array.isArray(currentStep?.dependsOnStepIds) ? currentStep.dependsOnStepIds : [];
+    const planStepIdToIdx = buildStepIdIndexMap(steps);
+
+    const dependencyChain = new Set();
+    const addDependencies = (stepIdx) => {
+      if (dependencyChain.has(stepIdx)) return;
+      dependencyChain.add(stepIdx);
+      const step = steps[stepIdx] || {};
+      const deps = Array.isArray(step?.dependsOnStepIds) ? step.dependsOnStepIds : [];
+      for (const sid of deps) {
+        const k = typeof sid === 'string' ? sid.trim() : '';
+        const idx = planStepIdToIdx.get(k);
+        if (Number.isFinite(idx) && idx >= 0 && idx < Number(atIndex)) {
+          addDependencies(idx);
+        }
+      }
+    };
+
+    for (const sid of dependsOnStepIds) {
+      const k = typeof sid === 'string' ? sid.trim() : '';
+      const idx = planStepIdToIdx.get(k);
+      if (Number.isFinite(idx) && idx >= 0 && idx < Number(atIndex)) {
+        addDependencies(idx);
+      }
+    }
+
+    const allowed = new Set();
+    for (let i = 0; i < Number(atIndex); i++) {
+      if (dependencyChain.size > 0) {
+        if (dependencyChain.has(i)) allowed.add(i);
+      } else {
+        allowed.add(i);
+      }
+    }
+
+    const keepTypes = new Set(['tool_result', 'arggen_error', 'tool_error', 'retry_begin', 'retry_done', 'plan_patch']);
+    const hist = await HistoryStore.list(runId, 0, -1);
+    const filtered = (Array.isArray(hist) ? hist : []).filter((h) => keepTypes.has(String(h?.type || '')));
+
+    const lastToolByIndex = new Map();
+    for (const h of filtered) {
+      if (h.type !== 'tool_result') continue;
+      const idx = Number(h.plannedStepIndex);
+      if (!Number.isFinite(idx)) continue;
+      if (!allowed.has(idx)) continue;
+      lastToolByIndex.set(idx, h);
+    }
+
+    const toolCtx = Array.from(lastToolByIndex.keys())
+      .sort((a, b) => a - b)
+      .map((idx) => lastToolByIndex.get(idx))
+      .filter(Boolean);
+
+    const metaCtx = filtered.filter((h) => h.type !== 'tool_result');
+    const historyContext = [...metaCtx, ...toolCtx];
+    return { toolCtx, historyContext };
+  };
+
+  const maybeProcessPendingPlanPatch = async () => {
+    if (!enablePlanPatchHook) return;
+    if (!pauseForPlanPatch) return;
+    if (!pendingPlanPatch) return;
+    if (planPatchCalls >= maxPlanPatchCalls) { pauseForPlanPatch = false; pendingPlanPatch = null; return; }
+    if (appliedPatches >= maxPatches) { pauseForPlanPatch = false; pendingPlanPatch = null; return; }
+
+    const { atIndex, atStepId, aiName, lastResult, trigger } = pendingPlanPatch;
+    pauseForPlanPatch = false;
+    pendingPlanPatch = null;
+
+    let patch;
+    let toolCtx = [];
+    let historyContext = [];
+    try {
+      const built = await buildPlanPatchContext(atIndex);
+      toolCtx = built.toolCtx;
+      historyContext = built.historyContext;
+    } catch {}
+
+    try {
+      const { maybePlanPatch } = await import('./stages/plan_patch.js');
+      planPatchCalls += 1;
+      patch = await maybePlanPatch({
+        runId,
+        objective,
+        plan,
+        currentIndex: atIndex,
+        lastResult,
+        mcpcore,
+        conversation: conv,
+        context,
+        initialPlan: initialPlanSnapshot,
+        recentContext: toolCtx,
+        historyContext,
+        trigger,
+      });
+    } catch (e) {
+      logger.warn?.('PlanPatch invocation failed (ignored)', { label: 'PLAN_PATCH', runId, error: String(e) });
+      return;
+    }
+
+    const action = String(patch?.action || 'continue');
+    const isComplete = patch?.isComplete === true;
+    if (action === 'stop' || isComplete) {
+      stopRequested = true;
+      const patchEvent = { type: 'plan_patch', action: 'stop', reason: String(patch?.reason || ''), atIndex, atStepId, isComplete };
+      emitRunEvent(runId, patchEvent);
+      await HistoryStore.append(runId, patchEvent);
+      return;
+    }
+    if (action !== 'patch') return;
+
+    const ops = guardPlanPatchOps(patch?.operations);
+    if (!ops.length) return;
+
+    forceFlushAllBuffersAsSingleEvents();
+
+    const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+    const stepIdToIdx = buildStepIdIndexMap(steps);
+    const currentBudget = retryBudgetByStepId.has(atStepId) ? retryBudgetByStepId.get(atStepId) : 1;
+    let consumedRetryBudget = false;
+
+    for (const op of ops) {
+      if (op.op === 'append') {
+        const rawNewSteps = (op.steps || []);
+        const newSteps = [];
+        let retryAppendedForThisFailure = false;
+        for (const x of rawNewSteps) {
+          const rawAiName = String(x?.aiName || '');
+          const isSameToolAsFail = rawAiName === String(aiName);
+          const rawDepends = Array.isArray(x?.dependsOnStepIds)
+            ? x.dependsOnStepIds.map((d) => (typeof d === 'string' ? d.trim() : '')).filter(Boolean)
+            : [];
+          const retryDepends = isSameToolAsFail
+            ? Array.from(new Set([atStepId, ...rawDepends]))
+            : rawDepends;
+          const isRetry = isSameToolAsFail && retryDepends.includes(atStepId);
+          if (isRetry && currentBudget <= 0) continue;
+          if (isRetry && retryAppendedForThisFailure) continue;
+          const s0 = normalizePlanPatchStepInput(x);
+          if (isRetry) {
+            s0.dependsOnStepIds = retryDepends;
+            retryAppendedForThisFailure = true;
+            consumedRetryBudget = true;
+          }
+          s0.stepId = newStepId();
+          newSteps.push(s0);
+        }
+        for (const ns of newSteps) {
+          steps.push(ns);
+        }
+      } else if (op.op === 'replace') {
+        const targetIdx = stepIdToIdx.get(op.targetStepId);
+        if (!canTargetPending(targetIdx, atIndex)) continue;
+        if (started.has(targetIdx) || finished.has(targetIdx)) continue;
+        const current = steps[targetIdx];
+        if (!current || current.skip === true) continue;
+        const next = normalizePlanPatchStepInput(op.step);
+        current.aiName = next.aiName;
+        current.reason = next.reason;
+        current.draftArgs = next.draftArgs;
+        current.dependsOnStepIds = next.dependsOnStepIds;
+        current.nextStep = next.nextStep;
+        current.skip = false;
+      } else if (op.op === 'delete') {
+        const targetIdx = stepIdToIdx.get(op.targetStepId);
+        if (!canTargetPending(targetIdx, atIndex)) continue;
+        if (started.has(targetIdx) || finished.has(targetIdx)) continue;
+        const current = steps[targetIdx];
+        if (!current) continue;
+        current.skip = true;
+      }
+    }
+
+    if (consumedRetryBudget && currentBudget > 0) {
+      retryBudgetByStepId.set(atStepId, currentBudget - 1);
+    }
+    appliedPatches += 1;
+
+    plan.steps = steps;
+    total = steps.length;
+    await HistoryStore.setPlan(runId, plan);
+    const patchEvent = { type: 'plan_patch', action: 'patch', reason: String(patch?.reason || ''), operations: ops, atIndex, atStepId };
+    emitRunEvent(runId, patchEvent);
+    await HistoryStore.append(runId, patchEvent);
+
+    rebuildGroupingState();
+  };
+
   const topoOrderForGroup = (gid) => {
     const nodes = groups[gid]?.nodes || [];
     const inSet = new Set(nodes);
@@ -763,13 +1127,29 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     return out;
   };
   const buildDependsNote = (i) => {
-    const depOn = depsArr[i] || [];
-    const depBy = revDepsArr[i] || [];
+    const depOnIdx = depsArr[i] || [];
+    const depByIdx = revDepsArr[i] || [];
+    const depOn = depOnIdx
+      .map((idx) => ({ idx, stepId: plan.steps[idx]?.stepId, displayIndex: plan.steps[idx]?.displayIndex }))
+      .filter((x) => typeof x.stepId === 'string' && x.stepId);
+    const depBy = depByIdx
+      .map((idx) => ({ idx, stepId: plan.steps[idx]?.stepId, displayIndex: plan.steps[idx]?.displayIndex }))
+      .filter((x) => typeof x.stepId === 'string' && x.stepId);
     if (depOn.length === 0 && depBy.length === 0) return '无依赖关系';
     const parts = [];
-    if (depOn.length) parts.push(`依赖步骤: ${depOn.map((x) => `#${x + 1}`).join(', ')}`);
-    if (depBy.length) parts.push(`被步骤依赖: ${depBy.map((x) => `#${x + 1}`).join(', ')}`);
+    if (depOn.length) parts.push(`依赖步骤: ${depOn.map((x) => `${x.stepId}(#${Number(x.displayIndex || (x.idx + 1))})`).join(', ')}`);
+    if (depBy.length) parts.push(`被步骤依赖: ${depBy.map((x) => `${x.stepId}(#${Number(x.displayIndex || (x.idx + 1))})`).join(', ')}`);
     return parts.join('；');
+  };
+
+  const buildDependsOnStepIds = (i) => {
+    const ids = Array.isArray(plan.steps?.[i]?.dependsOnStepIds) ? plan.steps[i].dependsOnStepIds : [];
+    return ids.map((x) => (typeof x === 'string' ? x.trim() : '')).filter(Boolean);
+  };
+
+  const buildDependedByStepIds = (i) => {
+    const idxs = revDepsArr[i] || [];
+    return idxs.map((j) => plan.steps?.[j]?.stepId).filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim());
   };
   const emitToolResultGrouped = (ev, plannedStepIndex) => {
     const gid = groupOf[plannedStepIndex];
@@ -869,13 +1249,14 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     const step = plan.steps[i];
     const aiName = step.aiName;
     const draftArgs = step.draftArgs || {};
+    const stepId = step?.stepId;
     const stepStart = now();
     
     // 若运行已被上游标记为取消，则跳过实际工具调用，避免继续浪费资源
     if (isRunCancelled(runId)) {
       const elapsed = now() - stepStart;
-      const depOn = depsArr[i] || [];
-      const depBy = revDepsArr[i] || [];
+      const depOnStepIds = buildDependsOnStepIds(i);
+      const depByStepIds = buildDependedByStepIds(i);
       const gid = groupOf[i];
       const res = {
         success: false,
@@ -886,6 +1267,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
       const ev = {
         type: 'tool_result',
         plannedStepIndex: i,
+        stepId,
         executionIndex: nextExecutionIndex++,
         aiName,
         reason: formatReason(step.reason),
@@ -893,8 +1275,8 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
         args: draftArgs,
         result: res,
         elapsedMs: elapsed,
-        dependsOn: depOn,
-        dependedBy: depBy,
+        dependsOnStepIds: depOnStepIds,
+        dependedByStepIds: depByStepIds,
         dependsNote: buildDependsNote(i),
         groupId: (gid ?? null),
         groupSize: (gid != null && groups[gid]?.nodes?.length) ? groups[gid].nodes.length : 1,
@@ -913,8 +1295,8 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     
     // 重试模式下，检查依赖步骤是否失败
     if (retrySteps) {
-      const deps = Array.isArray(step.dependsOn) ? step.dependsOn : [];
-      const failedDeps = deps.filter(d => {
+      const deps = depsArr[i] || [];
+      const failedDeps = deps.filter((d) => {
         const status = stepStatus.get(Number(d));
         return status && !status.success;
       });
@@ -935,12 +1317,13 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
         
         stepStatus.set(i, { success: false, reason: res.message });
         
-        const depOn = depsArr[i] || [];
-        const depBy = revDepsArr[i] || [];
+        const depOnStepIds = buildDependsOnStepIds(i);
+        const depByStepIds = buildDependedByStepIds(i);
         const gid = groupOf[i];
         const ev = {
           type: 'tool_result',
           plannedStepIndex: i,
+          stepId,
           executionIndex: nextExecutionIndex++,
           aiName,
           reason: formatReason(step.reason),
@@ -948,8 +1331,8 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
           args: draftArgs,
           result: res,
           elapsedMs: elapsed,
-          dependsOn: depOn,
-          dependedBy: depBy,
+          dependsOnStepIds: depOnStepIds,
+          dependedByStepIds: depByStepIds,
           dependsNote: buildDependsNote(i),
           groupId: (gid ?? null),
           groupSize: (gid != null && groups[gid]?.nodes?.length) ? groups[gid].nodes.length : 1,
@@ -976,12 +1359,13 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
       const elapsed = now() - stepStart;
       const res = { success: false, code: 'NOT_FOUND', data: null, message: `Unknown aiName: ${aiName}` };
       // 中文：未知工具也参与“组”缓冲；事件携带依赖说明与组信息
-      const depOn = depsArr[i] || [];
-      const depBy = revDepsArr[i] || [];
+      const depOnStepIds = buildDependsOnStepIds(i);
+      const depByStepIds = buildDependedByStepIds(i);
       const gid = groupOf[i];
       const ev = {
         type: 'tool_result',
         plannedStepIndex: i,  // 计划阶段的步骤索引
+        stepId,
         executionIndex: nextExecutionIndex++,  // 实际执行顺序（按完成时间）
         aiName,
         reason: formatReason(step.reason),
@@ -989,8 +1373,8 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
         args: step.draftArgs || {},
         result: res,
         elapsedMs: elapsed,
-        dependsOn: depOn,  // 计划中的依赖步骤索引
-        dependedBy: depBy,  // 计划中被哪些步骤依赖
+        dependsOnStepIds: depOnStepIds,
+        dependedByStepIds: depByStepIds,
         dependsNote: buildDependsNote(i),
         groupId: (gid ?? null),
         groupSize: (gid != null && groups[gid]?.nodes?.length) ? groups[gid].nodes.length : 1,
@@ -1034,8 +1418,8 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
       toolArgs = argsResult.toolArgs;
       reused = argsResult.reused;
     } catch (e) {
-      emitRunEvent(runId, { type: 'arggen_error', stepIndex: i, aiName, error: String(e) });
-      await HistoryStore.append(runId, { type: 'arggen_error', stepIndex: i, aiName, error: String(e) });
+      emitRunEvent(runId, { type: 'arggen_error', stepIndex: i, stepId, aiName, error: String(e) });
+      await HistoryStore.append(runId, { type: 'arggen_error', stepIndex: i, stepId, aiName, error: String(e) });
       logger.warn?.('参数生成失败，使用草案参数', { label: 'ARGGEN', aiName, error: String(e) });
     }
 
@@ -1083,18 +1467,19 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
 
     // 将最终用于调用的参数写入历史，并通过事件总线实时分发
     try {
-      const depOnA = depsArr[i] || [];
-      const depByA = revDepsArr[i] || [];
+      const depOnStepIds = buildDependsOnStepIds(i);
+      const depByStepIds = buildDependedByStepIds(i);
       const gidA = groupOf[i];
       const argsEv = {
         type: 'args',
         stepIndex: i,
         plannedStepIndex: i,
+        stepId,
         aiName,
         args: toolArgs,
         reused,
-        dependsOn: depOnA,
-        dependedBy: depByA,
+        dependsOnStepIds: depOnStepIds,
+        dependedByStepIds: depByStepIds,
         dependsNote: buildDependsNote(i),
         groupId: (gidA ?? null),
         groupSize: (gidA != null && groups[gidA]?.nodes?.length) ? groups[gidA].nodes.length : 1,
@@ -1243,13 +1628,14 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     if (recentResults.length > limit) recentResults.shift();
 
     // 中文：结果事件携带依赖信息与插件 meta；组内缓冲，组完成后按拓扑序统一发送
-    const depOn = depsArr[i] || [];
-    const depBy = revDepsArr[i] || [];
+    const depOnStepIds = buildDependsOnStepIds(i);
+    const depByStepIds = buildDependedByStepIds(i);
     const gid = groupOf[i];
     const toolMetaInherited = (toolMetaMap.get(aiName) || manifestItem?.meta || currentToolFull?.meta || {});
     const ev = {
       type: 'tool_result',
       plannedStepIndex: i,  // 计划阶段的步骤索引
+      stepId,
       executionIndex: nextExecutionIndex++,  // 实际执行顺序（按完成时间）
       aiName,
       reason: formatReason(step.reason),
@@ -1257,8 +1643,8 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
       args: toolArgs,
       result: res,
       elapsedMs: elapsed,
-      dependsOn: depOn,  // 计划中的依赖步骤索引
-      dependedBy: depBy,  // 计划中被哪些步骤依赖
+      dependsOnStepIds: depOnStepIds,
+      dependedByStepIds: depByStepIds,
       dependsNote: buildDependsNote(i),
       groupId: (gid ?? null),
       groupSize: (gid != null && groups[gid]?.nodes?.length) ? groups[gid].nodes.length : 1,
@@ -1283,6 +1669,23 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     }
     emitToolResultGrouped(ev, i);
     await HistoryStore.append(runId, ev);
+
+    if (enablePlanPatchHook && !stopRequested) {
+      const ok2 = isResultOk(res);
+      const trigger = shouldTriggerPlanPatch({ result: res, triggerMode })
+        ? `tool_result ok=${String(ok2)} success=${String(res?.success)} code=${String(res?.code || '')}`
+        : '';
+      if (!ok2 && trigger && !pauseForPlanPatch && appliedPatches < maxPatches && planPatchCalls < maxPlanPatchCalls) {
+        pauseForPlanPatch = true;
+        pendingPlanPatch = {
+          atIndex: i,
+          atStepId: stepId,
+          aiName,
+          lastResult: ev,
+          trigger,
+        };
+      }
+    }
     if (config.memory?.enable && res?.success) {
       await upsertToolMemory({ runId, stepIndex: i, aiName, objective, reason: formatReason(step.reason), args: toolArgs, result: res, success: true });
     }
@@ -1322,7 +1725,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     const pRun = runningByProvider.get(normKey(prov)) || 0;
     if (tRun >= toolLim) return false;
     if (pRun >= provLim) return false;
-    // 使用预先归一化的 depsArr 作为依赖来源（已剔除自依赖/越界索引），避免因无效 dependsOn 导致永远无可执行步骤
+    // 使用预先归一化的 depsArr 作为依赖来源（来自 dependsOnStepIds 的 stepId->index 映射）
     const deps = depsArr[i] || [];
     if (!deps.length) return true;
     for (const idx of deps) {
@@ -1334,15 +1737,43 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
   const inFlight = new Map(); // i -> Promise
   const track = (i, p) => p.finally(() => { inFlight.delete(i); });
 
-  while (finished.size < total) {
+  while (finished.size < plan.steps.length) {
     if (isRunCancelled(runId)) {
       if (config.flags.enableVerboseSteps) {
         logger.info?.('执行计划检测到取消信号，提前结束调度', { label: 'RUN', runId });
       }
       break;
     }
+    if (pauseForPlanPatch) {
+      if (inFlight.size === 0) {
+        await maybeProcessPendingPlanPatch();
+      } else {
+        await Promise.race([...inFlight.values()]);
+      }
+      continue;
+    }
+    if (stopRequested) {
+      if (inFlight.size === 0) {
+        break;
+      }
+      await Promise.race([...inFlight.values()]);
+      continue;
+    }
+
+    for (let i = startIndex; i < plan.steps.length; i++) {
+      const s = plan.steps[i];
+      if (s && s.skip === true && !finished.has(i)) {
+        finished.add(i);
+        const gid2 = groupOf[i];
+        if (gid2 !== null && gid2 !== undefined && groupPending.has(gid2)) {
+          groupPending.set(gid2, Math.max(0, (groupPending.get(gid2) || 0) - 1));
+          flushGroupIfReady(gid2);
+        }
+      }
+    }
+
     // 尝试补满并发槽位
-    for (let i = startIndex; i < total && inFlight.size < maxConc; i++) {
+    for (let i = startIndex; i < plan.steps.length && inFlight.size < maxConc; i++) {
       if (isReady(i)) {
         started.add(i);
         const aiName = plan.steps[i]?.aiName;
@@ -1401,15 +1832,16 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
         await wait(minWait);
         continue;
       }
-      // 无可执行项且没有运行中的任务：可能存在循环依赖/无效 dependsOn
-      if (finished.size < total) {
-        logger.warn?.('无可执行步骤，可能存在循环依赖/无效 dependsOn，强制跳过剩余步骤', { label: 'PLAN' });
-        for (let i = startIndex; i < total; i++) {
+      // 无可执行项且没有运行中的任务：可能存在循环依赖/无效 dependsOnStepIds
+      if (finished.size < plan.steps.length) {
+        logger.warn?.('无可执行步骤，可能存在循环依赖/无效 dependsOnStepIds，强制跳过剩余步骤', { label: 'PLAN' });
+        for (let i = startIndex; i < plan.steps.length; i++) {
           if (!finished.has(i)) {
             finished.add(i);
-            const gid2 = groupOf[i];
-            if (gid2 !== null && gid2 !== undefined && groupPending.has(gid2)) {
-              groupPending.set(gid2, Math.max(0, (groupPending.get(gid2) || 0) - 1));
+            // 组计数归零，便于 flush
+            const gid = groupOf[i];
+            if (gid !== null && gid !== undefined && groupPending.has(gid)) {
+              groupPending.set(gid, Math.max(0, (groupPending.get(gid) || 0) - 1));
             }
           }
         }
@@ -1430,7 +1862,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
   return { used, attempted, succeeded, successRate };
 }
 
-export async function planThenExecute({ objective, context = {}, mcpcore, conversation }) {
+export async function planThenExecute({ objective, context = {}, mcpcore, conversation, forceNeedTools = false }) {
   const runId = uuidv4();
   const ctx0 = (context && typeof context === 'object') ? context : {};
   registerRunStart({ runId, channelId: ctx0.channelId, identityKey: ctx0.identityKey, objective });
@@ -1443,7 +1875,9 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
     
     // 步骤2：判断是否需要工具（使用原始工具列表）
     const judgeFunc = (config.llm?.toolStrategy || 'auto') === 'fc' ? judgeToolNecessityFC : judgeToolNecessity;
-    const judge = await judgeFunc(objective, manifest0, conversation, ctx);
+    const judge = forceNeedTools
+      ? { need: true, summary: 'forced_need_tools=true', toolNames: [], ok: true, forced: true }
+      : await judgeFunc(objective, manifest0, conversation, ctx);
     const toolPreReplySingleSkipTools = Array.isArray(config.flags?.toolPreReplySingleSkipTools)
       ? config.flags.toolPreReplySingleSkipTools
       : [];
@@ -1457,48 +1891,60 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
     });
     if (judge && judge.ok === false) {
       const plan = { manifest: manifest0, steps: [] };
-      await HistoryStore.setPlan(runId, plan);
-      await HistoryStore.append(runId, { type: 'plan', plan });
+      const plan2 = normalizePlanStepIds(plan);
+      await HistoryStore.setPlan(runId, plan2);
+      await HistoryStore.append(runId, { type: 'plan', plan: plan2 });
       const exec = { used: [], attempted: 0, succeeded: 0, successRate: 0 };
       await HistoryStore.append(runId, { type: 'done', exec });
       const summary = String(judge.summary || 'Judge阶段失败');
       try { await HistoryStore.setSummary(runId, summary); } catch {}
       await HistoryStore.append(runId, { type: 'summary', summary });
-      return fail('JUDGE_FAILED', 'JUDGE_FAILED', { runId, plan, exec, eval: { success: false, summary }, summary });
+      return fail('JUDGE_FAILED', 'JUDGE_FAILED', { runId, plan: plan2, exec, eval: { success: false, summary }, summary });
     }
     if (!judge.need) {
       const plan = { manifest: manifest0, steps: [] };
-      await HistoryStore.setPlan(runId, plan);
-      await HistoryStore.append(runId, { type: 'plan', plan });
+      const plan2 = normalizePlanStepIds(plan);
+      await HistoryStore.setPlan(runId, plan2);
+      await HistoryStore.append(runId, { type: 'plan', plan: plan2 });
       const exec = { used: [], attempted: 0, succeeded: 0, successRate: 1 };
       const evalObj = { success: true, summary: '判定无需调用工具，直接完成。' };
       await HistoryStore.append(runId, { type: 'done', exec });
       const summary = '本次任务判定无需调用工具。';
       await HistoryStore.setSummary(runId, summary);
       await HistoryStore.append(runId, { type: 'summary', summary });
-      return ok({ runId, plan, exec, eval: evalObj, summary });
+      return ok({ runId, plan: plan2, exec, eval: evalObj, summary });
     }
 
-    const plan = await generatePlan(objective, mcpcore, { ...ctx, runId, judge }, conversation);
+    const planRaw = await generatePlan(objective, mcpcore, { ...ctx, runId, judge }, conversation);
+    const plan = normalizePlanStepIds(planRaw);
     await HistoryStore.setPlan(runId, plan);
     await HistoryStore.append(runId, { type: 'plan', plan });
 
-    let exec = await executePlan(runId, objective, mcpcore, plan, { conversation, context: ctx });
-    let evalObj = await evaluateRun(objective, plan, exec, runId, ctx);
+    const exec = await executePlan(runId, objective, mcpcore, plan, { conversation, context: ctx });
+    const enableEval = config.flags?.enableEval !== false;
+    let evalObj = null;
+    if (enableEval) {
+      evalObj = await evaluateRun(objective, plan, exec, runId, ctx);
+    }
 
     // Global repair loop (circuit breaker): limit the number of repair cycles
     const enableRepair = !(config.runner?.enableRepair === false);
     const maxRepairs = enableRepair ? Math.max(0, Number(config.runner?.maxRepairs ?? 1)) : 0;
     let repairs = 0;
-    while (!evalObj.success && repairs < maxRepairs) {
+    while (enableEval && evalObj && !evalObj.success && repairs < maxRepairs) {
       // 收集所有失败的步骤（不只是第一个）
       const failedSteps = Array.isArray(evalObj.failedSteps) && evalObj.failedSteps.length
-        ? evalObj.failedSteps.filter((f) => Number.isFinite(f.index))
+        ? evalObj.failedSteps.filter((f) => typeof f?.stepId === 'string' && f.stepId.trim())
         : [];
       if (failedSteps.length === 0) break;
       
-      // 提取失败步骤的索引
-      const failedIndices = failedSteps.map((f) => Number(f.index)).sort((a, b) => a - b);
+      // 提取失败步骤的索引（仅用于内部执行；身份以 stepId 为准）
+      const stepIdToIndex = new Map((plan.steps || []).map((s, idx) => [typeof s?.stepId === 'string' ? s.stepId : '', idx]).filter(([k]) => k));
+      const failedIndices = Array.from(new Set(failedSteps.map((f) => {
+        const sid = typeof f?.stepId === 'string' ? f.stepId.trim() : '';
+        const idx = sid ? stepIdToIndex.get(sid) : undefined;
+        return Number.isFinite(idx) ? idx : NaN;
+      }).filter((x) => Number.isFinite(x)))).sort((a, b) => a - b);
       
       // 构建依赖链：找出所有依赖失败步骤的下游步骤
       const retryChain = buildDependencyChain(plan.steps, failedIndices);
@@ -1513,7 +1959,7 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
       // 记录重试事件
       await HistoryStore.append(runId, { 
         type: 'retry_begin', 
-        failedSteps: failedSteps.map((f) => ({ index: f.index, aiName: f.aiName, reason: f.reason })),
+        failedSteps: failedSteps.map((f) => ({ stepId: f.stepId, displayIndex: f.displayIndex, aiName: f.aiName, reason: f.reason })),
         repairIndex: repairs + 1 
       });
       
@@ -1523,7 +1969,7 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
           originalFailed: failedIndices,
           retryChain: retryIndices,
           chainSize: retryIndices.length,
-          failedSteps: failedSteps.map((f) => `步骤${f.index}(${f.aiName}): ${f.reason}`)
+          failedSteps: failedSteps.map((f) => `stepId=${f.stepId} displayIndex=${f.displayIndex} (${f.aiName}): ${f.reason}`)
         });
       }
       
@@ -1537,7 +1983,7 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
       
       await HistoryStore.append(runId, { 
         type: 'retry_done', 
-        failedSteps: failedSteps.map((f) => ({ index: f.index, aiName: f.aiName, reason: f.reason })),
+        failedSteps: failedSteps.map((f) => ({ stepId: f.stepId, displayIndex: f.displayIndex, aiName: f.aiName, reason: f.reason })),
         repairIndex: repairs + 1, 
         exec: retryExec 
       });
@@ -1566,9 +2012,12 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
     await HistoryStore.append(runId, { type: 'done', exec });
     
     // 总结步骤，支持失败反馈
-    const summaryResult = await summarizeToolHistory(runId, '', ctx);
+    const enableSummary = config.flags?.enableSummary !== false;
+    const summaryResult = enableSummary
+      ? await summarizeToolHistory(runId, '', ctx)
+      : { success: true, summary: '' };
     
-    if (!summaryResult.success && config.flags.enableVerboseSteps) {
+    if (enableSummary && !summaryResult.success && config.flags.enableVerboseSteps) {
       logger.warn('总结步骤失败', {
         label: 'RUN',
         runId,
@@ -1602,7 +2051,7 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
 
 // 流式执行：通过 RunEvents 推送（同时持久化到 HistoryStore），以 JSON 事件逐步产出
 // 事件类型包括：start, judge, plan, args, tool_result, retry_begin, retry_done, evaluation, done, summary
-export async function* planThenExecuteStream({ objective, context = {}, mcpcore, conversation, pollIntervalMs = 200 }) {
+export async function* planThenExecuteStream({ objective, context = {}, mcpcore, conversation, pollIntervalMs = 200, forceNeedTools = false }) {
   const runId = uuidv4();
   const sub = RunEvents.subscribe(runId);
   const ctx0 = (context && typeof context === 'object') ? context : {};
@@ -1622,7 +2071,9 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
       
       // 步骤2：判断是否需要工具（使用原始工具列表）
       const judgeFunc = (config.llm?.toolStrategy || 'auto') === 'fc' ? judgeToolNecessityFC : judgeToolNecessity;
-      const judge = await judgeFunc(objective, manifest0, conversation, ctx);
+      const judge = forceNeedTools
+        ? { need: true, summary: 'forced_need_tools=true', toolNames: [], ok: true, forced: true }
+        : await judgeFunc(objective, manifest0, conversation, ctx);
       const toolPreReplySingleSkipTools = Array.isArray(config.flags?.toolPreReplySingleSkipTools)
         ? config.flags.toolPreReplySingleSkipTools
         : [];
@@ -1632,6 +2083,7 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
         summary: judge.summary,
         toolNames: judge.toolNames,
         ok: judge.ok !== false,
+        forced: !!judge.forced,
         toolPreReplySingleSkipTools
       });
       await HistoryStore.append(runId, {
@@ -1640,10 +2092,12 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
         summary: judge.summary,
         toolNames: judge.toolNames,
         ok: judge.ok !== false,
+        forced: !!judge.forced,
         toolPreReplySingleSkipTools
       });
       if (judge && judge.ok === false) {
-        const plan = { manifest: manifest0, steps: [] };
+        const plan0 = { manifest: manifest0, steps: [] };
+        const plan = normalizePlanStepIds(plan0);
         await HistoryStore.setPlan(runId, plan);
         emitRunEvent(runId, { type: 'plan', plan });
         await HistoryStore.append(runId, { type: 'plan', plan });
@@ -1657,7 +2111,8 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
         return;
       }
       if (!judge.need) {
-        const plan = { manifest: manifest0, steps: [] };
+        const plan0 = { manifest: manifest0, steps: [] };
+        const plan = normalizePlanStepIds(plan0);
         await HistoryStore.setPlan(runId, plan);
         emitRunEvent(runId, { type: 'plan', plan });
         await HistoryStore.append(runId, { type: 'plan', plan });
@@ -1672,13 +2127,14 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
       }
 
       // Plan (after judge)
-      const plan = await generatePlan(objective, mcpcore, { ...ctx, runId, judge }, conversation);
+      const planRaw = await generatePlan(objective, mcpcore, { ...ctx, runId, judge }, conversation);
+      const plan = normalizePlanStepIds(planRaw);
       await HistoryStore.setPlan(runId, plan);
       emitRunEvent(runId, { type: 'plan', plan });
       await HistoryStore.append(runId, { type: 'plan', plan });
 
       // Execute concurrently (existing executor emits args/tool_result events)
-      let exec = await executePlan(runId, objective, mcpcore, plan, { conversation, context: ctx });
+      const exec = await executePlan(runId, objective, mcpcore, plan, { conversation, context: ctx });
 
       // 若运行在执行阶段被取消，则跳过后续评估/补救/总结，仅发出取消型 done/summary 事件
       if (isRunCancelled(runId)) {
@@ -1695,20 +2151,29 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
       }
 
       // Evaluate
-      let evalObj = await evaluateRun(objective, plan, exec, runId, ctx); // evaluation event emitted inside
+      const enableEval = config.flags?.enableEval !== false;
+      let evalObj = null;
+      if (enableEval) {
+        evalObj = await evaluateRun(objective, plan, exec, runId, ctx); // evaluation event emitted inside
+      }
 
       // Retry loop if enabled and within global limits
       const enableRepair = !(config.runner?.enableRepair === false);
       const maxRepairs = enableRepair ? Math.max(0, Number(config.runner?.maxRepairs ?? 1)) : 0;
       let repairs = 0;
-      while (!evalObj.success && repairs < maxRepairs) {
+      while (enableEval && evalObj && !evalObj.success && repairs < maxRepairs) {
         // 收集所有失败的步骤
         const failedSteps = Array.isArray(evalObj.failedSteps) && evalObj.failedSteps.length
-          ? evalObj.failedSteps.filter((f) => Number.isFinite(f.index))
+          ? evalObj.failedSteps.filter((f) => typeof f?.stepId === 'string' && f.stepId.trim())
           : [];
         if (failedSteps.length > 0) {
-          // 提取失败步骤的索引
-          const failedIndices = failedSteps.map((f) => Number(f.index)).sort((a, b) => a - b);
+          // 提取失败步骤的索引（仅用于内部执行；身份以 stepId 为准）
+          const stepIdToIndex = new Map((plan.steps || []).map((s, idx) => [typeof s?.stepId === 'string' ? s.stepId : '', idx]).filter(([k]) => k));
+          const failedIndices = Array.from(new Set(failedSteps.map((f) => {
+            const sid = typeof f?.stepId === 'string' ? f.stepId.trim() : '';
+            const idx = sid ? stepIdToIndex.get(sid) : undefined;
+            return Number.isFinite(idx) ? idx : NaN;
+          }).filter((x) => Number.isFinite(x)))).sort((a, b) => a - b);
           
           // 构建依赖链：找出所有依赖失败步骤的下游步骤
           const retryChain = buildDependencyChain(plan.steps, failedIndices);
@@ -1722,11 +2187,11 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
 
           emitRunEvent(runId, { 
             type: 'retry_begin', 
-            failedSteps: failedSteps.map((f) => ({ index: f.index, aiName: f.aiName, reason: f.reason }))
+            failedSteps: failedSteps.map((f) => ({ stepId: f.stepId, displayIndex: f.displayIndex, aiName: f.aiName, reason: f.reason }))
           });
           await HistoryStore.append(runId, { 
             type: 'retry_begin', 
-            failedSteps: failedSteps.map((f) => ({ index: f.index, aiName: f.aiName, reason: f.reason }))
+            failedSteps: failedSteps.map((f) => ({ stepId: f.stepId, displayIndex: f.displayIndex, aiName: f.aiName, reason: f.reason }))
           });
           
           if (config.flags.enableVerboseSteps) {
@@ -1735,7 +2200,7 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
               originalFailed: failedIndices,
               retryChain: retryIndices,
               chainSize: retryIndices.length,
-              failedSteps: failedSteps.map((f) => `步骤${f.index}(${f.aiName}): ${f.reason}`)
+              failedSteps: failedSteps.map((f) => `stepId=${f.stepId} displayIndex=${f.displayIndex} (${f.aiName}): ${f.reason}`)
             });
           }
 
@@ -1749,12 +2214,12 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
           
           emitRunEvent(runId, { 
             type: 'retry_done', 
-            failedSteps: failedSteps.map((f) => ({ index: f.index, aiName: f.aiName, reason: f.reason })),
+            failedSteps: failedSteps.map((f) => ({ stepId: f.stepId, displayIndex: f.displayIndex, aiName: f.aiName, reason: f.reason })),
             exec: retryExec 
           });
           await HistoryStore.append(runId, { 
             type: 'retry_done', 
-            failedSteps: failedSteps.map((f) => ({ index: f.index, aiName: f.aiName, reason: f.reason })),
+            failedSteps: failedSteps.map((f) => ({ stepId: f.stepId, displayIndex: f.displayIndex, aiName: f.aiName, reason: f.reason })),
             exec: retryExec 
           });
 
@@ -1786,19 +2251,19 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
       
       // Reflection：基于 evaluation 的 incomplete 字段判断是否需要补充遗漏的操作
       // success 表示已执行步骤是否成功，incomplete 表示任务是否有遗漏步骤
-      const shouldReflect = config.flags.enableReflection && evalObj?.result?.incomplete === true;
+      const shouldReflect = enableEval && config.flags.enableReflection && evalObj?.incomplete === true;
       if (!config.flags.enableReflection) {
         if (config.flags.enableVerboseSteps) {
           logger.info('Reflection: 未启用 enableReflection，跳过完整性检查', { label: 'REFLECTION', runId });
         }
-      } else if (evalObj?.result?.incomplete === false) {
+      } else if (enableEval && evalObj?.incomplete === false) {
         if (config.flags.enableVerboseSteps) {
           logger.info('Reflection: evaluation 判定任务完整，跳过完整性检查', {
             label: 'REFLECTION',
             runId,
-            evalSuccess: evalObj?.result?.success,
+            evalSuccess: evalObj?.success,
             evalIncomplete: false,
-            evalSummary: evalObj?.result?.summary?.slice(0, 100)
+            evalSummary: evalObj?.summary?.slice(0, 100)
           });
         }
       } else if (shouldReflect) {
@@ -1806,9 +2271,9 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
           logger.info('Reflection: evaluation 判定任务不完整，开始完整性检查', {
             label: 'REFLECTION',
             runId,
-            evalSuccess: evalObj?.result?.success,
+            evalSuccess: evalObj?.success,
             evalIncomplete: true,
-            evalSummary: evalObj?.result?.summary?.slice(0, 200)
+            evalSummary: evalObj?.summary?.slice(0, 200)
           });
         }
         try {
@@ -1893,10 +2358,10 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
             }, supplementConversation);
             
             if (Array.isArray(supplementPlan?.steps) && supplementPlan.steps.length > 0) {
-              // 清理 dependsOn：补充计划独立执行，不应引用原计划索引
+              // 清理 dependsOnStepIds：补充计划独立执行，不应引用原计划的 stepId
               supplementPlan.steps = supplementPlan.steps.map(s => {
-                const { dependsOn, ...rest } = s;
-                return rest;
+                const { dependsOnStepIds, ...rest } = s;
+                return { ...rest, dependsOnStepIds: undefined };
               });
               
               emitRunEvent(runId, { 
@@ -1984,50 +2449,53 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
         }
       }
 
+      const enableSummary = config.flags?.enableSummary !== false;
       emitRunEvent(runId, {
         type: 'completed',
         exec,
-        evaluation: evalObj?.result || null,
-        summaryPending: true
+        evaluation: enableEval ? evalObj : null,
+        summaryPending: enableSummary
       });
       await HistoryStore.append(runId, {
         type: 'completed',
         exec,
-        evaluation: evalObj?.result || null,
-        summaryPending: true
+        evaluation: enableEval ? evalObj : null,
+        summaryPending: enableSummary
       });
       
-      // 总结步骤，支持失败反馈
-      const summaryResult = await summarizeToolHistory(runId, '', ctx);
-      
-      if (!summaryResult.success && config.flags.enableVerboseSteps) {
-        logger.warn('总结步骤失败', {
-          label: 'RUN',
-          runId,
+      if (enableSummary) {
+        // 总结步骤，支持失败反馈
+        const summaryResult = await summarizeToolHistory(runId, '', ctx);
+        
+        if (!summaryResult.success && config.flags.enableVerboseSteps) {
+          logger.warn('总结步骤失败', {
+            label: 'RUN',
+            runId,
+            error: summaryResult.error,
+            attempts: summaryResult.attempts
+          });
+        }
+        
+        // 向后兼容：发送 summary 字符串
+        const summary = summaryResult.summary || '';
+        try { await HistoryStore.setSummary(runId, summary); } catch {}
+        
+        // 发送总结事件，包含失败信息
+        emitRunEvent(runId, { 
+          type: 'summary', 
+          summary,
+          success: summaryResult.success,
+          error: summaryResult.error,
+          attempts: summaryResult.attempts
+        });
+        await HistoryStore.append(runId, { 
+          type: 'summary', 
+          summary,
+          success: summaryResult.success,
           error: summaryResult.error,
           attempts: summaryResult.attempts
         });
       }
-      
-      // 向后兼容：发送 summary 字符串
-      const summary = summaryResult.summary || '';
-      try { await HistoryStore.setSummary(runId, summary); } catch {}
-      
-      // 发送总结事件，包含失败信息
-      emitRunEvent(runId, { 
-        type: 'summary', 
-        summary,
-        success: summaryResult.success,
-        error: summaryResult.error,
-        attempts: summaryResult.attempts
-      });
-      await HistoryStore.append(runId, { 
-        type: 'summary', 
-        summary,
-        success: summaryResult.success,
-        error: summaryResult.error,
-        attempts: summaryResult.attempts
-      });
     } catch (e) {
       emitRunEvent(runId, { type: 'done', error: String(e) });
       await HistoryStore.append(runId, { type: 'done', error: String(e) });

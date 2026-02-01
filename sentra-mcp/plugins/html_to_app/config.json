@@ -68,9 +68,6 @@
   },
   "timeoutMs": 600000,
   "meta": {
-    "realWorldAction": "生成桌面应用项目",
-    "responseStyle": "纯文本（项目路径 + 说明）",
-    "responseExample": "已生成项目：E:/sentra-agent/sentra-mcp/artifacts/apps/my-app\n\n运行命令：\ncd artifacts/apps/my-app\nnpm install\nnpm start\n\n打包命令：\nnpm run build",
     "streamSupport": true
   }
 }

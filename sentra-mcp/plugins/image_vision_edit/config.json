@@ -63,10 +63,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 120000,
-  "meta": {
-    "realWorldAction": "图像编辑",
-    "responseStyle": "纯文本",
-    "responseExample": "Here is an example: ![image](https://example.com/edited.png)"
-  }
+  "timeoutMs": 120000
 }

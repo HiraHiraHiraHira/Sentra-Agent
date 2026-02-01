@@ -51,10 +51,5 @@
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "把当前 QQ 的在线状态改成你指定的状态",
-    "responseStyle": "自然语言，简短确认已设置",
-    "responseExample": "我已经把在线状态设置好了。"
-  }
+  "timeoutMs": 20000
 }

@@ -65,15 +65,18 @@
       "prompt"
     ],
     "anyOf": [
-      { "required": ["image"] },
-      { "required": ["images"] }
+      {
+        "required": [
+          "image"
+        ]
+      },
+      {
+        "required": [
+          "images"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 120000,
-  "meta": {
-    "realWorldAction": "识别图像内容",
-    "responseStyle": "纯文本",
-    "responseExample": "图片中包含：..."
-  }
+  "timeoutMs": 120000
 }

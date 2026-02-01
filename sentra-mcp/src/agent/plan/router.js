@@ -4,12 +4,16 @@ import logger from '../../logger/index.js';
 
 /**
  * 构造用于重排序的插件“文档文本”
- * - 严格只用 meta.realWorldAction（真实能力描述）
- * - 可选兜底：当 realWorldAction 为空时，是否回退到 description（受 RERANK_USE_DESC_FALLBACK 控制）
+ * - 优先使用 skill.md 的 digest/body（真实能力与场景说明）
+ * - 可选兜底：当 skill.md 为空时，是否回退到 description（受 RERANK_USE_DESC_FALLBACK 控制）
  */
 export function buildToolDoc(t) {
-  const rw = String(t?.meta?.realWorldAction || '').trim();
-  if (rw) return rw;
+  const digest = String(t?.skillDoc?.digest || '').trim();
+  if (digest) return digest;
+
+  const raw = String(t?.skillDoc?.raw || '').trim();
+  if (raw) return raw.length > 2000 ? raw.slice(0, 2000) : raw;
+
   const useFallback = (config.rerank?.useDescFallback !== false)
     || String(process.env.RERANK_USE_DESC_FALLBACK || '').toLowerCase() === 'true';
   return useFallback ? String(t?.description || '').trim() : '';

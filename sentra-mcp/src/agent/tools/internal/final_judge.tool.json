@@ -2,7 +2,7 @@
   "type": "function",
   "function": {
     "name": "final_judge",
-    "description": "Judge overall success/failure of the run, optionally include failedSteps (index, aiName, reason) and a brief summary.",
+    "description": "Judge overall success/failure of the run, optionally include failedSteps (stepId, displayIndex, aiName, reason) and a brief summary.",
     "parameters": {
       "$ref": "./final_judge.schema.json"
     }

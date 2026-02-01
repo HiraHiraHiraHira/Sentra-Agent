@@ -46,15 +46,18 @@
       }
     },
     "anyOf": [
-      { "required": ["user_id"] },
-      { "required": ["user_ids"] }
+      {
+        "required": [
+          "user_id"
+        ]
+      },
+      {
+        "required": [
+          "user_ids"
+        ]
+      }
     ],
     "additionalProperties": true
   },
-  "timeoutMs": 20000,
-  "meta": {
-    "realWorldAction": "查询 QQ 在线状态",
-    "responseStyle": "自然语言，简短返回状态结果",
-    "responseExample": "我查到了对方当前的在线状态。"
-  }
+  "timeoutMs": 20000
 }
