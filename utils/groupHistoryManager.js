@@ -279,11 +279,11 @@ class GroupHistoryManager {
   constructor(options = {}) {
     // 配置
     this.maxConversationPairs = options.maxConversationPairs || 20;
-    
+
     // 每个群的历史数据
     // Map<groupId, { conversations, pendingMessages, processingMessages, activePairs, senderLastMessageTime }>
     this.histories = new Map();
-    
+
     // 每个群的任务队列（确保串行执行）
     // Map<groupId, GroupTaskQueue>
     this.queues = new Map();
@@ -353,16 +353,16 @@ class GroupHistoryManager {
       const senderId = String(msgObj.sender_id);
       const now = Date.now();
       const messageId = msgObj && msgObj.message_id != null ? String(msgObj.message_id) : '';
-      
+
       // 清理超时的sender消息（超过2分钟没有新消息）
       const cleanupResult = this._cleanupTimeoutMessages(history, now);
       if (cleanupResult.cleaned > 0) {
         logger.debug(`超时清理: ${groupId} 清理了${cleanupResult.cleaned}个sender的消息`);
       }
-      
+
       // 记录当前sender的最后消息时间
       history.senderLastMessageTime.set(senderId, now);
-      
+
       // 添加消息到待回复队列
       if (messageId) {
         const existsInPending = (history.pendingMessages || []).some(
@@ -380,7 +380,7 @@ class GroupHistoryManager {
       }
 
       history.pendingMessages.push({ summary, msgObj, timestamp: now });
-      
+
       logger.debug(`待回复ADD: ${groupId} sender ${msgObj.sender_id}, msg ${messageId || msgObj.message_id}, 当前${history.pendingMessages.length}条待回复`);
 
       await saveHistoryToRedis(groupId, history);
@@ -459,7 +459,7 @@ class GroupHistoryManager {
             });
           }
         }
-      } catch {}
+      } catch { }
 
       await saveHistoryToRedis(groupId, history);
       return true;
@@ -495,30 +495,30 @@ class GroupHistoryManager {
   _cleanupTimeoutMessages(history, now, timeoutMs = 2 * 60 * 1000) {
     const timeoutSenders = [];
     const cleaned = { cleaned: 0, details: [] };
-    
+
     // 检查每个sender是否超时
     for (const [senderId, lastTime] of history.senderLastMessageTime.entries()) {
       if (now - lastTime > timeoutMs) {
         timeoutSenders.push(senderId);
       }
     }
-    
+
     if (timeoutSenders.length === 0) {
       return cleaned;
     }
-    
+
     // 清理超时sender的消息
     for (const senderId of timeoutSenders) {
       const beforeCount = history.pendingMessages.length;
-      
+
       // 从 pendingMessages 中移除该sender的消息
       const removed = history.pendingMessages.filter(pm => String(pm.msgObj.sender_id) === senderId);
       history.pendingMessages = history.pendingMessages.filter(pm => String(pm.msgObj.sender_id) !== senderId);
-      
+
       // 从 processingMessages 中移除该sender的消息
       const removedProcessing = history.processingMessages.filter(pm => String(pm.msgObj.sender_id) === senderId);
       history.processingMessages = history.processingMessages.filter(pm => String(pm.msgObj.sender_id) !== senderId);
-      
+
       const totalRemoved = removed.length + removedProcessing.length;
 
       let removedScoped = false;
@@ -528,22 +528,22 @@ class GroupHistoryManager {
           removedScoped = true;
         }
       }
-      
+
       if (totalRemoved > 0 || removedScoped) {
         // 计算超时时间（在删除前获取）
         const lastTime = history.senderLastMessageTime.get(senderId);
         const timeoutSeconds = Math.floor((now - (lastTime || now)) / 1000);
-        
+
         // 从时间记录中删除
         history.senderLastMessageTime.delete(senderId);
-        
+
         cleaned.cleaned++;
         cleaned.details.push(
           `sender:${senderId}, 清理${totalRemoved}条消息${removedScoped ? '+scoped' : ''}, 超时${timeoutSeconds}秒`
         );
       }
     }
-    
+
     return cleaned;
   }
 
@@ -562,7 +562,7 @@ class GroupHistoryManager {
     let xml = '<sentra-pending-messages>\n';
     xml += `  <total_count>${history.pendingMessages.length}</total_count>\n`;
     xml += '  <messages>\n';
-    
+
     history.pendingMessages.forEach((pm, index) => {
       const msg = pm.msgObj;
       xml += `    <message index="${escapeXmlAttr(String(index + 1))}">\n`;
@@ -570,12 +570,12 @@ class GroupHistoryManager {
       xml += `      <sender_name>${escapeXml(msg.sender_name || 'Unknown')}</sender_name>\n`;
       xml += `      <text>${escapeXml(msg.text || msg.summary || '')}</text>\n`;
       xml += `      <time>${escapeXml(msg.time_str || '')}</time>\n`;
-      
+
       // 添加消息 ID（用于引用回复）
       if (msg.message_id) {
         xml += `      <message_id>${escapeXml(String(msg.message_id))}</message_id>\n`;
       }
-      
+
       // 添加 at 信息
       if (msg.at_bot) {
         xml += `      <at_bot>true</at_bot>\n`;
@@ -583,13 +583,13 @@ class GroupHistoryManager {
       if (msg.at_me) {
         xml += `      <at_me>true</at_me>\n`;
       }
-      
+
       xml += `    </message>\n`;
     });
-    
+
     xml += '  </messages>\n';
     xml += '</sentra-pending-messages>';
-    
+
     return xml;
   }
 
@@ -750,7 +750,7 @@ class GroupHistoryManager {
 
     const lastMsg = history.pendingMessages[history.pendingMessages.length - 1];
     const contextXml = this.getPendingMessagesContext(groupId);
-    
+
     return {
       xml: contextXml,
       objective: lastMsg.msgObj.text || lastMsg.msgObj.summary || '完成用户请求',
@@ -806,22 +806,22 @@ class GroupHistoryManager {
   async startProcessingMessages(groupId, senderId) {
     return this._executeForGroup(groupId, async () => {
       const history = await this._getOrInitHistory(groupId);
-      
+
       // 筛选该sender的所有待处理消息
-      const senderPending = history.pendingMessages.filter(pm => 
+      const senderPending = history.pendingMessages.filter(pm =>
         String(pm.msgObj.sender_id) === String(senderId)
       );
-      
+
       // 从待处理队列中移除
-      history.pendingMessages = history.pendingMessages.filter(pm => 
+      history.pendingMessages = history.pendingMessages.filter(pm =>
         String(pm.msgObj.sender_id) !== String(senderId)
       );
-      
+
       // 添加到正在处理队列
       history.processingMessages.push(...senderPending);
-      
+
       logger.debug(`开始处理: ${groupId} sender ${senderId} 移动${senderPending.length}条消息 pending(${history.pendingMessages.length}) -> processing(${history.processingMessages.length})`);
-      
+
       await saveHistoryToRedis(groupId, history);
 
       return senderPending.map(pm => pm.msgObj);
@@ -841,7 +841,7 @@ class GroupHistoryManager {
     const pendingCount = history?.pendingMessages?.length || 0;
     const processingCount = history?.processingMessages?.length || 0;
     logger.debug(`动态感知GET: ${groupId} pending ${pendingCount}, processing ${processingCount}`);
-    
+
     if (!history || (pendingCount === 0 && processingCount === 0)) {
       logger.debug(`动态感知GET: ${groupId} sender ${senderId} 队列为空`);
       return [];
@@ -852,9 +852,9 @@ class GroupHistoryManager {
       ...(history.pendingMessages || []),
       ...(history.processingMessages || [])
     ];
-    
+
     // logger.debug(`动态感知GET: 查询senderId ${senderId}`);
-    
+
     // 筛选该sender的所有消息（待处理 + 正在处理）
     const senderMessages = allMessages
       .filter(pm => {
@@ -1276,9 +1276,9 @@ class GroupHistoryManager {
               });
             }
           }
-        } catch {}
+        } catch { }
       }
-      
+
       await saveHistoryToRedis(groupId, history);
 
       return true;
@@ -1598,7 +1598,7 @@ class GroupHistoryManager {
           }
         }
       }
-    } catch {}
+    } catch { }
 
     return conversationsForContext;
   }

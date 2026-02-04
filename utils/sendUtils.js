@@ -62,7 +62,7 @@ async function _readFirstBytesFromResponse(res, maxBytes = 2048) {
         }
       }
     } finally {
-      try { await reader.cancel(); } catch {}
+      try { await reader.cancel(); } catch { }
     }
     return Buffer.concat(chunks).subarray(0, max);
   }
@@ -72,9 +72,9 @@ async function _readFirstBytesFromResponse(res, maxBytes = 2048) {
       const chunks = [];
       let total = 0;
       const cleanup = () => {
-        try { body.off('data', onData); } catch {}
-        try { body.off('end', onEnd); } catch {}
-        try { body.off('error', onErr); } catch {}
+        try { body.off('data', onData); } catch { }
+        try { body.off('end', onEnd); } catch { }
+        try { body.off('error', onErr); } catch { }
       };
       const finish = () => {
         cleanup();
@@ -88,7 +88,7 @@ async function _readFirstBytesFromResponse(res, maxBytes = 2048) {
           chunks.push(buf);
           total += buf.length;
           if (total >= max) {
-            try { body.destroy(); } catch {}
+            try { body.destroy(); } catch { }
             finish();
           }
         } catch {
@@ -205,7 +205,7 @@ async function _probeHttpResource(url, options = {}) {
   try {
     const headRes = await _fetchWithTimeout(url, { method: 'HEAD', redirect: 'follow', headers: baseHeaders }, timeoutMs);
     if (headRes && headRes.headers) headHeaders = headRes.headers;
-  } catch {}
+  } catch { }
 
   let getHeaders = null;
   let firstBytes = Buffer.alloc(0);
@@ -218,7 +218,7 @@ async function _probeHttpResource(url, options = {}) {
     );
     if (getRes && getRes.headers) getHeaders = getRes.headers;
     firstBytes = await _readFirstBytesFromResponse(getRes, maxBytes);
-  } catch {}
+  } catch { }
 
   const getCt = _stripMimeParams(getHeaders?.get?.('content-type'));
   const headCt = _stripMimeParams(headHeaders?.get?.('content-type'));
@@ -259,7 +259,7 @@ function _probeLocalFileType(localPath) {
         ext: magic.ext || ''
       };
     } finally {
-      try { fs.closeSync(fd); } catch {}
+      try { fs.closeSync(fd); } catch { }
     }
   } catch {
     return { ok: false, mime: '', fileType: 'file', ext: '' };
@@ -553,13 +553,13 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
     for (let i = 0; i < arr.length; i += max) out.push(arr.slice(i, i + max));
     return out;
   };
-  
+
   logger.debug(`文本段落数: ${textSegments.length}`);
   logger.debug(`协议资源数: ${protocolResources.length}`);
   if (emoji) {
     logger.debug(`表情包: ${emoji.source}`);
   }
-  
+
   // 只从AI的resources中提取文件（支持本地路径和 HTTP/HTTPS 链接）
   const protocolFiles = [];
   const linkSegments = [];
@@ -628,7 +628,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
           }
         }
       }
-      
+
       // 本地文件：检查是否存在
       if (!isHttpUrl && (!resolvedLocalPath || !fs.existsSync(resolvedLocalPath))) {
         logger.warn(`协议资源文件不存在: ${source}`, {
@@ -636,7 +636,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         });
         continue;
       }
-      
+
       // 提取文件扩展名（支持 URL 中的扩展名）
       let ext = '';
       if (isHttpUrl) {
@@ -646,7 +646,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       } else {
         ext = path.extname(resolvedLocalPath || source).toLowerCase();
       }
-      
+
       // 根据扩展名 / 探针 / magic number 判断文件类型
       let fileType = 'file';
       {
@@ -670,7 +670,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
           if (localProbe?.ok) fileType = localProbe.fileType;
         }
       }
-      
+
       // 提取文件名
       let fileName = '';
       if (isHttpUrl) {
@@ -686,7 +686,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
           fileName = `${fileName}${httpProbe.ext}`;
         }
       }
-      
+
       protocolFiles.push({
         path: isHttpUrl ? source : (resolvedLocalPath || source),
         fileName: fileName,
@@ -696,7 +696,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         routeTarget,
         segmentIndex: segmentIndexOk ? segmentIndex : null
       });
-      
+
       if (isHttpUrl) {
         logger.debug(`添加 HTTP 资源: ${fileType} ${fileName} (${source})`);
       } else {
@@ -704,7 +704,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       }
     }
   }
-  
+
   // 解析文本段落
   const segments = parseTextSegments(textSegments)
     .map((seg) => {
@@ -727,7 +727,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       });
     }
   }
-  
+
   //logger.debug(`文本段落数: ${segments.length}`);
   //logger.debug(`资源文件数: ${protocolFiles.length}`);
   segments.forEach((seg, i) => {
@@ -736,22 +736,22 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
   protocolFiles.forEach((f, i) => {
     //logger.debug(`  文件${i+1}: ${f.fileName} (${f.fileType})`);
   });
-  
+
   if (segments.length === 0 && protocolFiles.length === 0 && !emoji) {
     logger.warn('无内容可发送');
     return;
   }
-  
+
   // 更新用户消息历史
   await updateConversationHistory(msg);
-  
+
   // 决定发送策略
   const isPrivateChat = msg.type === 'private';
   const isGroupChat = msg.type === 'group';
   const selfId = msg?.self_id;
   const userAtSelf = isGroupChat && Array.isArray(msg?.at_users) && typeof selfId === 'number' && msg.at_users.includes(selfId);
   const finalReplyMode = hasSendDirective ? replyMode : 'none';
-  
+
   // Model-controlled quoting: only quote when <send> is present AND a valid <reply_to_message_id> is provided.
   // If parsing fails or id is missing/invalid, we MUST NOT quote.
   const replyMessageId = (allowReply && hasSendDirective && parsed?.replyToMessageId)
@@ -762,7 +762,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
   const emojiSegIdxRaw = emoji && emoji.segment_index != null ? Number(emoji.segment_index) : NaN;
   const emojiSegmentIndex = Number.isFinite(emojiSegIdxRaw) && emojiSegIdxRaw > 0 ? Math.floor(emojiSegIdxRaw) : null;
   let emojiSentInSegmentFlow = false;
-  
+
   logger.debug(`发送策略: 段落=${segments.length}, replyMode=${finalReplyMode}(${hasSendDirective ? 'by_send' : 'fallback'}), allowReply=${allowReply}, replyTo=${replyMessageId || '(none)'}`);
 
   let skippedCrossRouteCount = 0;
@@ -793,7 +793,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       segments.push({ text: l.text, routeTarget: rt });
     }
   }
-  
+
   // 发送文本段落
   if (segments.length > 0) {
     for (let i = 0; i < segments.length; i++) {
@@ -819,12 +819,12 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       }
 
       let messageParts = buildSegmentMessage(segment);
-      
+
       if (messageParts.length === 0) continue;
       const segKey = `${i + 1}|${routeTarget.kind}:${routeTarget.id}`;
-      
-      logger.debug(`发送第${i+1}段: ${messageParts.map(p => p.type).join(', ')}`);
-      
+
+      logger.debug(`发送第${i + 1}段: ${messageParts.map(p => p.type).join(', ')}`);
+
       const isGroupTarget = routeTarget.kind === 'group';
       const isPrivateTarget = routeTarget.kind === 'private';
 
@@ -844,9 +844,9 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
           ...messageParts
         ];
       }
-      
+
       let sentMessageId = null;
-      
+
       // 根据协议选择是否使用引用回复
       const wantReply = routeTarget.isCurrent && replyMessageId && allowReply && (
         (finalReplyMode === 'always') || (finalReplyMode === 'first' && i === 0)
@@ -890,11 +890,11 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
           sentMessageId = result?.data?.message_id;
         }
       }
-      
+
       // 更新消息历史（仅对当前会话写入，避免跨群污染）
       if (routeTarget.isCurrent && sentMessageId) {
         await updateConversationHistory(msg, sentMessageId, true);
-        logger.debug(`第${i+1}段发送成功，消息ID: ${sentMessageId}`);
+        logger.debug(`第${i + 1}段发送成功，消息ID: ${sentMessageId}`);
       }
 
       const attachedLinks = attachedLinksBySegAndTarget.get(segKey) || [];
@@ -1135,7 +1135,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
           }
         }
       }
-      
+
       if (i < segments.length - 1) {
         const delay = 800 + Math.random() * 2200; // 0.8-3秒随机间隔
         logger.debug(`等待 ${Math.round(delay)}ms 后发送下一段`);
@@ -1143,13 +1143,13 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       }
     }
   }
-  
+
   // 分类文件：媒体文件 vs 普通文件
   const mediaFiles = deferredProtocolFiles.filter(f => ['image', 'video', 'record'].includes(f.fileType));
   const uploadFiles = deferredProtocolFiles.filter(f => f.fileType === 'file');
-  
+
   logger.debug(`媒体文件: ${mediaFiles.length}个, 普通文件: ${uploadFiles.length}个`);
-  
+
   // 发送媒体文件（图片、视频、语音）
   if (mediaFiles.length > 0) {
     if (segments.length > 0) {
@@ -1157,7 +1157,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       logger.debug(`等待 ${Math.round(delay)}ms 后发送媒体`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
-    
+
     const grouped = new Map();
     for (const file of mediaFiles) {
       const rt = file?.routeTarget || _resolveRouteTarget(msg, { kind: 'current', id: '' });
@@ -1266,14 +1266,14 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
       }
     }
   }
-  
+
   // 上传普通文件
   if (uploadFiles.length > 0) {
     logger.debug(`准备上传 ${uploadFiles.length} 个普通文件`);
-    
+
     const delay = 1000 + Math.random() * 1000;
     await new Promise(resolve => setTimeout(resolve, delay));
-    
+
     for (const file of uploadFiles) {
       logger.debug(`上传文件: ${file.fileName}`);
 
@@ -1339,11 +1339,11 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
           }
         }
       }
-      
+
       await new Promise(resolve => setTimeout(resolve, 800));
     }
   }
-  
+
   // 发送表情包（如果有）
   if (emoji && emoji.source && !emojiSentInSegmentFlow) {
     const extracted = _extractRoutePrefix(String(emoji.source || ''));
@@ -1372,7 +1372,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
     }
 
     logger.debug(`准备发送表情包: ${emojiPath}`);
-    
+
     // 验证文件存在性
     if (!fs.existsSync(emojiPath)) {
       logger.warn(`表情包文件不存在: ${emojiPath}`);
@@ -1383,14 +1383,14 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
         logger.debug(`等待 ${Math.round(delay)}ms 后发送表情包`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
-      
+
       // 构建图片消息
       const emojiMessageParts = [
         { type: 'image', data: { file: _toFileUrlIfLikelyLocal(emojiPath) } }
       ];
-      
+
       logger.debug('发送表情包作为图片消息');
-      
+
       if (rt.kind === 'private') {
         const requestId = `private-emoji-${Date.now()}`;
         let normalizedParts = _withNormalizedFileField(emojiMessageParts);
@@ -1462,7 +1462,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
   if (skippedCrossRouteCount > 0) {
     logger.warn('部分跨会话路由目标未获授权或未启用，已跳过发送', { skipped: skippedCrossRouteCount });
   }
-  
+
   logger.success('发送完成');
 }
 
@@ -1479,7 +1479,7 @@ async function _smartSendInternal(msg, response, sendAndWaitResult, allowReply =
 export async function smartSend(msg, response, sendAndWaitResult, allowReply = true, options = {}) {
   const groupId = msg?.group_id ? `G:${msg.group_id}` : `U:${msg.sender_id}`;
   const taskId = `${groupId}-${Date.now()}-${randomUUID().slice(0, 8)}`;
-  
+
   // 预解析一次用于去重的文本和资源信息
   let textForDedup = '';
   let resourceKeys = [];

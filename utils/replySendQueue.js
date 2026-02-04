@@ -22,7 +22,9 @@ function getSendQueueRuntimeConfig() {
     recentDedupEnabled: getEnvBool('SEND_RECENT_FUSION_ENABLED', true),
     recentDedupTtlMs: getEnvInt('SEND_RECENT_FUSION_TTL_MS', 600000),
     recentDedupMaxPerGroup: getEnvInt('SEND_RECENT_FUSION_MAX_PER_GROUP', 20),
-    recentDedupStrictForPrivate: getEnvBool('SEND_RECENT_FUSION_STRICT_FOR_PRIVATE', true)
+    recentDedupStrictForPrivate: getEnvBool('SEND_RECENT_FUSION_STRICT_FOR_PRIVATE', true),
+    groupReplyMinIntervalMs: getEnvInt('GROUP_REPLY_MIN_INTERVAL_MS', 2000),
+    userReplyMinIntervalMs: getEnvInt('USER_REPLY_MIN_INTERVAL_MS', 10000)
   };
 }
 
@@ -46,6 +48,19 @@ class ReplySendQueue {
     });
   }
 
+  _getPostSendDelayMs(meta, runtimeCfg) {
+    const immediate = !!meta?.immediate;
+    if (!immediate) return this.sendDelayMs;
+
+    const gid = meta?.groupId ? String(meta.groupId) : '';
+    const isGroup = gid.startsWith('G:');
+    const base = isGroup
+      ? Number(runtimeCfg?.groupReplyMinIntervalMs)
+      : Number(runtimeCfg?.userReplyMinIntervalMs);
+    if (!Number.isFinite(base) || base < 0) return 0;
+    return base;
+  }
+
   /**
    * 添加发送任务到队列
    * @param {Function} sendTask - 发送任务函数（返回 Promise）
@@ -57,7 +72,7 @@ class ReplySendQueue {
     return new Promise((resolve, reject) => {
       this.queue.push({ sendTask, taskId, meta, resolve, reject });
       logger.debug(`任务入队: ${taskId} (队列长度: ${this.queue.length})`);
-      
+
       // 如果当前没有在处理，立即开始处理
       if (!this.isProcessing) {
         this.processQueue();
@@ -77,11 +92,11 @@ class ReplySendQueue {
 
     try {
       this._prunePureReplyCooldown();
-    } catch {}
+    } catch { }
 
     try {
       this._pruneAllRecentLists();
-    } catch {}
+    } catch { }
 
     while (this.queue.length > 0) {
       const first = this.queue.shift();
@@ -325,7 +340,7 @@ class ReplySendQueue {
           const startTime = Date.now();
           const result = await sendTask();
           const duration = Date.now() - startTime;
-          
+
           logger.success(`发送完成: ${taskId} (耗时: ${duration}ms)`);
           if (groupIdForRecent && hasTextOrResourceForRecent) {
             this._rememberRecentSent(
@@ -349,8 +364,11 @@ class ReplySendQueue {
         })();
 
         if (hasMoreInBatch || this.queue.length > 0) {
-          logger.debug(`等待 ${this.sendDelayMs}ms 后发送下一条...`);
-          await sleep(this.sendDelayMs);
+          const postDelayMs = this._getPostSendDelayMs(meta, runtimeCfg);
+          if (postDelayMs > 0) {
+            logger.debug(`等待 ${postDelayMs}ms 后发送下一条...`);
+            await sleep(postDelayMs);
+          }
         }
       }
     }
@@ -359,7 +377,7 @@ class ReplySendQueue {
     this._prunePureReplyCooldown();
     try {
       this._pruneAllRecentLists();
-    } catch {}
+    } catch { }
     logger.debug('队列处理完毕');
   }
 

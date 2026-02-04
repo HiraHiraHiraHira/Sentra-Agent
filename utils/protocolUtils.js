@@ -160,7 +160,7 @@ function parseArgsContentToObject(argsContent) {
       const parsed = JSON.parse(trimmed);
       if (parsed && typeof parsed === 'object') return parsed;
     }
-  } catch {}
+  } catch { }
 
   try {
     const doc = getXmlParser().parse(`<root>${trimmed}</root>`);
@@ -191,7 +191,7 @@ function argsObjectToParamEntries(args = {}) {
     for (const [k, v] of Object.entries(args || {})) {
       out.push({ name: k, value: paramValueToText(v) });
     }
-  } catch {}
+  } catch { }
   return out;
 }
 
@@ -240,7 +240,7 @@ export function parseReplyGateDecisionFromSentraTools(text) {
         last = { enter, reason, invokeName: name };
       }
     }
-  } catch {}
+  } catch { }
 
   if (last) return last;
 
@@ -283,7 +283,7 @@ export function parseReplyGateDecisionFromSentraTools(text) {
         last = { enter, reason, invokeName: name };
       }
     }
-  } catch {}
+  } catch { }
 
   return last;
 }
@@ -321,9 +321,27 @@ export function buildSentraResultBlock(ev) {
       const gid = ev.groupId != null ? String(ev.groupId) : '';
       const gsize = Number(ev.groupSize || ev.events.length);
       const order = Array.isArray(ev.orderIndices) ? ev.orderIndices.join(',') : '';
+
+      const resultStream = ev?.resultStream === true;
+      const resultStatus = typeof ev?.resultStatus === 'string' ? ev.resultStatus : '';
+      const groupFlushed = ev?.groupFlushed === true;
+
+      const extraAttrs = [];
+      if (resultStream) extraAttrs.push('result_stream="true"');
+      if (resultStatus) extraAttrs.push(`result_status="${String(resultStatus)}"`);
+      if (groupFlushed) extraAttrs.push('group_flushed="true"');
+      const extraAttrText = extraAttrs.length ? ` ${extraAttrs.join(' ')}` : '';
       const lines = [
-        `<sentra-result-group group_id="${gid}" group_size="${gsize}" order="${order}">`
+        `<sentra-result-group group_id="${gid}" group_size="${gsize}" order="${order}"${extraAttrText}>`
       ];
+
+      if (resultStream || resultStatus || groupFlushed) {
+        lines.push('  <stream>');
+        if (resultStream) lines.push('    <result_stream>true</result_stream>');
+        if (resultStatus) lines.push(`    <result_status>${valueToXMLString(String(resultStatus), 0)}</result_status>`);
+        if (groupFlushed) lines.push('    <group_flushed>true</group_flushed>');
+        lines.push('  </stream>');
+      }
       for (const item of ev.events) {
         const xml = buildSingleResultXML(item);
         const indented = xml.split('\n').map(l => `  ${l}`).join('\n');
@@ -387,10 +405,27 @@ function buildSingleResultXML(ev) {
     if (ev.result.detail !== undefined) extra.detail = ev.result.detail;
   }
 
-  const lines = [`<sentra-result step="${step}" tool="${aiName}" success="${success}">`];
+  const resultStream = ev?.resultStream === true;
+  const resultStatus = typeof ev?.resultStatus === 'string' ? ev.resultStatus : '';
+  const groupFlushed = ev?.groupFlushed === true;
+  const extraAttrs = [];
+  if (resultStream) extraAttrs.push('result_stream="true"');
+  if (resultStatus) extraAttrs.push(`result_status="${String(resultStatus)}"`);
+  if (groupFlushed) extraAttrs.push('group_flushed="true"');
+  const extraAttrText = extraAttrs.length ? ` ${extraAttrs.join(' ')}` : '';
+
+  const lines = [`<sentra-result step="${step}" tool="${aiName}" success="${success}"${extraAttrText}>`];
   if (reason) lines.push(`  <reason>${valueToXMLString(reason, 0)}</reason>`);
   // 同时输出 <aiName> 以便旧解析器兼容
   lines.push(`  <aiName>${valueToXMLString(aiName, 0)}</aiName>`);
+
+  if (resultStream || resultStatus || groupFlushed) {
+    lines.push('  <stream>');
+    if (resultStream) lines.push('    <result_stream>true</result_stream>');
+    if (resultStatus) lines.push(`    <result_status>${valueToXMLString(String(resultStatus), 0)}</result_status>`);
+    if (groupFlushed) lines.push('    <group_flushed>true</group_flushed>');
+    lines.push('  </stream>');
+  }
   try {
     const completion = ev?.completion;
     if (completion && typeof completion === 'object') {
@@ -403,17 +438,17 @@ function buildSingleResultXML(ev) {
       if (instr) lines.push(`    <instruction>${valueToXMLString(instr, 0)}</instruction>`);
       lines.push('  </completion>');
     }
-  } catch {}
+  } catch { }
   // args：同时提供结构化与 JSON 两种表示
   try {
     lines.push('  <args>');
     lines.push(...jsonToXMLLines(args, 2, 0, 6));
     lines.push('  </args>');
-  } catch {}
+  } catch { }
   try {
     const jsonText = JSON.stringify(args || {});
     lines.push(`  <arguments>${valueToXMLString(jsonText, 0)}</arguments>`);
-  } catch {}
+  } catch { }
   // result：拆为 success/code/data/provider
   lines.push('  <result>');
   lines.push(`    <success>${success}</success>`);
@@ -424,7 +459,7 @@ function buildSingleResultXML(ev) {
     lines.push(...jsonToXMLLines(data, 3, 0, 6));
     lines.push('    </data>');
   } catch {
-    try { lines.push(`    <data>${valueToXMLString(JSON.stringify(data), 0)}</data>`); } catch {}
+    try { lines.push(`    <data>${valueToXMLString(JSON.stringify(data), 0)}</data>`); } catch { }
   }
 
   if (err) {
@@ -433,7 +468,7 @@ function buildSingleResultXML(ev) {
       lines.push(...jsonToXMLLines(err, 3, 0, 6));
       lines.push('    </error>');
     } catch {
-      try { lines.push(`    <error>${valueToXMLString(JSON.stringify(err), 0)}</error>`); } catch {}
+      try { lines.push(`    <error>${valueToXMLString(JSON.stringify(err), 0)}</error>`); } catch { }
     }
   }
 
@@ -443,7 +478,7 @@ function buildSingleResultXML(ev) {
       lines.push(...jsonToXMLLines(extra, 3, 0, 6));
       lines.push('    </extra>');
     }
-  } catch {}
+  } catch { }
   lines.push('  </result>');
 
   // 附带便于调试的元信息（可选）
@@ -579,7 +614,7 @@ export function parseSentraResponse(response) {
       } else if (uidOk) {
         targetUserId = uid;
       }
-    } catch {}
+    } catch { }
 
     const textSegments = [];
     for (let i = 1; i <= 50; i++) {
@@ -605,7 +640,7 @@ export function parseSentraResponse(response) {
         if (seg && Number.isFinite(seg) && seg > 0) r.segment_index = seg;
         return ResourceSchema.parse(r);
       }).filter(Boolean);
-    } catch {}
+    } catch { }
 
     let replyMode = 'none';
     let replyToMessageId = null;
@@ -632,7 +667,7 @@ export function parseSentraResponse(response) {
         }
         mentionsBySegment = sanitizeMentionsBySegment(map, textSegments.length || 0);
       }
-    } catch {}
+    } catch { }
 
     let emoji = null;
     try {
@@ -646,7 +681,7 @@ export function parseSentraResponse(response) {
         if (caption) emoji.caption = caption;
         if (seg && Number.isFinite(seg) && seg > 0) emoji.segment_index = seg;
       }
-    } catch {}
+    } catch { }
 
     try {
       const validated = SentraResponseSchema.parse({
@@ -687,7 +722,7 @@ export function parseSentraResponse(response) {
     logger.warn('未找到 <sentra-response> 块，将跳过发送');
     return { textSegments: [], resources: [], replyMode: 'none', mentions: [], shouldSkip: true };
   }
-  
+
   let targetGroupId = null;
   let targetUserId = null;
   try {
@@ -704,7 +739,7 @@ export function parseSentraResponse(response) {
     } else if (uidOk) {
       targetUserId = uid;
     }
-  } catch {}
+  } catch { }
 
   // 提取所有 <text1>, <text2>, <text3> ... 标签
   const textSegments = [];
@@ -713,29 +748,29 @@ export function parseSentraResponse(response) {
     const textTag = `text${index}`;
     const textContent = extractXMLTag(responseContent, textTag);
     if (!textContent) break;
-    
+
     // 反转义 XML/HTML 实体（处理模型可能输出的转义字符）
     const unescapedText = unescapeXml(textContent.trim());
     textSegments.push(unescapedText);
     //logger.debug(`提取 <${textTag}>: ${unescapedText.slice(0, 80)}`);
     index++;
   }
-  
+
   // 如果没有文本，直接跳过（保持空数组）
   if (textSegments.length === 0) {
     logger.warn('未找到任何文本段落，保持空数组');
   }
-  
+
   logger.debug(`共提取 ${textSegments.length} 个文本段落`);
-  
+
   // 提取 <resources> 块
   const resourcesBlock = extractXMLTag(responseContent, 'resources');
   let resources = [];
-  
+
   if (resourcesBlock && resourcesBlock.trim()) {
     const resourceTags = extractAllXMLTags(resourcesBlock, 'resource');
     logger.debug(`找到 ${resourceTags.length} 个 <resource> 标签`);
-    
+
     resources = resourceTags
       .map((resourceXML, idx) => {
         try {
@@ -744,16 +779,16 @@ export function parseSentraResponse(response) {
           const caption = unescapeXml((extractXMLTag(resourceXML, 'caption') || '').trim());
           const segRaw = unescapeXml((extractXMLTag(resourceXML, 'segment_index') || '').trim());
           const seg = segRaw && /^\d+$/.test(segRaw) ? parseInt(segRaw, 10) : null;
-          
+
           if (!type || !source) {
             logger.warn(`resource[${idx}] 缺少必需字段`);
             return null;
           }
-          
+
           const resource = { type, source };
           if (caption) resource.caption = caption;
           if (seg && Number.isFinite(seg) && seg > 0) resource.segment_index = seg;
-          
+
           return ResourceSchema.parse(resource);
         } catch (e) {
           logger.warn(`resource[${idx}] 解析或验证失败: ${e.message}`);
@@ -761,12 +796,12 @@ export function parseSentraResponse(response) {
         }
       })
       .filter(Boolean);
-    
+
     logger.success(`成功解析并验证 ${resources.length} 个 resources`);
   } else {
     logger.debug('无 <resources> 块或为空');
   }
-  
+
   // 提取 <send> 指令（回复/艾特控制）
   const sendBlock = extractXMLTag(responseContent, 'send');
   let replyMode = 'none';
@@ -952,7 +987,7 @@ export function convertHistoryToMCPFormat(historyConversations) {
       if (aiName && argsContent != null) {
         addInvocation(invocations, seen, aiName, argsContent);
       }
-    } catch {}
+    } catch { }
   };
 
   const extractInvocationsAndResultBlocksByParser = (text) => {
@@ -991,7 +1026,7 @@ export function convertHistoryToMCPFormat(historyConversations) {
                 const jsonText = JSON.stringify(obj || {});
                 addInvocation(invocations, seen, aiName, jsonText);
                 continue;
-              } catch {}
+              } catch { }
             }
 
             const fallbackFull = resultFulls[i];
@@ -1026,13 +1061,13 @@ export function convertHistoryToMCPFormat(historyConversations) {
               const jsonText = JSON.stringify(obj || {});
               addInvocation(invocations, seen, aiName, jsonText);
               continue;
-            } catch {}
+            } catch { }
           }
           extractInvocationsFromResultFullByRegex(full, invocations, seen);
         }
         return { invocations, resultBlocksFull };
       }
-    } catch {}
+    } catch { }
 
     return { invocations: [], resultBlocksFull };
   };
@@ -1152,7 +1187,7 @@ export function convertHistoryToMCPFormat(historyConversations) {
         }
       }
     }
-  } catch {}
+  } catch { }
 
   logger.debug(
     `MCP格式转换: ${historyConversations.length}条 → ${mcpConversation.length}条 (转换${convertedCount}个工具, 跳过${skippedCount}条)`

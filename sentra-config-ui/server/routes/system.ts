@@ -7,10 +7,10 @@ import os from 'os';
 import https from 'https';
 import { scriptRunner } from '../scriptRunner';
 
-let uiSeenOnce = false;
 let lastUiHeartbeat = 0;
-let cleanupArmed = false;
-let cleanupTimer: NodeJS.Timeout | null = null;
+let uiOnline = false;
+let staleLogged = false;
+let heartbeatTimer: NodeJS.Timeout | null = null;
 
 function fetchJson(url: string): Promise<any> {
     return new Promise((resolve, reject) => {
@@ -37,19 +37,19 @@ function fetchJson(url: string): Promise<any> {
 }
 
 export async function systemRoutes(fastify: FastifyInstance) {
-    if (!cleanupTimer) {
-        cleanupTimer = setInterval(() => {
-            if (!uiSeenOnce) return;
-            if (!cleanupArmed) return;
+    if (!heartbeatTimer) {
+        heartbeatTimer = setInterval(() => {
+            if (!uiOnline) return;
             const now = Date.now();
             const STALE_MS = 60_000;
-            if (!lastUiHeartbeat || (now - lastUiHeartbeat) <= STALE_MS) return;
-            cleanupArmed = false;
-            try {
-                const res = scriptRunner.cleanupAll({ includePm2: true });
-                fastify.log.warn({ res }, '[System] UI heartbeat stale; auto-cleaned processes.');
-            } catch (e) {
-                fastify.log.warn({ err: e }, '[System] Auto-cleanup failed.');
+            if (!lastUiHeartbeat || (now - lastUiHeartbeat) <= STALE_MS) {
+                staleLogged = false;
+                return;
+            }
+            uiOnline = false;
+            if (!staleLogged) {
+                staleLogged = true;
+                fastify.log.warn({ lastUiHeartbeat }, '[System] UI heartbeat stale; marking UI offline (no auto-cleanup).');
             }
         }, 15_000);
     }
@@ -57,8 +57,7 @@ export async function systemRoutes(fastify: FastifyInstance) {
     fastify.post<{
         Body: { scope?: string; ts?: number };
     }>('/api/system/ui/heartbeat', async (_request) => {
-        uiSeenOnce = true;
-        cleanupArmed = true;
+        uiOnline = true;
         lastUiHeartbeat = Date.now();
         return { success: true, ts: lastUiHeartbeat };
     });

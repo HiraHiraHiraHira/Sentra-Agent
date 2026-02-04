@@ -210,20 +210,20 @@ function buildDependencyChain(steps, sourceIndices) {
   const result = new Set(sourceIndices);
   const total = steps.length;
   const stepIdToIdx = new Map((steps || []).map((s, idx) => [typeof s?.stepId === 'string' ? s.stepId : '', idx]).filter(([k]) => k));
-  
+
   // 递归查找下游依赖
   let changed = true;
   while (changed) {
     changed = false;
     for (let i = 0; i < total; i++) {
       if (result.has(i)) continue; // 已在结果集中
-      
+
       const step = steps[i];
       const depsIds = Array.isArray(step?.dependsOnStepIds) ? step.dependsOnStepIds : [];
       const depsIdx = depsIds
         .map((sid) => (typeof sid === 'string' ? stepIdToIdx.get(sid.trim()) : undefined))
         .filter((x) => Number.isInteger(x));
-      
+
       // 如果该步骤依赖任何已在结果集中的步骤，则添加到结果集
       if (depsIdx.some((d) => result.has(d))) {
         result.add(i);
@@ -231,7 +231,7 @@ function buildDependencyChain(steps, sourceIndices) {
       }
     }
   }
-  
+
   return result;
 }
 
@@ -393,11 +393,11 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
   // 重排序：仅使用 objective
   try {
     if (objective && (config.rerank?.enable !== false)) {
-      const ranked = await rerankManifest({ 
-        manifest, 
-        objective, 
-        candidateK: config.rerank?.candidateK, 
-        topN: config.rerank?.topN 
+      const ranked = await rerankManifest({
+        manifest,
+        objective,
+        candidateK: config.rerank?.candidateK,
+        topN: config.rerank?.topN
       });
       if (Array.isArray(ranked?.manifest) && ranked.manifest.length) {
         manifest = ranked.manifest;
@@ -528,7 +528,7 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
           if (Array.isArray(one?.steps) && one.steps.length > 0) {
             candidatesByModel.push({ steps: one.steps || [], removedUnknown: !!one.removedUnknown, parsed: one.parsed, model: m });
           }
-        } catch {}
+        } catch { }
       }
       if (candidatesByModel.length === 0) {
         const one = await generateSingleNativePlan({ messages: baseMessages, tools, allowedAiNames, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1), model: planModel });
@@ -553,7 +553,7 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
           if (context?.runId) {
             await HistoryStore.append(context.runId, { type: 'plan_audit', mode: 'native', candidates: candidatesByModel.length, chosenIndex: idx, chosenModel: best.model, reason: String(pick.audit || '') });
           }
-        } catch {}
+        } catch { }
       }
     } else {
       const K = Math.max(2, Math.min(5, Number(config.planner.multiCandidates || 3)));
@@ -635,7 +635,7 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
           if (context?.runId) {
             await HistoryStore.append(context.runId, { type: 'plan_audit', mode: 'native', candidates: candidates.length, chosenIndex: idx, reason: String(pick.audit || '') });
           }
-        } catch {}
+        } catch { }
       }
     }
   } else {
@@ -783,7 +783,7 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
 
   // 记忆：保存本次规划（目标与步骤概览），供后续相似任务参考
   if (config.memory?.enable) {
-    try { await upsertPlanMemory({ runId: context?.runId || 'unknown', objective, plan: { steps } }); } catch {}
+    try { await upsertPlanMemory({ runId: context?.runId || 'unknown', objective, plan: { steps } }); } catch { }
   }
 
   return { manifest, steps };
@@ -812,7 +812,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
   const used = [];
   let succeeded = 0;
   const conv = normalizeConversation(opts.conversation);
-  
+
   // 重试模式下，跟踪已执行步骤的成功/失败状态，用于智能跳过依赖失败的步骤
   const stepStatus = new Map(); // stepIndex -> { success: boolean, reason: string }
 
@@ -823,7 +823,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
   const delayUntil = new Map(); // stepIndex -> epochMs when it becomes schedulable
   const runningByTool = new Map(); // aiName -> count
   const runningByProvider = new Map(); // providerKey -> count
-  
+
   // 中文：全局执行计数器，记录实际执行顺序（按完成时间）
   let nextExecutionIndex = 0;
 
@@ -987,7 +987,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
       const built = await buildPlanPatchContext(atIndex);
       toolCtx = built.toolCtx;
       historyContext = built.historyContext;
-    } catch {}
+    } catch { }
 
     try {
       const { maybePlanPatch } = await import('./stages/plan_patch.js');
@@ -1155,7 +1155,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     const gid = groupOf[plannedStepIndex];
     if (gid === null || gid === undefined) {
       // 孤立步骤：即时发送（优先反馈）
-      emitRunEvent(runId, ev);
+      emitRunEvent(runId, { ...ev, resultStream: true, resultStatus: 'progress' });
       return;
     }
     if (!groupBuffers.has(gid)) groupBuffers.set(gid, new Map());
@@ -1212,6 +1212,9 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
         groupSize: (g.nodes?.length || 0),
         orderIndices: order,
         events: resultEvents,
+        resultStream: true,
+        resultStatus: 'progress',
+        groupFlushed: true,
       };
       emitRunEvent(runId, resultGroupEvent);
     }
@@ -1251,7 +1254,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     const draftArgs = step.draftArgs || {};
     const stepId = step?.stepId;
     const stepStart = now();
-    
+
     // 若运行已被上游标记为取消，则跳过实际工具调用，避免继续浪费资源
     if (isRunCancelled(runId)) {
       const elapsed = now() - stepStart;
@@ -1292,7 +1295,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
       }
       return { usedEntry: { aiName, elapsedMs: elapsed, success: false, code: res.code }, succeeded: 0 };
     }
-    
+
     // 重试模式下，检查依赖步骤是否失败
     if (retrySteps) {
       const deps = depsArr[i] || [];
@@ -1300,7 +1303,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
         const status = stepStatus.get(Number(d));
         return status && !status.success;
       });
-      
+
       if (failedDeps.length > 0) {
         // 依赖步骤失败，跳过此步骤以避免浪费
         const elapsed = now() - stepStart;
@@ -1308,15 +1311,15 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
           const st = stepStatus.get(d);
           return `步骤${d}(${plan.steps[d]?.aiName}): ${st?.reason || '失败'}`;
         }).join('; ');
-        const res = { 
-          success: false, 
-          code: 'SKIP_UPSTREAM_FAILED', 
-          data: null, 
-          message: `跳过：上游依赖步骤失败 - ${failedDepReasons}` 
+        const res = {
+          success: false,
+          code: 'SKIP_UPSTREAM_FAILED',
+          data: null,
+          message: `跳过：上游依赖步骤失败 - ${failedDepReasons}`
         };
-        
+
         stepStatus.set(i, { success: false, reason: res.message });
-        
+
         const depOnStepIds = buildDependsOnStepIds(i);
         const depByStepIds = buildDependedByStepIds(i);
         const gid = groupOf[i];
@@ -1340,16 +1343,16 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
         };
         emitToolResultGrouped(ev, i);
         await HistoryStore.append(runId, ev);
-        
+
         if (config.flags.enableVerboseSteps) {
-          logger.info(`跳过步骤（上游失败）`, { 
-            label: 'STEP', 
-            stepIndex: i, 
-            aiName, 
-            failedDeps: failedDepReasons 
+          logger.info(`跳过步骤（上游失败）`, {
+            label: 'STEP',
+            stepIndex: i,
+            aiName,
+            failedDeps: failedDepReasons
           });
         }
-        
+
         return { usedEntry: { aiName, elapsedMs: elapsed, success: false, code: res.code }, succeeded: 0 };
       }
     }
@@ -1462,7 +1465,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
         const cloned = { ...toolArgs };
         delete cloned.schedule;
         toolArgs = cloned;
-      } catch {}
+      } catch { }
     }
 
     // 将最终用于调用的参数写入历史，并通过事件总线实时分发
@@ -1486,7 +1489,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
       };
       emitArgsGrouped(argsEv, i);
       await HistoryStore.append(runId, argsEv);
-    } catch {}
+    } catch { }
 
     // === schedule 延迟反馈机制：仅当插件 schema 中定义了 schedule 参数时启用 ===
     let delayMs = 0;
@@ -1494,7 +1497,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
     let scheduleText = '';
     let scheduleParsed = null;
     let scheduleMode = 'none'; // 'immediate_exec' | 'delayed_exec' | 'none'
-    
+
     if (scheduleArgPresent && scheduleArgValue) {
       scheduleDetected = true;
       try {
@@ -1596,7 +1599,7 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
           targetISO: scheduleParsed?.parsedISO,
           scheduleMode,
         });
-      } catch {}
+      } catch { }
 
       if (scheduleMode === 'delayed_exec') {
         // 仅对不允许立即执行的工具采用“到点再执行”的旧语义：返回占位结果，实际执行交给延迟队列
@@ -1701,12 +1704,12 @@ export async function executePlan(runId, objective, mcpcore, plan, opts = {}) {
 
     // 重试模式下记录执行状态
     if (retrySteps) {
-      stepStatus.set(i, { 
-        success: res.success, 
-        reason: res.success ? '成功' : (res.message || res.error || `失败: ${res.code}`) 
+      stepStatus.set(i, {
+        success: res.success,
+        reason: res.success ? '成功' : (res.message || res.error || `失败: ${res.code}`)
       });
     }
-    
+
     return { usedEntry: { aiName, elapsedMs: elapsed, success: res.success, code: res.code }, succeeded: res.success ? 1 : 0 };
   };
 
@@ -1872,7 +1875,7 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
 
     // 步骤1：构建工具清单
     let manifest0 = buildPlanningManifest(mcpcore);
-    
+
     // 步骤2：判断是否需要工具（使用原始工具列表）
     const judgeFunc = (config.llm?.toolStrategy || 'auto') === 'fc' ? judgeToolNecessityFC : judgeToolNecessity;
     const judge = forceNeedTools
@@ -1897,7 +1900,7 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
       const exec = { used: [], attempted: 0, succeeded: 0, successRate: 0 };
       await HistoryStore.append(runId, { type: 'done', exec });
       const summary = String(judge.summary || 'Judge阶段失败');
-      try { await HistoryStore.setSummary(runId, summary); } catch {}
+      try { await HistoryStore.setSummary(runId, summary); } catch { }
       await HistoryStore.append(runId, { type: 'summary', summary });
       return fail('JUDGE_FAILED', 'JUDGE_FAILED', { runId, plan: plan2, exec, eval: { success: false, summary }, summary });
     }
@@ -1937,7 +1940,7 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
         ? evalObj.failedSteps.filter((f) => typeof f?.stepId === 'string' && f.stepId.trim())
         : [];
       if (failedSteps.length === 0) break;
-      
+
       // 提取失败步骤的索引（仅用于内部执行；身份以 stepId 为准）
       const stepIdToIndex = new Map((plan.steps || []).map((s, idx) => [typeof s?.stepId === 'string' ? s.stepId : '', idx]).filter(([k]) => k));
       const failedIndices = Array.from(new Set(failedSteps.map((f) => {
@@ -1945,11 +1948,11 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
         const idx = sid ? stepIdToIndex.get(sid) : undefined;
         return Number.isFinite(idx) ? idx : NaN;
       }).filter((x) => Number.isFinite(x)))).sort((a, b) => a - b);
-      
+
       // 构建依赖链：找出所有依赖失败步骤的下游步骤
       const retryChain = buildDependencyChain(plan.steps, failedIndices);
       const retryIndices = Array.from(retryChain).sort((a, b) => a - b);
-      
+
       // 构建成功步骤的上下文（所有成功的步骤结果）
       const history = await HistoryStore.list(runId, 0, -1);
       const prior = history
@@ -1957,12 +1960,12 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
         .map((h) => ({ aiName: h.aiName, args: h.args, result: h.result, data: h.result?.data }));
 
       // 记录重试事件
-      await HistoryStore.append(runId, { 
-        type: 'retry_begin', 
+      await HistoryStore.append(runId, {
+        type: 'retry_begin',
         failedSteps: failedSteps.map((f) => ({ stepId: f.stepId, displayIndex: f.displayIndex, aiName: f.aiName, reason: f.reason })),
-        repairIndex: repairs + 1 
+        repairIndex: repairs + 1
       });
-      
+
       if (config.flags.enableVerboseSteps) {
         logger.info('开始重试失败步骤及其依赖链', {
           label: 'RETRY',
@@ -1972,20 +1975,20 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
           failedSteps: failedSteps.map((f) => `stepId=${f.stepId} displayIndex=${f.displayIndex} (${f.aiName}): ${f.reason}`)
         });
       }
-      
+
       // 重试失败步骤及其所有下游依赖步骤
-      const retryExec = await executePlan(runId, objective, mcpcore, plan, { 
+      const retryExec = await executePlan(runId, objective, mcpcore, plan, {
         retrySteps: retryIndices,  // 执行失败步骤 + 依赖它们的步骤
-        seedRecent: prior, 
-        conversation, 
-        context 
+        seedRecent: prior,
+        conversation,
+        context
       });
-      
-      await HistoryStore.append(runId, { 
-        type: 'retry_done', 
+
+      await HistoryStore.append(runId, {
+        type: 'retry_done',
         failedSteps: failedSteps.map((f) => ({ stepId: f.stepId, displayIndex: f.displayIndex, aiName: f.aiName, reason: f.reason })),
-        repairIndex: repairs + 1, 
-        exec: retryExec 
+        repairIndex: repairs + 1,
+        exec: retryExec
       });
 
       // 重试后，需要从 history 中重新统计全局的 exec（因为 retryExec 只包含重试步骤）
@@ -2010,13 +2013,13 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
     }
 
     await HistoryStore.append(runId, { type: 'done', exec });
-    
+
     // 总结步骤，支持失败反馈
     const enableSummary = config.flags?.enableSummary !== false;
     const summaryResult = enableSummary
       ? await summarizeToolHistory(runId, '', ctx)
       : { success: true, summary: '' };
-    
+
     if (enableSummary && !summaryResult.success && config.flags.enableVerboseSteps) {
       logger.warn('总结步骤失败', {
         label: 'RUN',
@@ -2025,15 +2028,15 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
         attempts: summaryResult.attempts
       });
     }
-    
+
     // 向后兼容：返回 summary 字符串
     const summary = summaryResult.summary || '';
 
-    const okres = ok({ 
-      runId, 
-      plan, 
-      exec, 
-      eval: evalObj, 
+    const okres = ok({
+      runId,
+      plan,
+      exec,
+      eval: evalObj,
       summary,
       summaryResult  // 附加完整的总结结果
     });
@@ -2043,9 +2046,9 @@ export async function planThenExecute({ objective, context = {}, mcpcore, conver
     return okres;
   } finally {
     const cancelled = isRunCancelled(runId);
-    try { markRunFinished(runId, { cancelled }); } catch {}
-    try { removeRun(runId); } catch {}
-    try { clearRunCancelled(runId); } catch {}
+    try { markRunFinished(runId, { cancelled }); } catch { }
+    try { removeRun(runId); } catch { }
+    try { clearRunCancelled(runId); } catch { }
   }
 }
 
@@ -2068,7 +2071,7 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
 
       // 步骤1：构建工具清单
       let manifest0 = buildPlanningManifest(mcpcore);
-      
+
       // 步骤2：判断是否需要工具（使用原始工具列表）
       const judgeFunc = (config.llm?.toolStrategy || 'auto') === 'fc' ? judgeToolNecessityFC : judgeToolNecessity;
       const judge = forceNeedTools
@@ -2105,7 +2108,7 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
         emitRunEvent(runId, { type: 'done', exec });
         await HistoryStore.append(runId, { type: 'done', exec });
         const summary = String(judge.summary || 'Judge阶段失败');
-        try { await HistoryStore.setSummary(runId, summary); } catch {}
+        try { await HistoryStore.setSummary(runId, summary); } catch { }
         emitRunEvent(runId, { type: 'summary', summary });
         await HistoryStore.append(runId, { type: 'summary', summary });
         return;
@@ -2120,7 +2123,7 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
         emitRunEvent(runId, { type: 'done', exec });
         await HistoryStore.append(runId, { type: 'done', exec });
         const summary = '本次任务判定无需调用工具。';
-        try { await HistoryStore.setSummary(runId, summary); } catch {}
+        try { await HistoryStore.setSummary(runId, summary); } catch { }
         emitRunEvent(runId, { type: 'summary', summary });
         await HistoryStore.append(runId, { type: 'summary', summary });
         return;
@@ -2142,7 +2145,7 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
           logger.info('Run cancelled after executePlan, skip evaluation/reflection/summary', { label: 'RUN', runId });
         }
         const summary = '本次运行已被上游取消（用户改主意），仅保留已完成的工具结果，不再继续评估与总结。';
-        try { await HistoryStore.setSummary(runId, summary); } catch {}
+        try { await HistoryStore.setSummary(runId, summary); } catch { }
         emitRunEvent(runId, { type: 'done', exec, cancelled: true });
         await HistoryStore.append(runId, { type: 'done', exec, cancelled: true });
         emitRunEvent(runId, { type: 'summary', summary, cancelled: true });
@@ -2174,26 +2177,26 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
             const idx = sid ? stepIdToIndex.get(sid) : undefined;
             return Number.isFinite(idx) ? idx : NaN;
           }).filter((x) => Number.isFinite(x)))).sort((a, b) => a - b);
-          
+
           // 构建依赖链：找出所有依赖失败步骤的下游步骤
           const retryChain = buildDependencyChain(plan.steps, failedIndices);
           const retryIndices = Array.from(retryChain).sort((a, b) => a - b);
-          
+
           // 构建成功步骤的上下文
           const history = await HistoryStore.list(runId, 0, -1);
           const prior = history
             .filter((h) => h.type === 'tool_result' && Number(h.result?.success) === 1)
             .map((h) => ({ aiName: h.aiName, args: h.args, result: h.result, data: h.result?.data }));
 
-          emitRunEvent(runId, { 
-            type: 'retry_begin', 
+          emitRunEvent(runId, {
+            type: 'retry_begin',
             failedSteps: failedSteps.map((f) => ({ stepId: f.stepId, displayIndex: f.displayIndex, aiName: f.aiName, reason: f.reason }))
           });
-          await HistoryStore.append(runId, { 
-            type: 'retry_begin', 
+          await HistoryStore.append(runId, {
+            type: 'retry_begin',
             failedSteps: failedSteps.map((f) => ({ stepId: f.stepId, displayIndex: f.displayIndex, aiName: f.aiName, reason: f.reason }))
           });
-          
+
           if (config.flags.enableVerboseSteps) {
             logger.info('开始重试失败步骤及其依赖链', {
               label: 'RETRY',
@@ -2205,22 +2208,22 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
           }
 
           // 重试失败步骤及其所有下游依赖步骤
-          const retryExec = await executePlan(runId, objective, mcpcore, plan, { 
+          const retryExec = await executePlan(runId, objective, mcpcore, plan, {
             retrySteps: retryIndices,  // 执行失败步骤 + 依赖它们的步骤
-            seedRecent: prior, 
-            conversation, 
-            context 
+            seedRecent: prior,
+            conversation,
+            context
           });
-          
-          emitRunEvent(runId, { 
-            type: 'retry_done', 
+
+          emitRunEvent(runId, {
+            type: 'retry_done',
             failedSteps: failedSteps.map((f) => ({ stepId: f.stepId, displayIndex: f.displayIndex, aiName: f.aiName, reason: f.reason })),
-            exec: retryExec 
+            exec: retryExec
           });
-          await HistoryStore.append(runId, { 
-            type: 'retry_done', 
+          await HistoryStore.append(runId, {
+            type: 'retry_done',
             failedSteps: failedSteps.map((f) => ({ stepId: f.stepId, displayIndex: f.displayIndex, aiName: f.aiName, reason: f.reason })),
-            exec: retryExec 
+            exec: retryExec
           });
 
           // 重试后，需要从 history 中重新统计全局的 exec（因为 retryExec 只包含重试步骤）
@@ -2248,7 +2251,7 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
       // Done + summary
       emitRunEvent(runId, { type: 'done', exec });
       await HistoryStore.append(runId, { type: 'done', exec });
-      
+
       // Reflection：基于 evaluation 的 incomplete 字段判断是否需要补充遗漏的操作
       // success 表示已执行步骤是否成功，incomplete 表示任务是否有遗漏步骤
       const shouldReflect = enableEval && config.flags.enableReflection && evalObj?.incomplete === true;
@@ -2278,7 +2281,7 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
         }
         try {
           const reflection = await checkTaskCompleteness(runId, objective, plan.manifest, ctx);
-          
+
           emitRunEvent(runId, {
             type: 'reflection',
             isComplete: reflection.isComplete,
@@ -2293,7 +2296,7 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
             missings: reflection.missings,
             supplements: reflection.supplements
           });
-          
+
           if (config.flags.enableVerboseSteps) {
             logger.info('Reflection: 完整性检查完成', {
               label: 'REFLECTION',
@@ -2303,12 +2306,12 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
               supplementsCount: reflection.supplements?.length || 0
             });
           }
-          
+
           // 如果任务不完整且有补充建议，生成并执行补充计划
           if (!reflection.isComplete && Array.isArray(reflection.supplements) && reflection.supplements.length > 0) {
             const maxSupplements = Math.max(1, config.flags.reflectionMaxSupplements || 3);
             const limitedSupplements = reflection.supplements.slice(0, maxSupplements);
-            
+
             if (config.flags.enableVerboseSteps) {
               logger.info('Reflection: 开始生成补充计划', {
                 label: 'REFLECTION',
@@ -2317,7 +2320,7 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
                 supplements: limitedSupplements.map(s => s.operation)
               });
             }
-            
+
             // 提取已完成的工具执行历史（用于补充计划的上下文）
             const history = await HistoryStore.list(runId, 0, -1);
             const completedTools = history
@@ -2329,51 +2332,51 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
                 result: h.result,
                 success: Number(h.result?.success) === 1
               }));
-            
+
             // 构建已完成步骤的描述（包含完整的 args 和 result，不截断）
             const completedStepsDesc = completedTools.length > 0
               ? `\n\n【已完成的步骤】（补充计划应基于这些结果继续，不要重复执行）：\n${completedTools.map((t, i) => {
-                  const argsStr = JSON.stringify(t.args);
-                  const resultStr = JSON.stringify(t.result);
-                  const statusIcon = t.success ? ' ✓' : ' ✗';
-                  return `${i}. ${t.aiName}${statusIcon}:\n   参数: ${argsStr}\n   结果: ${resultStr}`;
-                }).join('\n')}`
+                const argsStr = JSON.stringify(t.args);
+                const resultStr = JSON.stringify(t.result);
+                const statusIcon = t.success ? ' ✓' : ' ✗';
+                return `${i}. ${t.aiName}${statusIcon}:\n   参数: ${argsStr}\n   结果: ${resultStr}`;
+              }).join('\n')}`
               : '';
-            
+
             // 构建补充操作的描述（用于重排序）
             const supplementsDesc = limitedSupplements.map((s, i) => `${i + 1}. ${s.operation}：${s.reason}`).join('\n');
-            
+
             // 构建补充目标（强调这是补充操作，不是重新开始；历史由规划器按 runId 内部加载）
             const supplementObjective = `${objective}\n\n【需要补充的操作】（仅基于当前运行历史补充以下遗漏的关键操作）：\n${supplementsDesc}`;
 
             // 生成补充计划（不拼接历史；由规划器基于 runId 内部加载）
             const supplementConversation = Array.isArray(conversation) ? conversation : [];
-            
-            const supplementPlan = await generatePlan(supplementObjective, mcpcore, { 
-              ...ctx, 
-              runId, 
+
+            const supplementPlan = await generatePlan(supplementObjective, mcpcore, {
+              ...ctx,
+              runId,
               isReflectionSupplement: true,
               originalPlan: plan,
               completedSteps: completedTools
             }, supplementConversation);
-            
+
             if (Array.isArray(supplementPlan?.steps) && supplementPlan.steps.length > 0) {
               // 清理 dependsOnStepIds：补充计划独立执行，不应引用原计划的 stepId
               supplementPlan.steps = supplementPlan.steps.map(s => {
                 const { dependsOnStepIds, ...rest } = s;
                 return { ...rest, dependsOnStepIds: undefined };
               });
-              
-              emitRunEvent(runId, { 
-                type: 'reflection_plan', 
+
+              emitRunEvent(runId, {
+                type: 'reflection_plan',
                 plan: supplementPlan,
                 supplementsCount: supplementPlan.steps.length
               });
-              await HistoryStore.append(runId, { 
-                type: 'reflection_plan', 
-                plan: supplementPlan 
+              await HistoryStore.append(runId, {
+                type: 'reflection_plan',
+                plan: supplementPlan
               });
-              
+
               if (config.flags.enableVerboseSteps) {
                 logger.info('Reflection: 补充计划生成成功', {
                   label: 'REFLECTION',
@@ -2382,28 +2385,28 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
                   steps: supplementPlan.steps.map(s => `${s.aiName}: ${formatReason(s.reason)}`)
                 });
               }
-              
+
               // 执行补充计划（继承之前的工具上下文）
               const history = await HistoryStore.list(runId, 0, -1);
               const prior = history
                 .filter((h) => h.type === 'tool_result' && Number(h.result?.success) === 1)
                 .map((h) => ({ aiName: h.aiName, args: h.args, result: h.result, data: h.result?.data }));
-              
+
               const supplementExec = await executePlan(runId, supplementObjective, mcpcore, supplementPlan, {
                 seedRecent: prior,
                 conversation,
                 context: ctx
               });
-              
-              emitRunEvent(runId, { 
-                type: 'reflection_exec', 
-                exec: supplementExec 
+
+              emitRunEvent(runId, {
+                type: 'reflection_exec',
+                exec: supplementExec
               });
-              await HistoryStore.append(runId, { 
-                type: 'reflection_exec', 
-                exec: supplementExec 
+              await HistoryStore.append(runId, {
+                type: 'reflection_exec',
+                exec: supplementExec
               });
-              
+
               // 更新全局 exec 统计（包含补充执行的结果）
               const updatedHistory = await HistoryStore.list(runId, 0, -1);
               const allToolResults = updatedHistory.filter((h) => h.type === 'tool_result');
@@ -2419,7 +2422,7 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
                 succeeded: globalSucceeded,
                 successRate: allToolResults.length ? globalSucceeded / allToolResults.length : 0
               };
-              
+
               if (config.flags.enableVerboseSteps) {
                 logger.info('Reflection: 补充执行完成', {
                   label: 'REFLECTION',
@@ -2450,23 +2453,49 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
       }
 
       const enableSummary = config.flags?.enableSummary !== false;
+
+      emitRunEvent(runId, {
+        type: 'tool_result_group',
+        groupId: runId,
+        groupSize: 0,
+        orderIndices: [],
+        events: [],
+        resultStream: true,
+        resultStatus: 'final',
+        groupFlushed: true,
+      });
+      await HistoryStore.append(runId, {
+        type: 'tool_result_group',
+        groupId: runId,
+        groupSize: 0,
+        orderIndices: [],
+        events: [],
+        resultStream: true,
+        resultStatus: 'final',
+        groupFlushed: true,
+      });
+
       emitRunEvent(runId, {
         type: 'completed',
         exec,
         evaluation: enableEval ? evalObj : null,
-        summaryPending: enableSummary
+        summaryPending: enableSummary,
+        resultStream: true,
+        resultStatus: 'final'
       });
       await HistoryStore.append(runId, {
         type: 'completed',
         exec,
         evaluation: enableEval ? evalObj : null,
-        summaryPending: enableSummary
+        summaryPending: enableSummary,
+        resultStream: true,
+        resultStatus: 'final'
       });
-      
+
       if (enableSummary) {
         // 总结步骤，支持失败反馈
         const summaryResult = await summarizeToolHistory(runId, '', ctx);
-        
+
         if (!summaryResult.success && config.flags.enableVerboseSteps) {
           logger.warn('总结步骤失败', {
             label: 'RUN',
@@ -2475,21 +2504,21 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
             attempts: summaryResult.attempts
           });
         }
-        
+
         // 向后兼容：发送 summary 字符串
         const summary = summaryResult.summary || '';
-        try { await HistoryStore.setSummary(runId, summary); } catch {}
-        
+        try { await HistoryStore.setSummary(runId, summary); } catch { }
+
         // 发送总结事件，包含失败信息
-        emitRunEvent(runId, { 
-          type: 'summary', 
+        emitRunEvent(runId, {
+          type: 'summary',
           summary,
           success: summaryResult.success,
           error: summaryResult.error,
           attempts: summaryResult.attempts
         });
-        await HistoryStore.append(runId, { 
-          type: 'summary', 
+        await HistoryStore.append(runId, {
+          type: 'summary',
           summary,
           success: summaryResult.success,
           error: summaryResult.error,
@@ -2501,14 +2530,14 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
       await HistoryStore.append(runId, { type: 'done', error: String(e) });
     } finally {
       const cancelled = isRunCancelled(runId);
-      try { markRunFinished(runId, { cancelled }); } catch {}
-      try { removeRun(runId); } catch {}
-      try { await sub.return?.(); } catch {}
-      try { RunEvents.close(runId); } catch {}
-      try { clearRunCancelled(runId); } catch {}
+      try { markRunFinished(runId, { cancelled }); } catch { }
+      try { removeRun(runId); } catch { }
+      try { await sub.return?.(); } catch { }
+      try { RunEvents.close(runId); } catch { }
+      try { clearRunCancelled(runId); } catch { }
     }
   })();
-  
+
   try {
     for await (const ev of sub) {
       yield ev;
@@ -2516,11 +2545,11 @@ export async function* planThenExecuteStream({ objective, context = {}, mcpcore,
     }
   } finally {
     const cancelled = isRunCancelled(runId);
-    try { markRunFinished(runId, { cancelled }); } catch {}
-    try { removeRun(runId); } catch {}
-    try { await sub.return?.(); } catch {}
-    try { RunEvents.close(runId); } catch {}
-    try { clearRunCancelled(runId); } catch {}
+    try { markRunFinished(runId, { cancelled }); } catch { }
+    try { removeRun(runId); } catch { }
+    try { await sub.return?.(); } catch { }
+    try { RunEvents.close(runId); } catch { }
+    try { clearRunCancelled(runId); } catch { }
   }
 }
 
