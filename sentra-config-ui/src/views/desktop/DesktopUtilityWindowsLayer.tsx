@@ -733,6 +733,7 @@ export function DesktopUtilityWindowsLayer(props: DesktopUtilityWindowsLayerProp
           zIndex={utilityZMap['qq-sandbox'] ?? 2011}
           isActive={activeUtilityId === 'qq-sandbox'}
           isMinimized={qqSandboxMinimized}
+          keepMountedWhenMinimized={true}
           performanceMode={performanceMode}
           initialSize={getInitialSize('qq-sandbox', { width: 1120, height: 760 })}
           initialMaximized={getInitialMaximized('qq-sandbox')}
