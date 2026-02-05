@@ -33,6 +33,57 @@ export async function fetchRedisAdminHealth(): Promise<RedisAdminHealth> {
   return readJsonOrThrow(res);
 }
 
+export async function deleteRedisAdminKeys(params: {
+  profile?: 'main' | 'mcp';
+  keys: string[];
+  dryRun?: boolean;
+}): Promise<any> {
+  const res = await fetch('/api/redis-admin/deleteKeys', {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      profile: params.profile,
+      keys: Array.isArray(params.keys) ? params.keys : [],
+      dryRun: params.dryRun !== undefined ? params.dryRun : true,
+    }),
+  });
+  return readJsonOrThrow(res);
+}
+
+export async function deleteRedisAdminKey(params: {
+  profile?: 'main' | 'mcp';
+  key: string;
+  dryRun?: boolean;
+}): Promise<any> {
+  const res = await fetch('/api/redis-admin/deleteKey', {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      profile: params.profile,
+      key: params.key,
+      dryRun: params.dryRun !== undefined ? params.dryRun : true,
+    }),
+  });
+  return readJsonOrThrow(res);
+}
+
+export async function deleteRedisAdminAllKeys(params: {
+  profile?: 'main' | 'mcp';
+  dryRun?: boolean;
+  scanCount?: number;
+}): Promise<any> {
+  const res = await fetch('/api/redis-admin/deleteAllKeys', {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      profile: params.profile,
+      dryRun: params.dryRun !== undefined ? params.dryRun : true,
+      scanCount: params.scanCount,
+    }),
+  });
+  return readJsonOrThrow(res);
+}
+
 export async function fetchRedisAdminInfo(): Promise<RedisAdminInfo> {
   const res = await fetch('/api/redis-admin/info', { headers: getAuthHeaders() });
   return readJsonOrThrow(res);

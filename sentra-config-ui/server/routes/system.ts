@@ -108,8 +108,7 @@ export async function systemRoutes(fastify: FastifyInstance) {
         });
     });
 
-    fastify.post('/api/system/restart', async (_request, reply) => {
-        const clientPort = process.env.CLIENT_PORT || '7244';
+    fastify.post('/api/system/restart', async (request, reply) => {
         const serverPort = process.env.SERVER_PORT || '7245';
 
         const isPm2 = !!process.env.pm_id || !!process.env.PM2_HOME;
@@ -145,15 +144,24 @@ export async function systemRoutes(fastify: FastifyInstance) {
         const restartCmd = restartCmdOverride || (restartScript ? `npm run ${restartScript}` : 'npm run dev');
 
         const isDevLike = restartScript === 'dev' || restartScript === 'server:dev' || restartScript === 'client:dev' || restartCmd.includes(' vite');
-        const ports = isDevLike ? `${clientPort},${serverPort}` : `${serverPort}`;
+
+        // In dev mode, killing the Vite client port will immediately close the UI page (and may cause restart loops).
+        // Only restart the backend port; keep Vite running.
+        const devRestartCmd = restartCmdOverride || (Object.prototype.hasOwnProperty.call(scripts, 'server:dev') ? 'npm run server:dev' : restartCmd);
+        const finalRestartCmd = isDevLike ? devRestartCmd : restartCmd;
+        const ports = isDevLike ? `${serverPort}` : `${serverPort}`;
+
+        const body: any = (request as any)?.body || {};
+        const includePm2 = typeof body?.includePm2 === 'boolean' ? body.includePm2 : true;
 
         const scriptPath = path.resolve(process.cwd(), 'scripts', 'reboot.mjs');
 
-        fastify.log.warn(`[System] Initiating restart... Ports: ${ports}, Cmd: ${restartCmd}`);
+        fastify.log.warn(`[System] Initiating restart... Ports: ${ports}, Cmd: ${finalRestartCmd}`);
 
         try {
-            // Best-effort: stop PM2/terminal processes started from WebUI.
-            scriptRunner.cleanupAll({ includePm2: true });
+            // Best-effort: stop terminal processes started from WebUI; optionally cleanup related PM2 apps (napcat/agent/emo).
+            // This is synchronous (spawnSync) so PM2 deletions complete before reboot happens.
+            scriptRunner.cleanupAll({ includePm2 });
         } catch {
         }
 
@@ -179,7 +187,7 @@ export async function systemRoutes(fastify: FastifyInstance) {
             '--ports',
             ports,
             '--cmd',
-            restartCmd,
+            finalRestartCmd,
             '--health',
             healthUrl,
         ], {

@@ -1,6 +1,6 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react';
-import { Button, Tooltip } from 'antd';
-import { CopyOutlined, MessageOutlined, PictureOutlined } from '@ant-design/icons';
+import { Button, Dropdown } from 'antd';
+import { MoreOutlined } from '@ant-design/icons';
 import styles from './QqSandbox.module.css';
 import type { Conversation, FormattedMessage } from './QqSandbox.types';
 
@@ -146,38 +146,47 @@ export function MessageList(props: {
             </div>
             <div className={styles.msgBody}>
               <div className={styles.msgMeta}>
-                <span className={styles.msgWho}>{displayName}</span>
-                {roleLabel && m.type === 'group' ? <span className={styles.roleBadge}>{roleLabel}</span> : null}
-                <span className={styles.msgDot}>·</span>
-                <span className={styles.msgTime}>{m.time_str || formatTimeShort(nowMsFromMsg(m))}</span>
+                <div className={styles.msgMetaLeft}>
+                  <span className={styles.msgWho}>{displayName}</span>
+                  {roleLabel && m.type === 'group' ? <span className={styles.roleBadge}>{roleLabel}</span> : null}
+                  <span className={styles.msgDot}>·</span>
+                  <span className={styles.msgTime}>{m.time_str || formatTimeShort(nowMsFromMsg(m))}</span>
+                </div>
+                {showActions ? (
+                  <div className={styles.msgMetaActions}>
+                    <Dropdown
+                      trigger={['click']}
+                      menu={{
+                        items: [
+                          { key: 'copy', label: '复制' },
+                          ...(firstImg ? [{ key: 'copy-image', label: '复制图片' }] : []),
+                          { key: 'reply', label: '引用回复' },
+                        ],
+                        onClick: ({ key }) => {
+                          if (key === 'copy') void copyText(md);
+                          if (key === 'copy-image' && firstImg) void copyImageFromUrl(firstImg);
+                          if (key === 'reply') {
+                            setReplyDraft({
+                              messageId: Number(m.message_id || 0),
+                              senderName: displayName,
+                              text: toPlainSingleLine(md),
+                            });
+                          }
+                        },
+                      }}
+                    >
+                      <Button
+                        className={styles.msgActionMenuBtn}
+                        size="small"
+                        type="text"
+                        icon={<MoreOutlined />}
+                        onMouseDown={(e) => e.preventDefault()}
+                      />
+                    </Dropdown>
+                  </div>
+                ) : null}
               </div>
               <div className={`${styles.bubble} ${isMe ? styles.bubbleMe : ''}`}>
-                {showActions && (
-                  <div className={styles.msgActions}>
-                    <Tooltip title="复制">
-                      <Button className={styles.actionBtn} type="text" icon={<CopyOutlined />} onClick={() => void copyText(md)} />
-                    </Tooltip>
-                    {firstImg ? (
-                      <Tooltip title="复制图片">
-                        <Button className={styles.actionBtn} type="text" icon={<PictureOutlined />} onClick={() => void copyImageFromUrl(firstImg)} />
-                      </Tooltip>
-                    ) : null}
-                    <Tooltip title="引用回复">
-                      <Button
-                        className={styles.actionBtn}
-                        type="text"
-                        icon={<MessageOutlined />}
-                        onClick={() => {
-                          setReplyDraft({
-                            messageId: Number(m.message_id || 0),
-                            senderName: displayName,
-                            text: toPlainSingleLine(md),
-                          });
-                        }}
-                      />
-                    </Tooltip>
-                  </div>
-                )}
                 {renderReplyBox(m)}
                 <div className={styles.md}>{renderMarkdown(md)}</div>
                 {renderAttachments(m)}

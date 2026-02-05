@@ -23,6 +23,7 @@ const TerminalWindow = React.lazy(() => import('../components/TerminalWindow').t
 const TerminalExecutorWindow = React.lazy(() => import('../components/TerminalExecutorWindow').then(module => ({ default: module.TerminalExecutorWindow })));
 const IOSTerminalManager = React.lazy(() => import('../components/IOSTerminalManager').then(module => ({ default: module.IOSTerminalManager })));
 const IOSEmojiStickersManager = React.lazy(() => import('../components/IOSEmojiStickersManager').then(module => ({ default: module.IOSEmojiStickersManager })));
+const QqSandbox = React.lazy(() => import('../components/QqSandbox/QqSandbox').then(module => ({ default: module.QqSandbox })));
 
 export type MobileViewProps = {
   allItems: FileItem[];
@@ -75,6 +76,8 @@ export function MobileView(props: MobileViewProps) {
     setIosTerminalManagerOpen,
     iosRedisAdminOpen,
     setIosRedisAdminOpen,
+    iosQqSandboxOpen,
+    setIosQqSandboxOpen,
   } = useUIStore();
   const allocateZ = useWindowsStore(s => s.allocateZ);
   const {
@@ -218,6 +221,10 @@ export function MobileView(props: MobileViewProps) {
   }, [bringIOSAppToFront, iosRedisAdminOpen, iosZMap]);
 
   React.useEffect(() => {
+    if (iosQqSandboxOpen && iosZMap['ios-qq-sandbox'] == null) bringIOSAppToFront('ios-qq-sandbox');
+  }, [bringIOSAppToFront, iosQqSandboxOpen, iosZMap]);
+
+  React.useEffect(() => {
     if (activeIOSEditorId && iosZMap[activeIOSEditorId] == null) bringIOSAppToFront(activeIOSEditorId);
   }, [activeIOSEditorId, bringIOSAppToFront, iosZMap]);
 
@@ -258,6 +265,17 @@ export function MobileView(props: MobileViewProps) {
       setReturnToLaunchpad(false);
       setIosEmojiStickersManagerOpen(true);
       bringIOSAppToFront('ios-emoji-stickers-manager');
+    }
+  });
+
+  push({
+    id: 'module-qq-sandbox',
+    name: 'QQ 沙盒',
+    icon: getIconForType('qq-sandbox', 'module'),
+    onClick: () => {
+      setReturnToLaunchpad(false);
+      setIosQqSandboxOpen(true);
+      bringIOSAppToFront('ios-qq-sandbox');
     }
   });
 
@@ -519,6 +537,20 @@ export function MobileView(props: MobileViewProps) {
                 });
               }
 
+              if (iosQqSandboxOpen) {
+                rows.push({
+                  id: 'ios-qq-sandbox',
+                  name: 'QQ 沙盒',
+                  icon: getIconForType('qq-sandbox', 'module'),
+                  onOpen: () => {
+                    setIosQqSandboxOpen(true);
+                    bringIOSAppToFront('ios-qq-sandbox');
+                    setIosAppSwitcherOpen(false);
+                  },
+                  onClose: () => setIosQqSandboxOpen(false),
+                });
+              }
+
               for (const win of iosEditorWindows || []) {
                 rows.push({
                   id: win.id,
@@ -662,6 +694,33 @@ export function MobileView(props: MobileViewProps) {
                 </div>
               ));
             })()}
+          </div>
+        </div>
+      )}
+
+      {iosQqSandboxOpen && (
+        <div
+          style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: iosZMap['ios-qq-sandbox'] ?? 2000 }}
+          onPointerDownCapture={() => bringIOSAppToFront('ios-qq-sandbox')}
+        >
+          <div className="ios-app-window" style={{ display: 'flex' }}>
+            <div className="ios-app-header">
+              <div className="ios-back-btn" onClick={() => {
+                setIosQqSandboxOpen(false);
+                if (returnToLaunchpad) setLaunchpadOpen(true);
+              }}>
+                <IoChevronBack /> {returnToLaunchpad ? '应用' : '主页'}
+              </div>
+              <div>QQ 沙盒</div>
+              <div style={{ color: '#ff3b30', cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setIosQqSandboxOpen(false)}>
+                关闭
+              </div>
+            </div>
+            <div className="ios-app-content">
+              <Suspense fallback={<SentraLoading title="加载 QQ 沙盒" subtitle="首次打开可能较慢，请稍等..." />}>
+                <QqSandbox />
+              </Suspense>
+            </div>
           </div>
         </div>
       )}
@@ -818,6 +877,17 @@ export function MobileView(props: MobileViewProps) {
               setReturnToLaunchpad(true);
               setIosRedisAdminOpen(true);
               bringIOSAppToFront('ios-redis-admin');
+              setLaunchpadOpen(false);
+            }
+          },
+          {
+            name: 'qq-sandbox',
+            type: 'module' as const,
+            onClick: () => {
+              recordUsage('app:qq-sandbox');
+              setReturnToLaunchpad(true);
+              setIosQqSandboxOpen(true);
+              bringIOSAppToFront('ios-qq-sandbox');
               setLaunchpadOpen(false);
             }
           },

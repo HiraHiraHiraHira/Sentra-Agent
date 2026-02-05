@@ -96,6 +96,14 @@ export function DesktopIconsLayer(props: DesktopIconsLayerProps) {
               icon.onClick();
             });
           })()}
+
+          {desktopIcons?.find(i => i.id === 'desktop-mcp-servers-manager') && (() => {
+            const icon = desktopIcons.find(i => i.id === 'desktop-mcp-servers-manager')!;
+            return renderTopTile(icon.id, icon.name, icon.icon, (e) => {
+              e.stopPropagation();
+              icon.onClick();
+            });
+          })()}
         </div>
       </>
     );

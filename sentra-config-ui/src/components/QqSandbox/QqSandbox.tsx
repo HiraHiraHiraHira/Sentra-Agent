@@ -3,7 +3,7 @@ import styles from './QqSandbox.module.css';
 import { storage } from '../../utils/storage';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { App as AntdApp, Button, Dropdown, Modal, Tag, Tooltip } from 'antd';
+import { App as AntdApp, Button, Drawer, Dropdown, Modal, Tag, Tooltip } from 'antd';
 import { ConversationList } from './ConversationList';
 import { MessageList } from './MessageList';
 import { Composer } from './Composer';
@@ -17,6 +17,7 @@ import type { Conversation, FormattedMessage } from './QqSandbox.types';
 import {
   ApiOutlined,
   DisconnectOutlined,
+  LeftOutlined,
   MessageOutlined,
   SettingOutlined,
   SyncOutlined,
@@ -43,6 +44,62 @@ function formatTimeShort(ms: number) {
     return `${HH}:${mm}`;
   } catch {
     return '';
+  }
+}
+
+function stripAnsi(input: string) {
+  try {
+    const s = String(input ?? '');
+    return s
+      .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '')
+      .replace(/\u001b\][^\u0007]*\u0007/g, '')
+      .replace(/\u001b\][^\u001b]*\u001b\\/g, '')
+      .replace(/\u001b\([0-9A-Za-z]/g, '')
+      .replace(/\u001b\)[0-9A-Za-z]/g, '')
+      .replace(/\r\n/g, '\n');
+  } catch {
+    return String(input ?? '');
+  }
+}
+
+function summarizeScriptError(raw: string) {
+  const txt = stripAnsi(String(raw ?? '')).trim();
+  const lower = txt.toLowerCase();
+  const portMatch = txt.match(/Port\s+(\d+)\s+is\s+already\s+in\s+use\b/i);
+  if (portMatch && portMatch[1]) {
+    const pidMatch = txt.match(/PID\s+(\d+)/i);
+    const imgMatch = txt.match(/\(([^)]+)\)/);
+    const port = portMatch[1];
+    const pid = pidMatch?.[1] ? `（PID ${pidMatch[1]}）` : '';
+    const img = imgMatch?.[1] ? ` ${imgMatch[1]}` : '';
+    return `端口 ${port} 已被占用${pid}${img}。请关闭占用进程，或在 NC沙盒 设置中修改 STREAM_PORT/REVERSE_PORT 后重试。`;
+  }
+  if (lower.includes('pm2 not found')) return '未找到 pm2。请先安装 pm2，或确保项目 node_modules/.bin 中存在 pm2。';
+  if (lower.includes('no package manager found')) return '未检测到包管理器（pnpm/npm/yarn）。请先安装或配置 PACKAGE_MANAGER。';
+  if (lower.includes('ecosystem file not found')) return '缺少 ecosystem 配置文件，无法启动 NC沙盒。请检查项目文件是否完整。';
+  if (lower.includes('timeout')) return '执行超时：可能正在安装依赖或构建。建议等待更久或稍后重试。';
+  return '';
+}
+
+async function copyTextToClipboard(text: string) {
+  const t = String(text ?? '');
+  if (!t) return;
+  try {
+    await navigator.clipboard.writeText(t);
+    return;
+  } catch {
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = t;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  } catch {
   }
 }
 
@@ -212,21 +269,39 @@ function uniqStrings(arr: string[]) {
   return out;
 }
 
+function normalizeLocalFileUrlToPath(input: string): string {
+  const s0 = String(input || '').trim();
+  if (!s0) return '';
+  if (!/^file:\/\//i.test(s0)) return s0;
+  try {
+    const u = new URL(s0);
+    if (u.protocol !== 'file:') return s0;
+    let p = u.pathname || '';
+    try { p = decodeURIComponent(p); } catch { }
+    if (p.startsWith('/') && /^[a-zA-Z]:[\\/]/.test(p.slice(1))) p = p.slice(1);
+    return p;
+  } catch {
+    let p = s0.replace(/^file:\/\//i, '');
+    try { p = decodeURIComponent(p); } catch { }
+    if (p.startsWith('/') && /^[a-zA-Z]:[\\/]/.test(p.slice(1))) p = p.slice(1);
+    return p;
+  }
+}
+
 function inferNapcatCachedImagePath(file: string): string {
   const f = String(file || '').trim();
   if (!f) return '';
+  if (/^file:\/\//i.test(f)) return normalizeLocalFileUrlToPath(f);
   if (/^[a-zA-Z]:[\\/]/.test(f) || f.startsWith('/') || f.startsWith('\\')) return f;
-  if (/\.(jpg|jpeg|png|gif|webp|bmp|svg|tiff|ico)$/i.test(f)) {
-    return `sentra-adapter/napcat/cache/images/${f}`;
-  }
   return '';
 }
 
 function inferNapcatCachedFilePath(file: string): string {
   const f = String(file || '').trim();
   if (!f) return '';
+  if (/^file:\/\//i.test(f)) return normalizeLocalFileUrlToPath(f);
   if (/^[a-zA-Z]:[\\/]/.test(f) || f.startsWith('/') || f.startsWith('\\')) return f;
-  return `sentra-adapter/napcat/cache/file/${f}`;
+  return '';
 }
 
 function parseCqImageCandidates(raw: string): Array<{ url?: string; path?: string; summary?: string }> {
@@ -387,6 +462,24 @@ export function QqSandbox() {
   const [contactsTab, setContactsTab] = useState<'groups' | 'friends'>('groups');
   const [search, setSearch] = useState('');
 
+  const [isNarrow, setIsNarrow] = useState(() => {
+    try { return window.innerWidth < 920; } catch { return false; }
+  });
+  const [mobileMembersOpen, setMobileMembersOpen] = useState(false);
+  const [mobilePage, setMobilePage] = useState<'list' | 'chat'>('list');
+
+  useEffect(() => {
+    const onResize = () => {
+      try { setIsNarrow(window.innerWidth < 920); } catch { }
+    };
+    try {
+      window.addEventListener('resize', onResize);
+      return () => window.removeEventListener('resize', onResize);
+    } catch {
+      return;
+    }
+  }, []);
+
   const [forwardExpand, setForwardExpand] = useState<Record<string, boolean>>({});
 
   const onFormattedMessageRef = useRef<null | ((m: FormattedMessage) => void)>(null);
@@ -406,6 +499,13 @@ export function QqSandbox() {
   const [convoMap, setConvoMap] = useState<Record<string, Conversation>>({});
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const activeKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!isNarrow) return;
+    if (!activeKey) {
+      setMobilePage('list');
+    }
+  }, [activeKey, isNarrow]);
 
   const [sendText, setSendText] = useState('');
   const [replyDraft, setReplyDraft] = useState<null | { messageId: number; senderName: string; text: string }>(null);
@@ -531,6 +631,12 @@ export function QqSandbox() {
   const [napcatBusy, setNapcatBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
 
+  const [scriptFailOpen, setScriptFailOpen] = useState(false);
+  const [scriptFailTitle, setScriptFailTitle] = useState('');
+  const [scriptFailSummary, setScriptFailSummary] = useState('');
+  const [scriptFailLog, setScriptFailLog] = useState('');
+  const [scriptFailRawLog, setScriptFailRawLog] = useState('');
+
   const hydratedRef = useRef(false);
   const [rightPanelOpen, setRightPanelOpen] = useState<boolean>(() => {
     const v = storage.getString('sentra_qq_sandbox_right_panel_open', { fallback: '1' });
@@ -633,17 +739,24 @@ export function QqSandbox() {
 
       if (lastStatus && lastStatus.exitCode != null && Number(lastStatus.exitCode) !== 0) {
         const lines = Array.isArray(lastStatus.output) ? lastStatus.output : [];
-        const tail = lines.slice(Math.max(0, lines.length - 40)).join('');
+        const tail = lines.slice(Math.max(0, lines.length - 80)).join('');
         const msg = tail ? `exitCode=${String(lastStatus.exitCode)}\n\n${tail}` : `exitCode=${String(lastStatus.exitCode)}`;
         throw new Error(msg);
       }
       antdMessage.success(`${title}完成`);
     } catch (e: any) {
       const rawMsg = String(e?.message || e);
-      const msg = rawMsg === 'timeout'
+      const cleaned = stripAnsi(rawMsg);
+      const summary = summarizeScriptError(cleaned);
+      const msg = cleaned === 'timeout'
         ? 'timeout（可能在安装依赖/构建，首次启动建议等待更久）'
-        : rawMsg;
-      antdMessage.error(`${title}失败: ${msg}`);
+        : cleaned;
+      setScriptFailTitle(`${title}失败`);
+      setScriptFailSummary(summary);
+      setScriptFailLog(msg);
+      setScriptFailRawLog(rawMsg);
+      setScriptFailOpen(true);
+      antdMessage.error(`${title}失败`);
     } finally {
       hide();
       setNapcatBusy(false);
@@ -1686,9 +1799,13 @@ export function QqSandbox() {
                 trigger={['contextMenu']}
                 menu={{
                   items: [
-                    { key: 'open', label: '打开链接', onClick: () => openHref() },
-                    { key: 'copy', label: '复制链接', onClick: () => void copyHref() },
+                    { key: 'open', label: '打开链接' },
+                    { key: 'copy', label: '复制链接' },
                   ],
+                  onClick: ({ key }) => {
+                    if (key === 'open') openHref();
+                    if (key === 'copy') void copyHref();
+                  },
                 }}
               >
                 <a
@@ -1697,6 +1814,10 @@ export function QqSandbox() {
                   className={styles.mdLink}
                   rel="noreferrer"
                   target="_blank"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openHref();
+                  }}
                 >
                   {children}
                 </a>
@@ -2178,8 +2299,30 @@ export function QqSandbox() {
     return v;
   }, [buildMessageMarkdown]);
 
+  const scriptFailDisplayLog = (scriptFailLog && scriptFailLog.trim())
+    ? scriptFailLog
+    : (scriptFailRawLog || '(无日志输出)');
+
   return (
     <div className={styles.wrap}>
+      <Modal
+        open={scriptFailOpen}
+        centered
+        destroyOnHidden
+        className={styles.scriptFailModal}
+        title={scriptFailTitle}
+        onCancel={() => setScriptFailOpen(false)}
+        footer={
+          <div className={styles.scriptFailFooter}>
+            <Button onClick={() => void copyTextToClipboard(scriptFailDisplayLog)}>复制日志</Button>
+            <Button type="primary" onClick={() => setScriptFailOpen(false)}>关闭</Button>
+          </div>
+        }
+      >
+        {scriptFailSummary ? <div className={styles.scriptFailSummary}>{scriptFailSummary}</div> : null}
+        <pre className={styles.scriptFailLog}>{scriptFailDisplayLog}</pre>
+      </Modal>
+
       <Modal
         open={imgPreviewOpen}
         footer={null}
@@ -2197,244 +2340,486 @@ export function QqSandbox() {
         </div>
       </Modal>
 
-      <div className={styles.nav}>
-        <div className={styles.navTop}>QQ</div>
-        <div className={styles.navGroup}>
-          <Tooltip title="消息">
-            <Button
-              className={styles.navBtn}
-              type="text"
-              icon={<MessageOutlined />}
-              disabled={status !== 'connected' || syncBusy}
-              loading={syncBusy && syncSource === 'recent'}
-              onClick={() => {
-                setSidebarMode('chats');
-                setSyncSource('recent');
-                void syncRecentContacts();
-              }}
-            />
-          </Tooltip>
-
-          <Tooltip title="联系人">
-            <Button
-              className={styles.navBtn}
-              type="text"
-              icon={<UserOutlined />}
-              disabled={status !== 'connected'}
-              onClick={() => {
-                setSidebarMode('contacts');
-                if (contactsTab === 'groups') {
-                  setSyncSource('groups');
-                  void syncGroups();
-                } else {
-                  setSyncSource('friends');
-                  void syncFriends();
-                }
-              }}
-            />
-          </Tooltip>
-
-          <Tooltip title="同步">
-            <Button className={styles.navBtn} type="text" icon={<SyncOutlined />} disabled={status !== 'connected' || syncBusy} loading={syncBusy} onClick={() => { void syncBySource(); }} />
-          </Tooltip>
-          <Tooltip title="设置"><Button className={styles.navBtn} type="text" icon={<SettingOutlined />} onClick={() => setShowDev((v) => !v)} /></Tooltip>
-        </div>
-        <div className={styles.navBottom}>
-          <Tooltip title="连接">
-            <Button
-              className={styles.navBtn}
-              type="text"
-              disabled={status === 'connecting'}
-              loading={status === 'connecting'}
-              icon={<ApiOutlined />}
-              onClick={() => void connectAndWait()}
-            />
-          </Tooltip>
-        </div>
-      </div>
-
-      <ConversationList
-        sidebarMode={sidebarMode}
-        status={status}
-        syncBusy={syncBusy}
-        syncSource={syncSource}
-        contactsTab={contactsTab}
-        search={search}
-        activeKey={activeKey}
-        conversations={conversations}
-        contactConversations={contactConversations}
-        formatConvoTime={formatConvoTime}
-        isAvatarBroken={isAvatarBroken}
-        avatarKey={avatarKey}
-        markAvatarBroken={markAvatarBroken}
-        pickInitials={pickInitials}
-        setSearch={setSearch}
-        setSidebarMode={setSidebarMode}
-        setContactsTab={setContactsTab}
-        setSyncSource={setSyncSource}
-        syncGroups={syncGroups}
-        syncFriends={syncFriends}
-        setActiveKey={setActiveKey}
-        markRead={markRead}
-        ensureGroupInfo={ensureGroupInfo}
-        loadGroupMembers={(gid) => void loadGroupMembers(gid)}
-        syncBySource={() => void syncBySource()}
-        onSelectConversation={(c) => {
-          if (c.kind === 'private') lastPrivateTargetRef.current = c.targetId;
+      <SettingsDrawer
+        showDev={showDev}
+        setShowDev={setShowDev}
+        napcatEnvPath={napcatEnvPath}
+        streamPort={streamPort}
+        defaultStreamPort={defaultStreamPort}
+        setStreamPort={setStreamPort}
+        napcatBusy={napcatBusy}
+        onStartNapcat={() => void runScriptAndWait('/api/scripts/napcat', ['start', '--no-logs'], '启动 NC沙盒', 10 * 60_000)}
+        onStopNapcat={() => void runScriptAndWait('/api/scripts/napcat', ['pm2-stop', '--no-logs'], '停止 NC沙盒', 90_000)}
+        onUseDefaultPort={() => {
+          if (defaultStreamPort > 0) setStreamPort(defaultStreamPort);
+        }}
+        onClearPortOverride={() => {
+          try { storage.remove('sentra_qq_sandbox_stream_port'); } catch { }
+          setStreamPort(defaultStreamPort > 0 ? defaultStreamPort : 0);
         }}
       />
 
-      <div className={styles.main}>
-        <div className={styles.mainHeader}>
-          <div className={styles.headerLeft}>
-            <div className={styles.title}>{active ? active.title : 'QQ 沙盒'}</div>
-            <div className={styles.subStatus}>
-              {statusText ? statusText : ''}
-              {statusText && proxyDiag ? ' · ' : ''}
-              {proxyDiag ? proxyDiag : ''}
+      {isNarrow ? (
+        mobilePage === 'list' ? (
+          <>
+            <div className={styles.mobileTopBar}>
+              <div className={styles.mobileTopTitle}>QQ 沙盒</div>
+            </div>
+
+            <ConversationList
+              sidebarMode={sidebarMode}
+              status={status}
+              syncBusy={syncBusy}
+              syncSource={syncSource}
+              contactsTab={contactsTab}
+              search={search}
+              activeKey={activeKey}
+              conversations={conversations}
+              contactConversations={contactConversations}
+              formatConvoTime={formatConvoTime}
+              isAvatarBroken={isAvatarBroken}
+              avatarKey={avatarKey}
+              markAvatarBroken={markAvatarBroken}
+              pickInitials={pickInitials}
+              setSearch={setSearch}
+              setSidebarMode={setSidebarMode}
+              setContactsTab={setContactsTab}
+              setSyncSource={setSyncSource}
+              syncGroups={syncGroups}
+              syncFriends={syncFriends}
+              setActiveKey={setActiveKey}
+              markRead={markRead}
+              ensureGroupInfo={ensureGroupInfo}
+              loadGroupMembers={(gid) => void loadGroupMembers(gid)}
+              syncBySource={() => void syncBySource()}
+              onSelectConversation={(c) => {
+                if (c.kind === 'private') lastPrivateTargetRef.current = c.targetId;
+                setMobilePage('chat');
+              }}
+            />
+
+            <div className={styles.mobileTabBar}>
+              <button
+                type="button"
+                className={`${styles.mobileTabBtn} ${sidebarMode === 'chats' ? styles.mobileTabBtnActive : ''}`}
+                onClick={() => {
+                  setMobilePage('list');
+                  setSidebarMode('chats');
+                  setSyncSource('recent');
+                  if (status === 'connected') void syncRecentContacts();
+                }}
+              >
+                <MessageOutlined className={styles.mobileTabIcon} />
+                <span>消息</span>
+              </button>
+
+              <button
+                type="button"
+                className={`${styles.mobileTabBtn} ${sidebarMode === 'contacts' ? styles.mobileTabBtnActive : ''}`}
+                onClick={() => {
+                  setMobilePage('list');
+                  setSidebarMode('contacts');
+                  if (status !== 'connected') return;
+                  if (contactsTab === 'groups') {
+                    setSyncSource('groups');
+                    void syncGroups();
+                  } else {
+                    setSyncSource('friends');
+                    void syncFriends();
+                  }
+                }}
+              >
+                <UserOutlined className={styles.mobileTabIcon} />
+                <span>联系人</span>
+              </button>
+
+              <button
+                type="button"
+                className={styles.mobileTabBtn}
+                onClick={() => setShowDev(true)}
+              >
+                <SettingOutlined className={styles.mobileTabIcon} />
+                <span>设置</span>
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className={styles.main}>
+              <div className={styles.mainHeader}>
+                <div className={styles.headerLeft}>
+                  <div className={styles.mobileBackRow}>
+                    <Button
+                      size="small"
+                      type="text"
+                      className={styles.headerIconBtn}
+                      icon={<LeftOutlined />}
+                      onClick={() => setMobilePage('list')}
+                    />
+                    <div className={styles.title}>{active ? active.title : 'QQ 沙盒'}</div>
+                  </div>
+                  <div className={styles.subStatus}>
+                    {statusText ? statusText : ''}
+                    {statusText && proxyDiag ? ' · ' : ''}
+                    {proxyDiag ? proxyDiag : ''}
+                  </div>
+                </div>
+
+                <div className={styles.headerRight}>
+                  <Tag className={styles.statusTag} color={status === 'connected' ? 'green' : status === 'connecting' ? 'blue' : status === 'error' ? 'red' : 'default'}>
+                    {status === 'connected' ? '在线' : status === 'connecting' ? '连接中' : status === 'error' ? '错误' : '离线'}
+                  </Tag>
+
+                  <Tooltip title={status === 'connected' ? '已连接' : '连接'}>
+                    <Button
+                      size="small"
+                      type="text"
+                      className={styles.headerIconBtn}
+                      icon={<ApiOutlined />}
+                      disabled={connectBusy || status === 'connected'}
+                      loading={connectBusy || status === 'connecting'}
+                      onClick={() => void connectAndWait()}
+                    />
+                  </Tooltip>
+
+                  {active && active.kind === 'group' ? (
+                    <Tooltip title={mobileMembersOpen ? '关闭群成员' : '打开群成员'}>
+                      <Button
+                        size="small"
+                        type="text"
+                        className={styles.headerIconBtn}
+                        icon={<TeamOutlined />}
+                        disabled={!active}
+                        onClick={() => setMobileMembersOpen((v) => !v)}
+                      />
+                    </Tooltip>
+                  ) : null}
+
+                  <Tooltip title="断开连接">
+                    <Button size="small" type="text" className={styles.headerIconBtn} icon={<DisconnectOutlined />} disabled={status !== 'connected'} onClick={() => disconnect()} />
+                  </Tooltip>
+                  <Tooltip title="设置">
+                    <Button size="small" type="text" className={styles.headerIconBtn} icon={<SettingOutlined />} onClick={() => setShowDev(true)} />
+                  </Tooltip>
+                </div>
+              </div>
+
+              <div className={styles.messages}>
+                <MessageList
+                  active={active}
+                  activeMessages={activeMessages}
+                  renderLimit={renderLimit}
+                  defaultRenderPageStep={defaultRenderPageStep}
+                  setRenderLimit={setRenderLimit}
+                  messagesEndRef={messagesEndRef}
+                  hoverKey={hoverKey}
+                  setHoverKey={setHoverKey}
+                  selfId={Number(selfIdRef.current || 0)}
+                  avatarUrlForUser={avatarUrlForUser}
+                  isAvatarBroken={isAvatarBroken}
+                  avatarKey={avatarKey}
+                  markAvatarBroken={markAvatarBroken}
+                  pickInitials={pickInitials}
+                  formatTimeShort={formatTimeShort}
+                  nowMsFromMsg={nowMsFromMsg}
+                  formatSenderDisplay={formatSenderDisplay}
+                  pickFirstImageUrl={pickFirstImageUrl}
+                  getMessageMarkdown={getMessageMarkdown}
+                  toPlainSingleLine={toPlainSingleLine}
+                  parseCqImageCandidates={parseCqImageCandidates}
+                  copyText={copyText}
+                  copyImageFromUrl={copyImageFromUrl}
+                  setReplyDraft={setReplyDraft}
+                  renderMarkdown={renderMarkdown}
+                  renderAttachments={renderAttachments}
+                  renderReplyBox={renderReplyBox}
+                />
+              </div>
+
+              <Composer
+                status={status}
+                active={active}
+                replyDraft={replyDraft}
+                setReplyDraft={setReplyDraft}
+                composerToolbarRef={composerToolbarRef}
+                textareaRef={textareaRef}
+                emojiOpen={emojiOpen}
+                setEmojiOpen={setEmojiOpen}
+                emojiTab={emojiTab}
+                setEmojiTab={setEmojiTab}
+                basicEmojis={BASIC_EMOJIS}
+                loadStickers={loadStickers}
+                stickersLoading={stickersLoading}
+                stickers={stickers}
+                buildEmojiStickerUrl={buildEmojiStickerUrl}
+                addStickerToDraft={addStickerToDraft}
+                addPendingAttachment={addPendingAttachment}
+                pendingAttachments={pendingAttachments}
+                setPendingAttachments={setPendingAttachments}
+                setImgPreviewSrc={setImgPreviewSrc}
+                setImgPreviewOpen={setImgPreviewOpen}
+                sendText={sendText}
+                setSendText={setSendText}
+                insertTextAtCursor={insertTextAtCursor}
+                sendHotkey={sendHotkey}
+                setSendHotkey={setSendHotkey}
+                membersBusy={membersBusy}
+                loadGroupMembers={loadGroupMembers}
+                clearComposer={clearComposer}
+                sendMessage={sendMessage}
+              />
+            </div>
+
+            {active && active.kind === 'group' ? (
+              <Drawer
+                title="群成员"
+                placement="right"
+                open={!!active && active.kind === 'group' && mobileMembersOpen}
+                onClose={() => setMobileMembersOpen(false)}
+                size="large"
+                styles={{ wrapper: { width: '92vw', maxWidth: '92vw' }, body: { padding: 0 } }}
+              >
+                <RightPanel
+                  active={active}
+                  rightPanelOpen={true}
+                  activeGroupInfo={activeGroupInfo}
+                  activeGroupMembers={activeGroupMembers}
+                  membersBusy={membersBusy}
+                  memberSearch={memberSearch}
+                  setMemberSearch={setMemberSearch}
+                  insertAtMember={insertAtMember}
+                  isAvatarBroken={isAvatarBroken}
+                  avatarKey={avatarKey}
+                  markAvatarBroken={markAvatarBroken}
+                  avatarUrlForUser={avatarUrlForUser}
+                />
+              </Drawer>
+            ) : null}
+          </>
+        )
+      ) : (
+        <>
+          <div className={styles.nav}>
+            <div className={styles.navTop}>QQ</div>
+            <div className={styles.navGroup}>
+              <Tooltip title="消息">
+                <Button
+                  className={styles.navBtn}
+                  type="text"
+                  icon={<MessageOutlined />}
+                  disabled={status !== 'connected' || syncBusy}
+                  loading={syncBusy && syncSource === 'recent'}
+                  onClick={() => {
+                    setSidebarMode('chats');
+                    setSyncSource('recent');
+                    void syncRecentContacts();
+                  }}
+                />
+              </Tooltip>
+
+              <Tooltip title="联系人">
+                <Button
+                  className={styles.navBtn}
+                  type="text"
+                  icon={<UserOutlined />}
+                  disabled={status !== 'connected'}
+                  onClick={() => {
+                    setSidebarMode('contacts');
+                    if (contactsTab === 'groups') {
+                      setSyncSource('groups');
+                      void syncGroups();
+                    } else {
+                      setSyncSource('friends');
+                      void syncFriends();
+                    }
+                  }}
+                />
+              </Tooltip>
+
+              <Tooltip title="同步">
+                <Button className={styles.navBtn} type="text" icon={<SyncOutlined />} disabled={status !== 'connected' || syncBusy} loading={syncBusy} onClick={() => { void syncBySource(); }} />
+              </Tooltip>
+              <Tooltip title="设置"><Button className={styles.navBtn} type="text" icon={<SettingOutlined />} onClick={() => setShowDev((v) => !v)} /></Tooltip>
+            </div>
+            <div className={styles.navBottom}>
+              <Tooltip title="连接">
+                <Button
+                  className={styles.navBtn}
+                  type="text"
+                  disabled={status === 'connecting'}
+                  loading={status === 'connecting'}
+                  icon={<ApiOutlined />}
+                  onClick={() => void connectAndWait()}
+                />
+              </Tooltip>
             </div>
           </div>
 
-          <div className={styles.headerRight}>
-            <Tag className={styles.statusTag} color={status === 'connected' ? 'green' : status === 'connecting' ? 'blue' : status === 'error' ? 'red' : 'default'}>
-              {status === 'connected' ? '在线' : status === 'connecting' ? '连接中' : status === 'error' ? '错误' : '离线'}
-            </Tag>
-
-            <Tooltip title={status === 'connected' ? '已连接' : '连接'}>
-              <Button
-                size="small"
-                type="text"
-                className={styles.headerIconBtn}
-                icon={<ApiOutlined />}
-                disabled={connectBusy || status === 'connected'}
-                loading={connectBusy || status === 'connecting'}
-                onClick={() => void connectAndWait()}
-              />
-            </Tooltip>
-
-            {active && active.kind === 'group' ? (
-              <Tooltip title={rightPanelOpen ? '关闭群成员' : '打开群成员'}>
-                <Button
-                  size="small"
-                  type="text"
-                  className={styles.headerIconBtn}
-                  icon={<TeamOutlined />}
-                  disabled={!active}
-                  onClick={() => setRightPanelOpen((v) => !v)}
-                />
-              </Tooltip>
-            ) : null}
-
-            <Tooltip title="断开连接">
-              <Button size="small" type="text" className={styles.headerIconBtn} icon={<DisconnectOutlined />} disabled={status !== 'connected'} onClick={() => disconnect()} />
-            </Tooltip>
-            <Tooltip title="设置">
-              <Button size="small" type="text" className={styles.headerIconBtn} icon={<SettingOutlined />} onClick={() => setShowDev(true)} />
-            </Tooltip>
-          </div>
-        </div>
-
-        <SettingsDrawer
-          showDev={showDev}
-          setShowDev={setShowDev}
-          napcatEnvPath={napcatEnvPath}
-          streamPort={streamPort}
-          defaultStreamPort={defaultStreamPort}
-          setStreamPort={setStreamPort}
-          napcatBusy={napcatBusy}
-          onStartNapcat={() => void runScriptAndWait('/api/scripts/napcat', ['start', '--no-logs'], '启动 Napcat', 10 * 60_000)}
-          onStopNapcat={() => void runScriptAndWait('/api/scripts/napcat', ['pm2-stop', '--no-logs'], '停止 Napcat', 90_000)}
-          onUseDefaultPort={() => {
-            if (defaultStreamPort > 0) setStreamPort(defaultStreamPort);
-          }}
-          onClearPortOverride={() => {
-            try { storage.remove('sentra_qq_sandbox_stream_port'); } catch { }
-            setStreamPort(defaultStreamPort > 0 ? defaultStreamPort : 0);
-          }}
-        />
-
-        <div className={styles.messages}>
-          <MessageList
-            active={active}
-            activeMessages={activeMessages}
-            renderLimit={renderLimit}
-            defaultRenderPageStep={defaultRenderPageStep}
-            setRenderLimit={setRenderLimit}
-            messagesEndRef={messagesEndRef}
-            hoverKey={hoverKey}
-            setHoverKey={setHoverKey}
-            selfId={Number(selfIdRef.current || 0)}
-            avatarUrlForUser={avatarUrlForUser}
+          <ConversationList
+            sidebarMode={sidebarMode}
+            status={status}
+            syncBusy={syncBusy}
+            syncSource={syncSource}
+            contactsTab={contactsTab}
+            search={search}
+            activeKey={activeKey}
+            conversations={conversations}
+            contactConversations={contactConversations}
+            formatConvoTime={formatConvoTime}
             isAvatarBroken={isAvatarBroken}
             avatarKey={avatarKey}
             markAvatarBroken={markAvatarBroken}
             pickInitials={pickInitials}
-            formatTimeShort={formatTimeShort}
-            nowMsFromMsg={nowMsFromMsg}
-            formatSenderDisplay={formatSenderDisplay}
-            pickFirstImageUrl={pickFirstImageUrl}
-            getMessageMarkdown={getMessageMarkdown}
-            toPlainSingleLine={toPlainSingleLine}
-            parseCqImageCandidates={parseCqImageCandidates}
-            copyText={copyText}
-            copyImageFromUrl={copyImageFromUrl}
-            setReplyDraft={setReplyDraft}
-            renderMarkdown={renderMarkdown}
-            renderAttachments={renderAttachments}
-            renderReplyBox={renderReplyBox}
+            setSearch={setSearch}
+            setSidebarMode={setSidebarMode}
+            setContactsTab={setContactsTab}
+            setSyncSource={setSyncSource}
+            syncGroups={syncGroups}
+            syncFriends={syncFriends}
+            setActiveKey={setActiveKey}
+            markRead={markRead}
+            ensureGroupInfo={ensureGroupInfo}
+            loadGroupMembers={(gid) => void loadGroupMembers(gid)}
+            syncBySource={() => void syncBySource()}
+            onSelectConversation={(c) => {
+              if (c.kind === 'private') lastPrivateTargetRef.current = c.targetId;
+            }}
           />
-        </div>
 
-        <Composer
-          status={status}
-          active={active}
-          replyDraft={replyDraft}
-          setReplyDraft={setReplyDraft}
-          composerToolbarRef={composerToolbarRef}
-          textareaRef={textareaRef}
-          emojiOpen={emojiOpen}
-          setEmojiOpen={setEmojiOpen}
-          emojiTab={emojiTab}
-          setEmojiTab={setEmojiTab}
-          basicEmojis={BASIC_EMOJIS}
-          loadStickers={loadStickers}
-          stickersLoading={stickersLoading}
-          stickers={stickers}
-          buildEmojiStickerUrl={buildEmojiStickerUrl}
-          addStickerToDraft={addStickerToDraft}
-          addPendingAttachment={addPendingAttachment}
-          pendingAttachments={pendingAttachments}
-          setPendingAttachments={setPendingAttachments}
-          setImgPreviewSrc={setImgPreviewSrc}
-          setImgPreviewOpen={setImgPreviewOpen}
-          sendText={sendText}
-          setSendText={setSendText}
-          insertTextAtCursor={insertTextAtCursor}
-          sendHotkey={sendHotkey}
-          setSendHotkey={setSendHotkey}
-          membersBusy={membersBusy}
-          loadGroupMembers={loadGroupMembers}
-          clearComposer={clearComposer}
-          sendMessage={sendMessage}
-        />
-      </div>
+          <div className={styles.main}>
+            <div className={styles.mainHeader}>
+              <div className={styles.headerLeft}>
+                <div className={styles.title}>{active ? active.title : 'QQ 沙盒'}</div>
+                <div className={styles.subStatus}>
+                  {statusText ? statusText : ''}
+                  {statusText && proxyDiag ? ' · ' : ''}
+                  {proxyDiag ? proxyDiag : ''}
+                </div>
+              </div>
 
-      {active ? (
-        <RightPanel
-          active={active}
-          rightPanelOpen={rightPanelOpen}
-          activeGroupInfo={activeGroupInfo}
-          activeGroupMembers={activeGroupMembers}
-          membersBusy={membersBusy}
-          memberSearch={memberSearch}
-          setMemberSearch={setMemberSearch}
-          insertAtMember={insertAtMember}
-          isAvatarBroken={isAvatarBroken}
-          avatarKey={avatarKey}
-          markAvatarBroken={markAvatarBroken}
-          avatarUrlForUser={avatarUrlForUser}
-        />
-      ) : null}
+              <div className={styles.headerRight}>
+                <Tag className={styles.statusTag} color={status === 'connected' ? 'green' : status === 'connecting' ? 'blue' : status === 'error' ? 'red' : 'default'}>
+                  {status === 'connected' ? '在线' : status === 'connecting' ? '连接中' : status === 'error' ? '错误' : '离线'}
+                </Tag>
+
+                <Tooltip title={status === 'connected' ? '已连接' : '连接'}>
+                  <Button
+                    size="small"
+                    type="text"
+                    className={styles.headerIconBtn}
+                    icon={<ApiOutlined />}
+                    disabled={connectBusy || status === 'connected'}
+                    loading={connectBusy || status === 'connecting'}
+                    onClick={() => void connectAndWait()}
+                  />
+                </Tooltip>
+
+                {active && active.kind === 'group' ? (
+                  <Tooltip title={rightPanelOpen ? '关闭群成员' : '打开群成员'}>
+                    <Button
+                      size="small"
+                      type="text"
+                      className={styles.headerIconBtn}
+                      icon={<TeamOutlined />}
+                      disabled={!active}
+                      onClick={() => setRightPanelOpen((v) => !v)}
+                    />
+                  </Tooltip>
+                ) : null}
+
+                <Tooltip title="断开连接">
+                  <Button size="small" type="text" className={styles.headerIconBtn} icon={<DisconnectOutlined />} disabled={status !== 'connected'} onClick={() => disconnect()} />
+                </Tooltip>
+                <Tooltip title="设置">
+                  <Button size="small" type="text" className={styles.headerIconBtn} icon={<SettingOutlined />} onClick={() => setShowDev(true)} />
+                </Tooltip>
+              </div>
+            </div>
+
+            <div className={styles.messages}>
+              <MessageList
+                active={active}
+                activeMessages={activeMessages}
+                renderLimit={renderLimit}
+                defaultRenderPageStep={defaultRenderPageStep}
+                setRenderLimit={setRenderLimit}
+                messagesEndRef={messagesEndRef}
+                hoverKey={hoverKey}
+                setHoverKey={setHoverKey}
+                selfId={Number(selfIdRef.current || 0)}
+                avatarUrlForUser={avatarUrlForUser}
+                isAvatarBroken={isAvatarBroken}
+                avatarKey={avatarKey}
+                markAvatarBroken={markAvatarBroken}
+                pickInitials={pickInitials}
+                formatTimeShort={formatTimeShort}
+                nowMsFromMsg={nowMsFromMsg}
+                formatSenderDisplay={formatSenderDisplay}
+                pickFirstImageUrl={pickFirstImageUrl}
+                getMessageMarkdown={getMessageMarkdown}
+                toPlainSingleLine={toPlainSingleLine}
+                parseCqImageCandidates={parseCqImageCandidates}
+                copyText={copyText}
+                copyImageFromUrl={copyImageFromUrl}
+                setReplyDraft={setReplyDraft}
+                renderMarkdown={renderMarkdown}
+                renderAttachments={renderAttachments}
+                renderReplyBox={renderReplyBox}
+              />
+            </div>
+
+            <Composer
+              status={status}
+              active={active}
+              replyDraft={replyDraft}
+              setReplyDraft={setReplyDraft}
+              composerToolbarRef={composerToolbarRef}
+              textareaRef={textareaRef}
+              emojiOpen={emojiOpen}
+              setEmojiOpen={setEmojiOpen}
+              emojiTab={emojiTab}
+              setEmojiTab={setEmojiTab}
+              basicEmojis={BASIC_EMOJIS}
+              loadStickers={loadStickers}
+              stickersLoading={stickersLoading}
+              stickers={stickers}
+              buildEmojiStickerUrl={buildEmojiStickerUrl}
+              addStickerToDraft={addStickerToDraft}
+              addPendingAttachment={addPendingAttachment}
+              pendingAttachments={pendingAttachments}
+              setPendingAttachments={setPendingAttachments}
+              setImgPreviewSrc={setImgPreviewSrc}
+              setImgPreviewOpen={setImgPreviewOpen}
+              sendText={sendText}
+              setSendText={setSendText}
+              insertTextAtCursor={insertTextAtCursor}
+              sendHotkey={sendHotkey}
+              setSendHotkey={setSendHotkey}
+              membersBusy={membersBusy}
+              loadGroupMembers={loadGroupMembers}
+              clearComposer={clearComposer}
+              sendMessage={sendMessage}
+            />
+          </div>
+
+          {active ? (
+            <RightPanel
+              active={active}
+              rightPanelOpen={rightPanelOpen}
+              activeGroupInfo={activeGroupInfo}
+              activeGroupMembers={activeGroupMembers}
+              membersBusy={membersBusy}
+              memberSearch={memberSearch}
+              setMemberSearch={setMemberSearch}
+              insertAtMember={insertAtMember}
+              isAvatarBroken={isAvatarBroken}
+              avatarKey={avatarKey}
+              markAvatarBroken={markAvatarBroken}
+              avatarUrlForUser={avatarUrlForUser}
+            />
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

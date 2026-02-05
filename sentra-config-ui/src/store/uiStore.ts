@@ -120,6 +120,9 @@ export type UIStore = {
   iosRedisAdminOpen: boolean;
   setIosRedisAdminOpen: (open: boolean) => void;
 
+  iosQqSandboxOpen: boolean;
+  setIosQqSandboxOpen: (open: boolean) => void;
+
   iosMcpServersManagerOpen: boolean;
   setIosMcpServersManagerOpen: (open: boolean) => void;
 };
@@ -357,6 +360,9 @@ export const useUIStore = create<UIStore>((set: SetState<UIStore>) => {
     setIosTerminalManagerOpen: (open: boolean) => set({ iosTerminalManagerOpen: open }),
     iosRedisAdminOpen: false,
     setIosRedisAdminOpen: (open: boolean) => set({ iosRedisAdminOpen: open }),
+
+    iosQqSandboxOpen: false,
+    setIosQqSandboxOpen: (open: boolean) => set({ iosQqSandboxOpen: open }),
 
     iosMcpServersManagerOpen: false,
     setIosMcpServersManagerOpen: (open: boolean) => set({ iosMcpServersManagerOpen: open }),

@@ -27,6 +27,10 @@ function exists(p) {
   }
 }
 
+async function ensureLegacyPm2Removed(_pm2Bin) {
+  // No-op (kept for backward compatibility in case older code paths still call it)
+}
+
 function commandExists(cmd, checkArgs = ['--version']) {
   try {
     const r = spawnSync(cmd, checkArgs, { stdio: 'ignore', shell: true });
@@ -64,7 +68,7 @@ function ensureNapcatEnvReady() {
     if (!exists(napcatEnvFile)) {
       if (exists(napcatEnvExampleFile)) {
         fs.copyFileSync(napcatEnvExampleFile, napcatEnvFile);
-        console.log(chalk.gray('[Napcat] .env missing → copied from .env.example'));
+        console.log(chalk.gray('[NC沙盒] .env missing → copied from .env.example'));
       }
       return;
     }
@@ -95,7 +99,7 @@ function ensureNapcatEnvReady() {
     if (!appendLines.length) return;
 
     fs.appendFileSync(napcatEnvFile, `\n\n# Added by sentra-config-ui/scripts/napcat.mjs\n${appendLines.join('\n')}\n`, 'utf8');
-    console.log(chalk.gray(`[Napcat] .env missing keys → appended defaults: ${missing.join(', ')}`));
+    console.log(chalk.gray(`[NC沙盒] .env missing keys → appended defaults: ${missing.join(', ')}`));
   } catch {
   }
 }
@@ -275,14 +279,65 @@ function needsNapcatInstall() {
 }
 
 function needsNapcatBuild() {
-  return !exists(distEntry);
+  try {
+    if (!exists(distEntry)) return true;
+
+    const distStat = fs.statSync(distEntry);
+    const distMtime = distStat?.mtimeMs || 0;
+
+    const srcDir = path.join(napcatDir, 'src');
+    if (!exists(srcDir)) return false;
+
+    let newest = 0;
+    const walk = (dir) => {
+      let items = [];
+      try {
+        items = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const it of items) {
+        const full = path.join(dir, it.name);
+        if (it.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!it.isFile()) continue;
+        if (!/\.(ts|tsx|js|jsx|mjs|cjs|json)$/i.test(it.name)) continue;
+        try {
+          const st = fs.statSync(full);
+          if (st?.mtimeMs && st.mtimeMs > newest) newest = st.mtimeMs;
+        } catch {
+        }
+      }
+    };
+    walk(srcDir);
+
+    // Also consider config files that may affect build output
+    const extra = [
+      path.join(napcatDir, 'package.json'),
+      path.join(napcatDir, 'tsconfig.json'),
+    ];
+    for (const f of extra) {
+      try {
+        if (!exists(f)) continue;
+        const st = fs.statSync(f);
+        if (st?.mtimeMs && st.mtimeMs > newest) newest = st.mtimeMs;
+      } catch {
+      }
+    }
+
+    return newest > distMtime;
+  } catch {
+    return true;
+  }
 }
 
 async function ensureNapcatDeps(pm) {
-  console.log(boxen(chalk.bold.blue(`Napcat: Node.js dependencies (using ${pm})`), { padding: 1, borderStyle: 'round' }));
+  console.log(boxen(chalk.bold.blue(`NC沙盒: Node.js dependencies (using ${pm})`), { padding: 1, borderStyle: 'round' }));
 
   if (!needsNapcatInstall()) {
-    console.log(chalk.gray('[Napcat] node_modules looks OK, skipping install'));
+    console.log(chalk.gray('[NC沙盒] node_modules looks OK, skipping install'));
     return;
   }
 
@@ -308,7 +363,7 @@ async function main() {
   ensureNapcatEnvReady();
 
   if (cmd === 'build') {
-    console.log(boxen(chalk.bold.cyan(`Napcat: build (using ${pm})`), { padding: 1, borderStyle: 'round' }));
+    console.log(boxen(chalk.bold.cyan(`NC沙盒: build (using ${pm})`), { padding: 1, borderStyle: 'round' }));
     await run(pm, ['run', 'build'], { cwd: napcatDir });
     return;
   }
@@ -319,26 +374,29 @@ async function main() {
   }
 
   if (cmd === 'pm2-status') {
-    console.log(boxen(chalk.bold.blue('Napcat: pm2 status'), { padding: 1, borderStyle: 'round' }));
+    console.log(boxen(chalk.bold.blue('NC沙盒: pm2 status'), { padding: 1, borderStyle: 'round' }));
     await run(pm2Bin, ['status'], { cwd: repoRoot });
     return;
   }
 
   if (cmd === 'pm2-logs') {
-    console.log(boxen(chalk.bold.blue(`Napcat: pm2 logs (${pm2AppName})`), { padding: 1, borderStyle: 'round' }));
+    console.log(boxen(chalk.bold.blue(`NC沙盒: pm2 logs (${pm2AppName})`), { padding: 1, borderStyle: 'round' }));
+    await ensureLegacyPm2Removed(pm2Bin);
     await run(pm2Bin, ['logs', pm2AppName], { cwd: repoRoot });
     return;
   }
 
   if (cmd === 'pm2-stop') {
-    console.log(boxen(chalk.bold.blue(`Napcat: pm2 stop (${pm2AppName})`), { padding: 1, borderStyle: 'round' }));
+    console.log(boxen(chalk.bold.blue(`NC沙盒: pm2 stop (${pm2AppName})`), { padding: 1, borderStyle: 'round' }));
+    await ensureLegacyPm2Removed(pm2Bin);
     await run(pm2Bin, ['stop', pm2AppName], { cwd: repoRoot });
     return;
   }
 
   if (cmd === 'pm2-restart') {
-    console.log(boxen(chalk.bold.blue(`Napcat: pm2 restart (${pm2AppName})`), { padding: 1, borderStyle: 'round' }));
+    console.log(boxen(chalk.bold.blue(`NC沙盒: pm2 restart (${pm2AppName})`), { padding: 1, borderStyle: 'round' }));
     if (!exists(ecosystem)) throw new Error(`ecosystem file not found: ${ecosystem}`);
+    await ensureLegacyPm2Removed(pm2Bin);
     const proc = getPm2Process(pm2Bin, pm2AppName);
     if (proc) {
       await run(pm2Bin, ['delete', pm2AppName], { cwd: repoRoot });
@@ -351,18 +409,20 @@ async function main() {
   }
 
   if (cmd === 'pm2-delete') {
-    console.log(boxen(chalk.bold.blue(`Napcat: pm2 delete (${pm2AppName})`), { padding: 1, borderStyle: 'round' }));
+    console.log(boxen(chalk.bold.blue(`NC沙盒: pm2 delete (${pm2AppName})`), { padding: 1, borderStyle: 'round' }));
+    await ensureLegacyPm2Removed(pm2Bin);
     await run(pm2Bin, ['delete', pm2AppName], { cwd: repoRoot });
     return;
   }
 
   if (cmd === 'pm2-start') {
     ensureLogsDir();
+    await ensureLegacyPm2Removed(pm2Bin);
     if (needsNapcatBuild()) {
-      console.log(boxen(chalk.bold.cyan(`Napcat: build (dist missing) → pm2 start (using ${pm})`), { padding: 1, borderStyle: 'round' }));
+      console.log(boxen(chalk.bold.cyan(`NC沙盒: build (dist missing) → pm2 start (using ${pm})`), { padding: 1, borderStyle: 'round' }));
       await run(pm, ['run', 'build'], { cwd: napcatDir });
     } else {
-      console.log(boxen(chalk.bold.cyan(`Napcat: pm2 start (dist exists, skip build)`), { padding: 1, borderStyle: 'round' }));
+      console.log(boxen(chalk.bold.cyan(`NC沙盒: pm2 start (dist exists, skip build)`), { padding: 1, borderStyle: 'round' }));
     }
     if (!exists(ecosystem)) throw new Error(`ecosystem file not found: ${ecosystem}`);
     const proc = getPm2Process(pm2Bin, pm2AppName);
@@ -383,11 +443,12 @@ async function main() {
   }
 
   if (cmd === 'start') {
+    await ensureLegacyPm2Removed(pm2Bin);
     if (needsNapcatBuild()) {
-      console.log(boxen(chalk.bold.cyan(`Napcat: build (dist missing) → pm2 start (using ${pm})`), { padding: 1, borderStyle: 'round' }));
+      console.log(boxen(chalk.bold.cyan(`NC沙盒: build (dist missing) → pm2 start (using ${pm})`), { padding: 1, borderStyle: 'round' }));
       await run(pm, ['run', 'build'], { cwd: napcatDir });
     } else {
-      console.log(boxen(chalk.bold.cyan(`Napcat: pm2 start (dist exists, skip build)`), { padding: 1, borderStyle: 'round' }));
+      console.log(boxen(chalk.bold.cyan(`NC沙盒: pm2 start (dist exists, skip build)`), { padding: 1, borderStyle: 'round' }));
     }
     if (!exists(ecosystem)) throw new Error(`ecosystem file not found: ${ecosystem}`);
     const proc = getPm2Process(pm2Bin, pm2AppName);

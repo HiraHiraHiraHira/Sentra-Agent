@@ -28,6 +28,7 @@ export function useDesktopShortcuts(params: UseDesktopShortcutsParams) {
     setIosEmojiStickersManagerOpen,
     setIosMcpServersManagerOpen,
     setIosRedisAdminOpen,
+    setIosQqSandboxOpen,
   } = useUIStore();
 
   const handleOpenDevCenter = () => {
@@ -110,8 +111,12 @@ export function useDesktopShortcuts(params: UseDesktopShortcutsParams) {
   } = useTerminals({ addToast, allocateZ });
 
   const handleOpenQqSandbox = useCallback(() => {
+    if (isPortable) {
+      setIosQqSandboxOpen(true);
+      return;
+    }
     requestUtilityFocus('qq-sandbox');
-  }, [requestUtilityFocus]);
+  }, [isPortable, requestUtilityFocus, setIosQqSandboxOpen]);
 
   const handleRunNapcatStartForSandbox = useCallback(() => {
     void handleRunNapcatStartSilent();

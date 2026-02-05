@@ -142,7 +142,9 @@ function deletePm2ByProcessId(processId: string): Pm2DeleteResult {
     const id = String(processId || '');
     // Only allow deletion of our own known PM2 app names.
     if (id.startsWith('start-')) return deletePm2ProcessByName('sentra-agent');
-    if (id.startsWith('napcat-')) return deletePm2ProcessByName('sentra-napcat');
+    if (id.startsWith('napcat-')) {
+        return deletePm2ProcessByName('sentra-napcat');
+    }
     if (id.startsWith('sentiment-')) return deletePm2ProcessByName('sentra-emo');
     return { ok: false, message: 'unknown process id prefix' };
 }

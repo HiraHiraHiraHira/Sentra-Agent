@@ -791,7 +791,8 @@ export async function redisAdminRoutes(fastify: FastifyInstance) {
     try {
       const q: any = request.query || {};
       const profile = normalizeProfile(q.profile);
-      const key = String(q.key || '').trim();
+      const key = q.key != null ? String(q.key) : '';
+      if (!key) return reply.code(400).send({ success: false, error: 'Missing key' });
       const RedisAdmin = await getRedisAdminClass();
       const admin = new RedisAdmin({ envPath: getEnvPathByProfile(profile) });
       try {
@@ -884,6 +885,124 @@ export async function redisAdminRoutes(fastify: FastifyInstance) {
       try {
         const result = await admin.deleteByPattern(pattern, { dryRun, count });
         return { success: true, ...result };
+      } finally {
+        await admin.disconnect();
+      }
+    } catch (e: any) {
+      reply.code(500).send({ success: false, error: e?.message || String(e) });
+    }
+  });
+
+  fastify.post('/api/redis-admin/deleteKey', async (request, reply) => {
+    try {
+      const body: any = request.body || {};
+      const profile = normalizeProfile(body.profile);
+      const key = body.key != null ? String(body.key) : '';
+      const dryRun = body.dryRun !== undefined ? !!body.dryRun : true;
+
+      if (!key) return reply.code(400).send({ success: false, error: 'Missing key' });
+
+      const RedisAdmin = await getRedisAdminClass();
+      const admin = new RedisAdmin({ envPath: getEnvPathByProfile(profile) });
+      try {
+        if (dryRun) {
+          const exists = await admin.redis.exists(key);
+          return { success: true, key, requested: 1, deleted: Number(exists || 0), dryRun: true };
+        }
+        let deleted = 0;
+        try {
+          deleted = await (admin.redis as any).unlink(key);
+        } catch {
+          deleted = await admin.redis.del(key);
+        }
+        return { success: true, key, requested: 1, deleted: Number(deleted || 0), dryRun: false };
+      } finally {
+        await admin.disconnect();
+      }
+    } catch (e: any) {
+      reply.code(500).send({ success: false, error: e?.message || String(e) });
+    }
+  });
+
+  fastify.post('/api/redis-admin/deleteKeys', async (request, reply) => {
+    try {
+      const body: any = request.body || {};
+      const profile = normalizeProfile(body.profile);
+      const dryRun = body.dryRun !== undefined ? !!body.dryRun : true;
+      const rawKeys = Array.isArray(body.keys) ? body.keys : [];
+      const keys = rawKeys.map((k: any) => (k == null ? '' : String(k))).filter(Boolean);
+      const maxKeys = 2000;
+
+      if (!keys.length) return reply.code(400).send({ success: false, error: 'Missing keys' });
+      if (keys.length > maxKeys) return reply.code(400).send({ success: false, error: `Too many keys (>${maxKeys})` });
+
+      const RedisAdmin = await getRedisAdminClass();
+      const admin = new RedisAdmin({ envPath: getEnvPathByProfile(profile) });
+      try {
+        if (dryRun) {
+          const exists = await admin.redis.exists(...keys);
+          return { success: true, requested: keys.length, deleted: Number(exists || 0), dryRun: true };
+        }
+
+        const chunkSize = 800;
+        let deleted = 0;
+        for (let i = 0; i < keys.length; i += chunkSize) {
+          const chunk = keys.slice(i, i + chunkSize);
+          try {
+            deleted += Number(await (admin.redis as any).unlink(...chunk) || 0);
+          } catch {
+            deleted += Number(await admin.redis.del(...chunk) || 0);
+          }
+        }
+        return { success: true, requested: keys.length, deleted, dryRun: false };
+      } finally {
+        await admin.disconnect();
+      }
+    } catch (e: any) {
+      reply.code(500).send({ success: false, error: e?.message || String(e) });
+    }
+  });
+
+  fastify.post('/api/redis-admin/deleteAllKeys', async (request, reply) => {
+    try {
+      const body: any = request.body || {};
+      const profile = normalizeProfile(body.profile);
+      const dryRun = body.dryRun !== undefined ? !!body.dryRun : true;
+      const scanCount = Math.max(1, Math.min(5000, Number(body.scanCount || 800)));
+
+      const RedisAdmin = await getRedisAdminClass();
+      const admin = new RedisAdmin({ envPath: getEnvPathByProfile(profile) });
+      try {
+        await admin.connect();
+
+        let cursor = '0';
+        let requested = 0;
+        let deleted = 0;
+
+        while (true) {
+          const resp = await admin.redis.scan(cursor, 'COUNT', String(scanCount));
+          const nextCursor = resp && resp[0] != null ? String(resp[0]) : '0';
+          const batch = Array.isArray(resp && resp[1]) ? resp[1] : [];
+
+          if (batch.length) {
+            requested += batch.length;
+            if (!dryRun) {
+              try {
+                deleted += Number(await (admin.redis as any).unlink(...batch) || 0);
+              } catch {
+                deleted += Number(await admin.redis.del(...batch) || 0);
+              }
+            }
+          }
+
+          cursor = nextCursor;
+          if (cursor === '0') break;
+        }
+
+        if (dryRun) {
+          return { success: true, requested, deleted: requested, dryRun: true };
+        }
+        return { success: true, requested, deleted, dryRun: false };
       } finally {
         await admin.disconnect();
       }

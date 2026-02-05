@@ -120,3 +120,69 @@
 :where(.ant-picker-dropdown) {
   z-index: 120000 !important;
 }
+
+:where(.ant-btn) {
+  box-sizing: border-box;
+}
+
+:where(.ant-btn-text),
+:where(.ant-btn-link) {
+  border-width: 1px;
+  border-style: solid;
+  border-color: transparent;
+}
+
+:where(.ant-btn-text:hover),
+:where(.ant-btn-link:hover),
+:where(.ant-btn-text:active),
+:where(.ant-btn-link:active),
+:where(.ant-btn-text:focus-visible),
+:where(.ant-btn-link:focus-visible) {
+  border-color: transparent;
+}
+
+:where(.ant-btn-icon-only) {
+  width: 34px;
+  padding-inline: 0;
+  justify-content: center;
+}
+
+:where(.ant-btn-sm.ant-btn-icon-only) {
+  width: 30px;
+}
+
+:where(.ant-btn-lg.ant-btn-icon-only) {
+  width: 40px;
+}
+
+:where(.ant-btn-icon-only.ant-btn-loading) {
+  position: relative;
+}
+
+:where(.ant-btn-icon-only.ant-btn-loading) :where(.ant-btn-loading-icon) {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+
+:where(.ant-btn-icon-only.ant-btn-loading) :where(.ant-btn-icon) {
+  opacity: 0;
+}
+
+:where(.ant-input-affix-wrapper) :where(.ant-input-suffix) {
+  min-width: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+:where(.ant-input-affix-wrapper) :where(.ant-input-clear-icon) {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}

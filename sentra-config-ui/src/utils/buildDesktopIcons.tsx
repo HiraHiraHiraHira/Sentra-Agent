@@ -93,7 +93,7 @@ export function buildDesktopFolders(
         </AppIconWrapper>,
         position: { x: 0, y: 0 },
         onClick: () => {
-            recordUsage('script:napcat-build');
+            recordUsage('script:nc-sandbox-build');
             handleRunNapcatBuild();
         }
     };
@@ -132,7 +132,7 @@ export function buildDesktopFolders(
 
     const napcatStartApp: DesktopIcon = {
         id: 'desktop-napcat-start',
-        name: '启动NC流服务',
+        name: '启动NC沙盒',
         icon: <AppIconWrapper
             bg="linear-gradient(135deg, #ab47bc 0%, #7b1fa2 100%)"
             shadow="0 8px 16px rgba(171, 71, 188, 0.4), inset 0 1px 2px rgba(255,255,255,0.3)"
@@ -141,7 +141,7 @@ export function buildDesktopFolders(
         </AppIconWrapper>,
         position: { x: 0, y: 0 },
         onClick: () => {
-            recordUsage('script:napcat-start');
+            recordUsage('script:nc-sandbox-start');
             handleRunNapcatStart();
         }
     };
@@ -434,13 +434,13 @@ export function buildDesktopIcons(
             </AppIconWrapper>,
             position: { x: startX, y: startY + gap },
             onClick: () => {
-                recordUsage('script:napcat-build');
+                recordUsage('script:nc-sandbox-build');
                 handleRunNapcatBuild();
             }
         },
         {
             id: 'desktop-napcat-start',
-            name: '启动NC流服务',
+            name: '启动NC沙盒',
             icon: <AppIconWrapper
                 bg="linear-gradient(135deg, #ab47bc 0%, #7b1fa2 100%)"
                 shadow="0 8px 16px rgba(171, 71, 188, 0.4), inset 0 1px 2px rgba(255,255,255,0.3)"
@@ -449,7 +449,7 @@ export function buildDesktopIcons(
             </AppIconWrapper>,
             position: { x: startX + gap, y: startY + gap },
             onClick: () => {
-                recordUsage('script:napcat-start');
+                recordUsage('script:nc-sandbox-start');
                 handleRunNapcatStart();
             }
         }

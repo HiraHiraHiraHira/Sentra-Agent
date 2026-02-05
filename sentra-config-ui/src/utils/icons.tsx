@@ -100,7 +100,7 @@ export const getDisplayName = (name: string): string => {
     'sentra-mcp': 'MCP工具服务',
     'sentra-emo': '情感引擎',
     'sentra-adapter': '适配器',
-    'sentra-adapter/napcat': 'Napcat适配器',
+    'sentra-adapter/napcat': 'NC沙盒适配器',
     'sentra-rag': '知识库RAG',
     'bilibili_search': 'B站搜索',
     'github_repo_info': 'GitHub项目鉴别',

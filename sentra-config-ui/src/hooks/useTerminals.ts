@@ -101,9 +101,9 @@ export function useTerminals({ addToast, allocateZ }: UseTerminalsParams) {
 
   const handleRunBootstrap = async () => runScript('/api/scripts/bootstrap', 'Bootstrap Script', 'bootstrap', ['--force']);
   const handleRunStart = async () => runScript('/api/scripts/start', 'Start Script', 'start', []);
-  const handleRunNapcatBuild = async () => runScript('/api/scripts/napcat', 'Napcat Build', 'napcat-build', ['build']);
-  const handleRunNapcatStart = async () => runScript('/api/scripts/napcat', 'Napcat Start', 'napcat-start', ['start']);
-  const handleRunNapcatStartSilent = async () => runScriptSilent('/api/scripts/napcat', 'Napcat Start', ['start']);
+  const handleRunNapcatBuild = async () => runScript('/api/scripts/napcat', 'NC沙盒 构建', 'nc-sandbox-build', ['build']);
+  const handleRunNapcatStart = async () => runScript('/api/scripts/napcat', 'NC沙盒 启动', 'nc-sandbox-start', ['start']);
+  const handleRunNapcatStartSilent = async () => runScriptSilent('/api/scripts/napcat', 'NC沙盒 启动', ['start']);
   const handleRunUpdate = async () => runScript('/api/scripts/update', 'Update Project', 'update', []);
   const handleRunForceUpdate = async () => runScript('/api/scripts/update', 'Force Update Project', 'force-update', ['force']);
   const handleRunSentiment = async () => runScript('/api/scripts/sentiment', '情感分析服务', 'sentiment', [], {

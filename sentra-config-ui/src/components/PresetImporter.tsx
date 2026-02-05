@@ -797,8 +797,8 @@ export const PresetImporter: React.FC<PresetImporterProps> = ({ onClose, addToas
           </span>
         )}
         placement="right"
-        width={440}
         className={styles.advancedDrawer}
+        styles={{ wrapper: { width: 440, maxWidth: '92vw' } }}
       >
         <div className={styles.advanced}>
           <div className={styles.cardTitle}>转换设置</div>

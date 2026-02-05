@@ -1,8 +1,8 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styles from './RedisAdminManager.module.css';
-import { Alert, Button, Checkbox, Descriptions, Divider, Input, List, Modal, Popover, Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Button, Checkbox, Descriptions, Divider, Empty, Input, List, Modal, Popover, Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { CopyOutlined, EyeOutlined, SettingOutlined } from '@ant-design/icons';
+import { CopyOutlined, DeleteOutlined, EyeOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons';
 import { XMLBuilder, XMLParser } from 'fast-xml-parser';
 import {
   fetchRedisAdminGroups,
@@ -14,6 +14,9 @@ import {
   fetchRedisAdminRelated,
   deleteRedisAdminGroupStatePairs,
   deleteRedisAdminByPattern,
+  deleteRedisAdminKey,
+  deleteRedisAdminKeys,
+  deleteRedisAdminAllKeys,
   setRedisAdminStringValue,
   updateRedisAdminGroupStatePairMessage,
 } from '../../services/redisAdminApi';
@@ -168,6 +171,7 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
   const [counts, setCounts] = useState<Record<string, number | null>>({});
 
   const [pattern, setPattern] = useState('sentra:');
+  const [patternTouched, setPatternTouched] = useState(false);
   const [items, setItems] = useState<RedisKeyItem[]>([]);
   const [selectedKey, setSelectedKey] = useState<string>('');
   const [inspect, setInspect] = useState<any>(null);
@@ -196,6 +200,14 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
     return Number.isFinite(n) && n > 0 ? n : 50;
   });
   const [keyTableSelectedKeys, setKeyTableSelectedKeys] = useState<string[]>([]);
+
+  const effectiveSelectedKey = useMemo(() => {
+    if (selectedKey) return selectedKey;
+    const list = (keyTableSelectedKeys || []).map(String);
+    if (list.length === 1) return list[0];
+    return '';
+  }, [keyTableSelectedKeys, selectedKey]);
+
   const [keyTableColsVisible, setKeyTableColsVisible] = useState<Record<string, boolean>>(() => {
     const parsed = storage.getJson<any>('redisAdmin.keyTableColsVisible', { fallback: {} });
     if (parsed && typeof parsed === 'object') return parsed as any;
@@ -216,9 +228,21 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
   const [deletePreview, setDeletePreview] = useState<{ pattern: string; requested: number; deleted: number; ts: number } | null>(null);
 
   const [deleteKeyOpen, setDeleteKeyOpen] = useState(false);
+  const [deleteKeyTarget, setDeleteKeyTarget] = useState<string>('');
   const [deleteKeyConfirmText, setDeleteKeyConfirmText] = useState('');
   const [deleteKeyAcknowledge, setDeleteKeyAcknowledge] = useState(false);
   const [deleteKeyPreview, setDeleteKeyPreview] = useState<{ key: string; requested: number; deleted: number; ts: number } | null>(null);
+
+  const [deleteKeysOpen, setDeleteKeysOpen] = useState(false);
+  const [deleteKeysTargets, setDeleteKeysTargets] = useState<string[]>([]);
+  const [deleteKeysConfirmText, setDeleteKeysConfirmText] = useState('');
+  const [deleteKeysAcknowledge, setDeleteKeysAcknowledge] = useState(false);
+  const [deleteKeysPreview, setDeleteKeysPreview] = useState<{ requested: number; deleted: number; ts: number } | null>(null);
+
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deleteAllConfirmText, setDeleteAllConfirmText] = useState('');
+  const [deleteAllAcknowledge, setDeleteAllAcknowledge] = useState(false);
+  const [deleteAllPreview, setDeleteAllPreview] = useState<{ requested: number; deleted: number; ts: number } | null>(null);
 
   const [pairConfirmOpen, setPairConfirmOpen] = useState(false);
   const [pairConfirmText, setPairConfirmText] = useState('');
@@ -661,8 +685,57 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
     }
   }, [addToast, profile]);
 
+  const lastListedPatternRef = useRef<string>('');
+  const listDebounceTimerRef = useRef<number | null>(null);
+  const triggerListNow = useCallback(async (p?: string, opts?: { toast?: boolean }) => {
+    const ptn = String(p ?? pattern ?? '').trim();
+    if (!ptn) return;
+    if (busy) return;
+    if (lastListedPatternRef.current === ptn) return;
+    lastListedPatternRef.current = ptn;
+
+    if (opts?.toast === false) {
+      setBusy(true);
+      setErrorText('');
+      try {
+        const payload = await fetchRedisAdminList({ profile, pattern: ptn, count: 800, withMeta: true });
+        const list = Array.isArray(payload?.items) ? payload.items : [];
+        setItems(list);
+        setSelectedKey('');
+        setInspect(null);
+      } catch (e: any) {
+        setErrorText(String(e?.message || e));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    await runListFor(ptn);
+  }, [busy, pattern, profile, runListFor]);
+
+  useEffect(() => {
+    if (!patternTouched) return;
+    const ptn = String(pattern || '').trim();
+    if (!ptn) return;
+
+    if (listDebounceTimerRef.current) {
+      window.clearTimeout(listDebounceTimerRef.current);
+    }
+    listDebounceTimerRef.current = window.setTimeout(() => {
+      void triggerListNow(ptn, { toast: false });
+    }, 380);
+
+    return () => {
+      if (listDebounceTimerRef.current) {
+        window.clearTimeout(listDebounceTimerRef.current);
+        listDebounceTimerRef.current = null;
+      }
+    };
+  }, [pattern, patternTouched, triggerListNow]);
+
   const runInspect = useCallback(async (k: string) => {
-    const key = String(k || '').trim();
+    const key = String(k ?? '');
     if (!key) return;
     const payload = await fetchRedisAdminInspect({ profile, key, preview: 1200, head: 5, tail: 5, sample: 12, top: 20 });
     setInspect(payload);
@@ -710,19 +783,20 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
     await runList();
   }, [addToast, loadOverview, pattern, runList, profile]);
 
-  const openDeleteSelectedKey = useCallback(async () => {
-    const k = String(selectedKey || '').trim();
+  const openDeleteSelectedKey = useCallback(async (keyOverride?: string) => {
+    const k = String(keyOverride ?? effectiveSelectedKey ?? '');
     if (!k) return;
     setBusy(true);
     setErrorText('');
     try {
-      const payload = await deleteRedisAdminByPattern({ profile, pattern: k, dryRun: true, count: 10 });
+      const payload = await deleteRedisAdminKey({ profile, key: k, dryRun: true });
       setDeleteKeyPreview({
         key: k,
         requested: Number(payload.requested || 0),
         deleted: Number(payload.deleted || 0),
         ts: Date.now(),
       });
+      setDeleteKeyTarget(k);
       setDeleteKeyConfirmText('');
       setDeleteKeyAcknowledge(false);
       setDeleteKeyOpen(true);
@@ -732,18 +806,19 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
     } finally {
       setBusy(false);
     }
-  }, [addToast, profile, selectedKey]);
+  }, [addToast, effectiveSelectedKey, profile]);
 
   const confirmDeleteSelectedKey = useCallback(async () => {
-    const k = String(selectedKey || '').trim();
+    const k = String(deleteKeyTarget ?? '');
     if (!k) return;
-    if (String(deleteKeyConfirmText || '').trim() !== k) return;
+    if (String(deleteKeyConfirmText || '') !== k) return;
     setBusy(true);
     setErrorText('');
     try {
-      await deleteRedisAdminByPattern({ profile, pattern: k, dryRun: false, count: 50 });
+      await deleteRedisAdminKey({ profile, key: k, dryRun: false });
       addToast('success', '已删除 Key', k);
       setDeleteKeyOpen(false);
+      setDeleteKeyTarget('');
       setDeleteKeyConfirmText('');
       setDeleteKeyAcknowledge(false);
       setDeleteKeyPreview(null);
@@ -757,7 +832,111 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
     } finally {
       setBusy(false);
     }
-  }, [addToast, deleteKeyConfirmText, loadOverview, profile, runList, selectedKey]);
+  }, [addToast, deleteKeyConfirmText, deleteKeyTarget, loadOverview, profile, runList]);
+
+  const openDeleteAllKeys = useCallback(async () => {
+    setBusy(true);
+    setErrorText('');
+    try {
+      const payload = await deleteRedisAdminAllKeys({ profile, dryRun: true, scanCount: 1200 });
+      const requested = Number(payload?.requested || 0);
+      const deleted = Number(payload?.deleted || 0);
+      setDeleteAllPreview({ requested, deleted, ts: Date.now() });
+      setDeleteAllConfirmText('');
+      setDeleteAllAcknowledge(false);
+      setDeleteAllOpen(true);
+    } catch (e: any) {
+      setErrorText(String(e?.message || e));
+      addToast('error', '预览清空失败', String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }, [addToast, profile]);
+
+  const confirmDeleteAllKeys = useCallback(async () => {
+    if (!deleteAllAcknowledge) return;
+    if (String(deleteAllConfirmText || '') !== 'DELETE ALL') return;
+    setBusy(true);
+    setErrorText('');
+    try {
+      const payload = await deleteRedisAdminAllKeys({ profile, dryRun: false, scanCount: 1200 });
+      addToast('success', '已清空全部 Keys', `requested=${payload?.requested ?? '-'}, deleted=${payload?.deleted ?? '-'}`);
+      setDeleteAllOpen(false);
+      setDeleteAllConfirmText('');
+      setDeleteAllAcknowledge(false);
+      setDeleteAllPreview(null);
+
+      setItems([]);
+      setKeyTableSelectedKeys([]);
+      setSelectedKey('');
+      setInspect(null);
+      await loadOverview();
+      if (pattern.trim()) {
+        await runList();
+      }
+    } catch (e: any) {
+      setErrorText(String(e?.message || e));
+      addToast('error', '清空失败', String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }, [addToast, deleteAllAcknowledge, deleteAllConfirmText, loadOverview, pattern, profile, runList]);
+
+  const openDeleteSelectedKeys = useCallback(async () => {
+    const list = (keyTableSelectedKeys || []).map(String).filter(Boolean);
+    if (!list.length) return;
+    if (list.length === 1) {
+      await openDeleteSelectedKey(list[0]);
+      return;
+    }
+    setBusy(true);
+    setErrorText('');
+    try {
+      const payload = await deleteRedisAdminKeys({ profile, keys: list, dryRun: true });
+      setDeleteKeysPreview({
+        requested: Number(payload.requested || list.length),
+        deleted: Number(payload.deleted || 0),
+        ts: Date.now(),
+      });
+      setDeleteKeysTargets(list);
+      setDeleteKeysConfirmText('');
+      setDeleteKeysAcknowledge(false);
+      setDeleteKeysOpen(true);
+    } catch (e: any) {
+      setErrorText(String(e?.message || e));
+      addToast('error', '预览删除失败', String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }, [addToast, deleteRedisAdminKeys, keyTableSelectedKeys, openDeleteSelectedKey, profile]);
+
+  const confirmDeleteSelectedKeys = useCallback(async () => {
+    const list = (deleteKeysTargets || []).map(String).filter(Boolean);
+    if (!list.length) return;
+    if (!deleteKeysAcknowledge) return;
+    if (String(deleteKeysConfirmText || '') !== 'DELETE') return;
+    setBusy(true);
+    setErrorText('');
+    try {
+      const payload = await deleteRedisAdminKeys({ profile, keys: list, dryRun: false });
+      addToast('success', '已删除选中 Keys', `requested=${payload.requested}, deleted=${payload.deleted}`);
+      setDeleteKeysOpen(false);
+      setDeleteKeysTargets([]);
+      setDeleteKeysConfirmText('');
+      setDeleteKeysAcknowledge(false);
+      setDeleteKeysPreview(null);
+      setKeyTableSelectedKeys([]);
+      setSelectedKey('');
+      setInspect(null);
+      await loadOverview();
+      await runList();
+    } catch (e: any) {
+      setErrorText(String(e?.message || e));
+      addToast('error', '删除失败', String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }, [addToast, deleteKeysAcknowledge, deleteKeysConfirmText, deleteKeysTargets, loadOverview, profile, runList]);
 
   const init = useCallback(async () => {
     setBusy(true);
@@ -1201,7 +1380,7 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
   }, []);
 
   const openPreview = useCallback((k: string) => {
-    const key = String(k || '').trim();
+    const key = String(k ?? '');
     if (!key) return;
     setSelectedKey(key);
     setRightTab('detail');
@@ -1213,6 +1392,7 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
   const onPickQuickPattern = useCallback((ptn: string, label?: string, count?: number | null) => {
     const v = String(ptn || '').trim();
     if (!v) return;
+    setPatternTouched(true);
     setPattern(v);
     if (count === 0) {
       const db = redisInfo?.db ?? '-';
@@ -1349,10 +1529,10 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
     setPairViewerData(null);
     try {
       await runInspect(String(selectedKey || ''));
-    } catch {}
+    } catch { }
     try {
       await runList();
-    } catch {}
+    } catch { }
   }, [pairConfirmTarget, profile, addToast, runInspect, selectedKey, runList]);
 
   const runPairBulkDeleteConfirm = useCallback(async () => {
@@ -1368,10 +1548,10 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
     setPairSelectedMap({});
     try {
       await runInspect(String(selectedKey || ''));
-    } catch {}
+    } catch { }
     try {
       await runList();
-    } catch {}
+    } catch { }
   }, [pairBulkConfirmTarget, profile, addToast, runInspect, selectedKey, runList]);
 
   const resetFilters = useCallback(() => {
@@ -1805,12 +1985,24 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                 }}
               />
             </Tooltip>
+            <Tooltip title="删除 Key">
+              <Button
+                size="small"
+                type="text"
+                danger
+                icon={<DeleteOutlined />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void openDeleteSelectedKey(String(r?.key ?? ''));
+                }}
+              />
+            </Tooltip>
           </Space>
         ),
       },
     ];
     return cols;
-  }, [addToast, openPreview, sortBy, sortDir]);
+  }, [addToast, openDeleteSelectedKey, openPreview, sortBy, sortDir]);
 
   const keyTableColumnOptions = useMemo(() => {
     const base = [
@@ -1875,6 +2067,7 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
         getContainer={false}
         onCancel={() => {
           setDeleteKeyOpen(false);
+          setDeleteKeyTarget('');
           setDeleteKeyConfirmText('');
           setDeleteKeyAcknowledge(false);
         }}
@@ -1883,9 +2076,9 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
         okButtonProps={{
           danger: true,
           disabled:
-            !selectedKey ||
+            !deleteKeyTarget ||
             !deleteKeyAcknowledge ||
-            String(deleteKeyConfirmText || '').trim() !== String(selectedKey || '').trim(),
+            String(deleteKeyConfirmText || '') !== String(deleteKeyTarget || ''),
           loading: busy,
         }}
         onOk={() => void confirmDeleteSelectedKey()}
@@ -1905,14 +2098,14 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
             <Descriptions.Item label="Key">
               <Typography.Text
                 code
-                copyable={selectedKey ? { text: String(selectedKey) } : false}
+                copyable={deleteKeyTarget ? { text: String(deleteKeyTarget) } : false}
                 style={{ wordBreak: 'break-all' }}
               >
-                {selectedKey || '-'}
+                {deleteKeyTarget || '-'}
               </Typography.Text>
             </Descriptions.Item>
             <Descriptions.Item label="删除预览(dry-run)">
-              {deleteKeyPreview && deleteKeyPreview.key === selectedKey ? (
+              {deleteKeyPreview && deleteKeyPreview.key === deleteKeyTarget ? (
                 <span>
                   requested={deleteKeyPreview.requested} deleted={deleteKeyPreview.deleted}
                 </span>
@@ -1940,10 +2133,153 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
           <div style={{ marginTop: 10, color: 'var(--redis-danger-text)' }}>
             为防误删，请在下方输入 <b>完整 Key</b> 以确认：
           </div>
+          <Space.Compact style={{ width: '100%', marginTop: 8 }}>
+            <Input
+              value={deleteKeyConfirmText}
+              onChange={(e) => setDeleteKeyConfirmText(e.target.value)}
+              placeholder={deleteKeyTarget ? String(deleteKeyTarget) : '粘贴完整 Key'}
+              size="middle"
+              autoComplete="off"
+            />
+            <Button
+              size="middle"
+              onClick={() => setDeleteKeyConfirmText(String(deleteKeyTarget || ''))}
+              disabled={!deleteKeyTarget}
+            >
+              填入
+            </Button>
+          </Space.Compact>
+        </div>
+      </Modal>
+
+      <Modal
+        title="清空全部 Keys"
+        open={deleteAllOpen}
+        getContainer={false}
+        okText="确认清空"
+        cancelText="取消"
+        okButtonProps={{
+          danger: true,
+          loading: busy,
+          disabled: !deleteAllAcknowledge || String(deleteAllConfirmText || '') !== 'DELETE ALL',
+        }}
+        onCancel={() => {
+          setDeleteAllOpen(false);
+          setDeleteAllConfirmText('');
+          setDeleteAllAcknowledge(false);
+        }}
+        onOk={() => void confirmDeleteAllKeys()}
+      >
+        <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+          <Alert
+            type="error"
+            showIcon
+            title="危险操作：清空当前 Redis DB"
+            description={(
+              <div>
+                该操作会删除当前 profile/db 下的 <b>全部 keys</b>，不可恢复。
+              </div>
+            )}
+          />
+
+          <Divider style={{ margin: '12px 0' }} />
+
+          <Descriptions size="small" column={1} bordered>
+            <Descriptions.Item label="Profile">{profile || '-'}</Descriptions.Item>
+            <Descriptions.Item label="删除预览(dry-run)">
+              {deleteAllPreview ? (
+                <span>
+                  scanned={deleteAllPreview.requested} matched={deleteAllPreview.deleted}
+                </span>
+              ) : (
+                '-'
+              )}
+            </Descriptions.Item>
+          </Descriptions>
+
+          <div style={{ marginTop: 12 }}>
+            <Checkbox checked={deleteAllAcknowledge} onChange={(e) => setDeleteAllAcknowledge(e.target.checked)}>
+              我已理解这会删除当前 DB 的全部 keys，且不可恢复
+            </Checkbox>
+          </div>
+
+          <div style={{ marginTop: 10, color: 'var(--redis-danger-text)' }}>
+            为防误删，请输入 <b>DELETE ALL</b>：
+          </div>
           <Input
-            value={deleteKeyConfirmText}
-            onChange={(e) => setDeleteKeyConfirmText(e.target.value)}
-            placeholder={selectedKey ? String(selectedKey) : '粘贴完整 Key'}
+            value={deleteAllConfirmText}
+            onChange={(e) => setDeleteAllConfirmText(e.target.value)}
+            placeholder="DELETE ALL"
+            size="middle"
+            autoComplete="off"
+            style={{ marginTop: 8 }}
+          />
+        </div>
+      </Modal>
+
+      <Modal
+        title="删除选中 Keys"
+        open={deleteKeysOpen}
+        className={styles.deleteKeyModal}
+        getContainer={false}
+        onCancel={() => {
+          setDeleteKeysOpen(false);
+          setDeleteKeysTargets([]);
+          setDeleteKeysConfirmText('');
+          setDeleteKeysAcknowledge(false);
+          setDeleteKeysPreview(null);
+        }}
+        okText="确认删除"
+        cancelText="取消"
+        okButtonProps={{
+          danger: true,
+          disabled: !deleteKeysTargets.length || !deleteKeysAcknowledge || String(deleteKeysConfirmText || '') !== 'DELETE',
+          loading: busy,
+        }}
+        onOk={() => void confirmDeleteSelectedKeys()}
+      >
+        <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+          <Alert
+            type="error"
+            showIcon
+            title="危险操作：批量删除 Redis Keys"
+            description="该操作不可恢复，将永久删除选中 Keys。请确认你理解风险。"
+          />
+
+          <Divider style={{ margin: '12px 0' }} />
+
+          <Descriptions size="small" column={1} bordered>
+            <Descriptions.Item label="Profile">{profile || '-'}</Descriptions.Item>
+            <Descriptions.Item label="选中数量">{deleteKeysTargets.length}</Descriptions.Item>
+            <Descriptions.Item label="删除预览(dry-run)">
+              {deleteKeysPreview ? (
+                <span>
+                  requested={deleteKeysPreview.requested} deleted={deleteKeysPreview.deleted}
+                </span>
+              ) : (
+                '-'
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label="Keys(前20条)">
+              <pre className={styles.previewPre} style={{ maxHeight: 180, overflow: 'auto', margin: 0 }}>
+                {deleteKeysTargets.slice(0, 20).join('\n')}{deleteKeysTargets.length > 20 ? `\n... (+${deleteKeysTargets.length - 20})` : ''}
+              </pre>
+            </Descriptions.Item>
+          </Descriptions>
+
+          <div style={{ marginTop: 12 }}>
+            <Checkbox checked={deleteKeysAcknowledge} onChange={(e) => setDeleteKeysAcknowledge(e.target.checked)}>
+              我已理解选中 Keys 将被永久删除且无法恢复
+            </Checkbox>
+          </div>
+
+          <div style={{ marginTop: 10, color: 'var(--redis-danger-text)' }}>
+            为防误删，请在下方输入 <b>DELETE</b> 以确认：
+          </div>
+          <Input
+            value={deleteKeysConfirmText}
+            onChange={(e) => setDeleteKeysConfirmText(e.target.value)}
+            placeholder="输入 DELETE"
             size="middle"
             autoComplete="off"
             style={{ marginTop: 8 }}
@@ -2139,26 +2475,27 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
             <div className={styles.sidebarSection}>
               <div className={styles.sidebarSectionTitle}>Pattern</div>
 
-              <div className={styles.patternNative}>
-                <input
-                  className={styles.patternNativeInput}
-                  value={pattern}
-                  onChange={(e) => setPattern(e.target.value)}
-                  placeholder="例如: sentra:group:* 或 sentra:memory:*"
-                />
-                <button
-                  type="button"
-                  className={styles.patternNativeBtn}
-                  onClick={() => {
-                    setRightTab('detail');
-                    runList();
-                    if (isCompact) setMobilePane('keys');
-                  }}
-                  disabled={busy || !pattern.trim()}
-                >
-                  列出
-                </button>
-              </div>
+              <Input
+                className={styles.antdInput}
+                value={pattern}
+                onFocus={() => {
+                  setPatternTouched(true);
+                  void triggerListNow(pattern, { toast: false });
+                  if (isCompact) setMobilePane('keys');
+                }}
+                onChange={(e) => {
+                  setPatternTouched(true);
+                  setPattern(e.target.value);
+                }}
+                onPressEnter={() => {
+                  setPatternTouched(true);
+                  setRightTab('detail');
+                  void triggerListNow(pattern, { toast: true });
+                  if (isCompact) setMobilePane('keys');
+                }}
+                placeholder="输入后自动列出（例如: sentra:group:* 或 sentra:memory:*）"
+                size="small"
+              />
 
               <div style={{ marginTop: 10 }}>
                 <div className={styles.small} style={{ marginBottom: 8 }}>快捷分组（点击即可套用 pattern）</div>
@@ -2228,6 +2565,8 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                   className={styles.antdInput}
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
+                  allowClear
+                  prefix={<SearchOutlined />}
                   placeholder="搜索：key / 群号 / 用户 / 日期"
                   size="small"
                 />
@@ -2300,11 +2639,14 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                 <>
                   <Button size="small" onClick={copySelectedKeys} disabled={!keyTableSelectedKeys.length}>复制选中</Button>
                   <Button size="small" onClick={() => setKeyTableSelectedKeys([])} disabled={!keyTableSelectedKeys.length}>清空选择</Button>
+                  <Button size="small" danger onClick={() => void openDeleteSelectedKeys()} disabled={busy || !keyTableSelectedKeys.length}>
+                    删除选中
+                  </Button>
                   <Button
                     size="small"
                     danger
                     onClick={() => void openDeleteSelectedKey()}
-                    disabled={busy || !selectedKey}
+                    disabled={busy || !effectiveSelectedKey}
                   >
                     删除当前
                   </Button>
@@ -2353,10 +2695,15 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
 
               {!busy && items.length > 0 && filteredItems.length === 0 ? (
                 <div className={styles.emptyHint}>
-                  当前筛选条件导致列表为空（raw={items.length}）。
-                  <div className={styles.btnRow}>
+                  <Empty
+                    description={(
+                      <div>
+                        当前筛选条件导致列表为空（raw={items.length}）。
+                      </div>
+                    )}
+                  >
                     <Button size="small" onClick={resetFilters}>一键重置筛选</Button>
-                  </div>
+                  </Empty>
                 </div>
               ) : null}
 
@@ -2375,6 +2722,47 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                       <span className={styles.badge}>{formatRedisType(it.redisType)}</span>
                       <span className={styles.badge}>{it.len == null ? '-' : String(it.len)}</span>
                     </div>
+                  </div>
+
+                  <div className={styles.keyCardActions}>
+                    <Button
+                      size="small"
+                      type="text"
+                      icon={<CopyOutlined />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const k = String(it.key || '');
+                        if (!k) return;
+                        navigator.clipboard?.writeText(k)
+                          .then(() => addToast('success', '已复制 Key'))
+                          .catch((err) => addToast('error', '复制失败', String((err as any)?.message || err)));
+                      }}
+                    >
+                      复制
+                    </Button>
+                    <Button
+                      size="small"
+                      type="text"
+                      icon={<EyeOutlined />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openPreview(it.key);
+                      }}
+                    >
+                      查看
+                    </Button>
+                    <Button
+                      size="small"
+                      type="text"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void openDeleteSelectedKey(String(it.key ?? ''));
+                      }}
+                    >
+                      删除
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -2401,7 +2789,7 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                 size="small"
                 sticky
                 loading={busy}
-                rowClassName={(r) => (r.key === selectedKey ? styles.antdRowActive : '')}
+                rowClassName={(r) => (r.key === effectiveSelectedKey ? styles.antdRowActive : '')}
                 rowSelection={{
                   selectedRowKeys: keyTableSelectedKeys,
                   onChange: (keys) => setKeyTableSelectedKeys(keys.map(String)),
@@ -2418,10 +2806,15 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
               />
               {!busy && items.length > 0 && filteredItems.length === 0 ? (
                 <div className={styles.emptyHint}>
-                  当前筛选条件导致列表为空（raw={items.length}）。
-                  <div className={styles.btnRow}>
+                  <Empty
+                    description={(
+                      <div>
+                        当前筛选条件导致列表为空（raw={items.length}）。
+                      </div>
+                    )}
+                  >
                     <Button size="small" onClick={resetFilters}>一键重置筛选</Button>
-                  </div>
+                  </Empty>
                 </div>
               ) : null}
             </div>
@@ -2488,7 +2881,7 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                       size="small"
                       danger
                       onClick={() => void openDeleteSelectedKey()}
-                      disabled={busy || !selectedKey}
+                      disabled={busy || !effectiveSelectedKey}
                     >
                       删除 Key
                     </Button>
@@ -2677,183 +3070,183 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
 
                             {detailFocus === 'preview' ? null : (
                               <div className={styles.pairSection} style={{ maxHeight: detailFocus === 'pairs' ? 680 : 360 }}>
-                              <div className={styles.pairHeader}>
-                                <div className={styles.pairHeaderTop}>
-                                  <div className={styles.pairHeaderLeft}>
-                                    <div className={styles.small}>
-                                      显示 {rows.length} / {matchedAllRows.length}（总 {totalPairs}）
-                                      {selectedIds.length ? ` · 已选 ${selectedIds.length}` : ''}
-                                    </div>
-                                    {!effectiveGroupId ? (
-                                      <div className={styles.small} style={{ marginTop: 6, color: 'var(--redis-danger-text)' }}>
-                                        未能从 key / JSON 推导 groupId：批量移除功能将不可用。
+                                <div className={styles.pairHeader}>
+                                  <div className={styles.pairHeaderTop}>
+                                    <div className={styles.pairHeaderLeft}>
+                                      <div className={styles.small}>
+                                        显示 {rows.length} / {matchedAllRows.length}（总 {totalPairs}）
+                                        {selectedIds.length ? ` · 已选 ${selectedIds.length}` : ''}
                                       </div>
-                                    ) : null}
-                                  </div>
-                                  <div className={styles.pairHeaderRight}>
-                                    <Select
-                                      className={styles.antdSelect}
-                                      value={pairSearchMode}
-                                      onChange={(v) => setPairSearchMode(v as any)}
-                                      options={[
-                                        { value: 'auto', label: '自动' },
-                                        { value: 'pairId', label: 'pairId' },
-                                        { value: 'keyword', label: '关键词' },
-                                      ]}
-                                      size="small"
-                                    />
-                                    <Input
-                                      className={styles.antdInput}
-                                      value={pairSearchText}
-                                      onChange={(e) => setPairSearchText(e.target.value)}
-                                      placeholder="检索：pairId 或关键词（U/A 文本）"
-                                      size="small"
-                                    />
-                                    <Select
-                                      className={styles.antdSelect}
-                                      value={String(pairListLimit)}
-                                      onChange={(v) => setPairListLimit(Number(v) || 0)}
-                                      options={[
-                                        { value: '24', label: '24' },
-                                        { value: '100', label: '100' },
-                                        { value: '200', label: '200' },
-                                        { value: '500', label: '500' },
-                                        { value: '0', label: '全部' },
-                                      ]}
-                                      size="small"
-                                    />
-                                  </div>
-                                </div>
-
-                                <div className={styles.pairHeaderBottom}>
-                                  <div className={styles.pairHeaderGroup}>
-                                    <Button
-                                      size="small"
-                                      onClick={() => {
-                                        const next: Record<string, boolean> = {};
-                                        for (const r of matchedAllRows) next[r.pairId] = true;
-                                        setPairSelectedMap(next);
-                                      }}
-                                    >
-                                      全选筛选
-                                    </Button>
-                                    <Button size="small" onClick={() => setPairSelectedMap({})}>清空选择</Button>
-                                  </div>
-
-                                  <div className={styles.pairHeaderGroupRight}>
-                                    <Button
-                                      size="small"
-                                      danger
-                                      type="primary"
-                                      onClick={() => {
-                                        if (!effectiveGroupId) return;
-                                        openPairBulkConfirm(effectiveGroupId, selectedIds);
-                                      }}
-                                      disabled={!effectiveGroupId || !selectedIds.length}
-                                    >
-                                      批量确认移除
-                                    </Button>
-                                    <div className={styles.pairHeaderDivider} />
-                                    <Button size="small" onClick={() => setPairSectionCollapsed((v) => !v)}>
-                                      {pairSectionCollapsed ? '展开' : '收起'}
-                                    </Button>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {!pairSectionCollapsed ? (
-                                <div className={styles.pairList}>
-                                  {!rows.length ? (
-                                    <div className={styles.emptyHint} style={{ marginTop: 0 }}>
-                                      未命中检索条件。请调整 pairId/关键词检索，或点击“清空选择”后重新筛选。
+                                      {!effectiveGroupId ? (
+                                        <div className={styles.small} style={{ marginTop: 6, color: 'var(--redis-danger-text)' }}>
+                                          未能从 key / JSON 推导 groupId：批量移除功能将不可用。
+                                        </div>
+                                      ) : null}
                                     </div>
-                                  ) : null}
-                                  {rows.map((r) => {
-                                    const shortId = r.pairId.substring(0, 8);
-                                    const isActive = pairSelectedId === r.pairId;
-                                    const isChecked = !!pairSelectedMap[r.pairId];
-                                    const sn = snippetByPair.get(r.pairId) || { user: '', assistant: '' };
-                                    const userLine = sn.user;
-                                    const assistantLine = sn.assistant;
-                                    const full = fullByPair.get(r.pairId);
-                                    return (
-                                      <div
-                                        key={r.pairId}
-                                        className={`${styles.pairRow} ${isActive ? styles.pairRowActive : ''}`}
+                                    <div className={styles.pairHeaderRight}>
+                                      <Select
+                                        className={styles.antdSelect}
+                                        value={pairSearchMode}
+                                        onChange={(v) => setPairSearchMode(v as any)}
+                                        options={[
+                                          { value: 'auto', label: '自动' },
+                                          { value: 'pairId', label: 'pairId' },
+                                          { value: 'keyword', label: '关键词' },
+                                        ]}
+                                        size="small"
+                                      />
+                                      <Input
+                                        className={styles.antdInput}
+                                        value={pairSearchText}
+                                        onChange={(e) => setPairSearchText(e.target.value)}
+                                        placeholder="检索：pairId 或关键词（U/A 文本）"
+                                        size="small"
+                                      />
+                                      <Select
+                                        className={styles.antdSelect}
+                                        value={String(pairListLimit)}
+                                        onChange={(v) => setPairListLimit(Number(v) || 0)}
+                                        options={[
+                                          { value: '24', label: '24' },
+                                          { value: '100', label: '100' },
+                                          { value: '200', label: '200' },
+                                          { value: '500', label: '500' },
+                                          { value: '0', label: '全部' },
+                                        ]}
+                                        size="small"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  <div className={styles.pairHeaderBottom}>
+                                    <div className={styles.pairHeaderGroup}>
+                                      <Button
+                                        size="small"
                                         onClick={() => {
-                                          setPairSelectedId(r.pairId);
-                                          setPairViewerData({
-                                            groupId: effectiveGroupId,
-                                            pairId: r.pairId,
-                                            shortId,
-                                            count: r.count,
-                                            ts: r.ts,
-                                            userText: String(full?.userText || ''),
-                                            assistantText: String(full?.assistantText || ''),
-                                            userTs: (full as any)?.userTs ?? null,
-                                            assistantTs: (full as any)?.assistantTs ?? null,
-                                          });
-                                          setPairViewerOpen(true);
+                                          const next: Record<string, boolean> = {};
+                                          for (const r of matchedAllRows) next[r.pairId] = true;
+                                          setPairSelectedMap(next);
                                         }}
                                       >
-                                        <div className={styles.pairRowTop}>
-                                          <div style={{ minWidth: 0, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                                            <label
-                                              className={styles.pairCheck}
-                                              onClick={(e) => e.stopPropagation()}
-                                            >
-                                              <Tooltip title={isChecked ? '取消选择' : '选择'}>
-                                              <Checkbox
-                                                checked={isChecked}
-                                                onChange={(e) => {
-                                                  const checked = (e as any)?.target?.checked;
-                                                  setPairSelectedMap((prev) => ({
-                                                    ...prev,
-                                                    [r.pairId]: !!checked,
-                                                  }));
+                                        全选筛选
+                                      </Button>
+                                      <Button size="small" onClick={() => setPairSelectedMap({})}>清空选择</Button>
+                                    </div>
+
+                                    <div className={styles.pairHeaderGroupRight}>
+                                      <Button
+                                        size="small"
+                                        danger
+                                        type="primary"
+                                        onClick={() => {
+                                          if (!effectiveGroupId) return;
+                                          openPairBulkConfirm(effectiveGroupId, selectedIds);
+                                        }}
+                                        disabled={!effectiveGroupId || !selectedIds.length}
+                                      >
+                                        批量确认移除
+                                      </Button>
+                                      <div className={styles.pairHeaderDivider} />
+                                      <Button size="small" onClick={() => setPairSectionCollapsed((v) => !v)}>
+                                        {pairSectionCollapsed ? '展开' : '收起'}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {!pairSectionCollapsed ? (
+                                  <div className={styles.pairList}>
+                                    {!rows.length ? (
+                                      <div className={styles.emptyHint} style={{ marginTop: 0 }}>
+                                        未命中检索条件。请调整 pairId/关键词检索，或点击“清空选择”后重新筛选。
+                                      </div>
+                                    ) : null}
+                                    {rows.map((r) => {
+                                      const shortId = r.pairId.substring(0, 8);
+                                      const isActive = pairSelectedId === r.pairId;
+                                      const isChecked = !!pairSelectedMap[r.pairId];
+                                      const sn = snippetByPair.get(r.pairId) || { user: '', assistant: '' };
+                                      const userLine = sn.user;
+                                      const assistantLine = sn.assistant;
+                                      const full = fullByPair.get(r.pairId);
+                                      return (
+                                        <div
+                                          key={r.pairId}
+                                          className={`${styles.pairRow} ${isActive ? styles.pairRowActive : ''}`}
+                                          onClick={() => {
+                                            setPairSelectedId(r.pairId);
+                                            setPairViewerData({
+                                              groupId: effectiveGroupId,
+                                              pairId: r.pairId,
+                                              shortId,
+                                              count: r.count,
+                                              ts: r.ts,
+                                              userText: String(full?.userText || ''),
+                                              assistantText: String(full?.assistantText || ''),
+                                              userTs: (full as any)?.userTs ?? null,
+                                              assistantTs: (full as any)?.assistantTs ?? null,
+                                            });
+                                            setPairViewerOpen(true);
+                                          }}
+                                        >
+                                          <div className={styles.pairRowTop}>
+                                            <div style={{ minWidth: 0, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                                              <label
+                                                className={styles.pairCheck}
+                                                onClick={(e) => e.stopPropagation()}
+                                              >
+                                                <Tooltip title={isChecked ? '取消选择' : '选择'}>
+                                                  <Checkbox
+                                                    checked={isChecked}
+                                                    onChange={(e) => {
+                                                      const checked = (e as any)?.target?.checked;
+                                                      setPairSelectedMap((prev) => ({
+                                                        ...prev,
+                                                        [r.pairId]: !!checked,
+                                                      }));
+                                                    }}
+                                                  />
+                                                </Tooltip>
+                                              </label>
+                                              <div>
+                                                <Tooltip title={r.pairId}>
+                                                  <div className={styles.pairId}>{shortId}</div>
+                                                </Tooltip>
+                                                <div className={styles.pairMeta}>messages={r.count}{r.ts ? ` · ${new Date(r.ts).toLocaleString()}` : ''}</div>
+                                              </div>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                              <Button
+                                                size="small"
+                                                danger
+                                                type="primary"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  if (!effectiveGroupId) return;
+                                                  openPairConfirm(effectiveGroupId, r.pairId);
                                                 }}
-                                              />
-                                              </Tooltip>
-                                            </label>
-                                            <div>
-                                              <Tooltip title={r.pairId}>
-                                                <div className={styles.pairId}>{shortId}</div>
-                                              </Tooltip>
-                                              <div className={styles.pairMeta}>messages={r.count}{r.ts ? ` · ${new Date(r.ts).toLocaleString()}` : ''}</div>
+                                                disabled={!effectiveGroupId}
+                                              >
+                                                确认移除
+                                              </Button>
                                             </div>
                                           </div>
-                                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                                            <Button
-                                              size="small"
-                                              danger
-                                              type="primary"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                if (!effectiveGroupId) return;
-                                                openPairConfirm(effectiveGroupId, r.pairId);
-                                              }}
-                                              disabled={!effectiveGroupId}
-                                            >
-                                              确认移除
-                                            </Button>
-                                          </div>
-                                        </div>
 
-                                        <div className={styles.pairSnippet}>
-                                          <div className={styles.pairSnippetLine}>
-                                            <div className={styles.pairSnippetLabel}>U</div>
-                                            <div className={styles.pairSnippetText}>{userLine ? normalizeMultilineText(userLine) : '-'}</div>
-                                          </div>
-                                          <div className={styles.pairSnippetLine}>
-                                            <div className={styles.pairSnippetLabel}>A</div>
-                                            <div className={styles.pairSnippetText}>{assistantLine ? normalizeMultilineText(assistantLine) : '-'}</div>
+                                          <div className={styles.pairSnippet}>
+                                            <div className={styles.pairSnippetLine}>
+                                              <div className={styles.pairSnippetLabel}>U</div>
+                                              <div className={styles.pairSnippetText}>{userLine ? normalizeMultilineText(userLine) : '-'}</div>
+                                            </div>
+                                            <div className={styles.pairSnippetLine}>
+                                              <div className={styles.pairSnippetLabel}>A</div>
+                                              <div className={styles.pairSnippetText}>{assistantLine ? normalizeMultilineText(assistantLine) : '-'}</div>
+                                            </div>
                                           </div>
                                         </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              ) : null}
+                                      );
+                                    })}
+                                  </div>
+                                ) : null}
                               </div>
                             )}
                           </>
@@ -3043,6 +3436,22 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                     }
                   >
                     确认删除
+                  </Button>
+                </div>
+
+                <Divider style={{ margin: '12px 0' }} />
+
+                <div className={styles.warning} style={{ margin: 0 }}>
+                  一键清空会删除当前 DB 的全部 keys（非常危险）。
+                </div>
+                <div className={styles.btnRow} style={{ marginTop: 10 }}>
+                  <Button
+                    size="small"
+                    danger
+                    onClick={() => void openDeleteAllKeys()}
+                    disabled={busy}
+                  >
+                    一键清空全部 Keys
                   </Button>
                 </div>
               </>

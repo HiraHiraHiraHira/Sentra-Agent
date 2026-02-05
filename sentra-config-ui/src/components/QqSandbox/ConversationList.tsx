@@ -1,4 +1,4 @@
-import { Button, Input, Segmented, Select, Space, Tooltip } from 'antd';
+import { Button, Input, Select, Space, Tooltip } from 'antd';
 import { SearchOutlined, SyncOutlined } from '@ant-design/icons';
 import styles from './QqSandbox.module.css';
 import type { Conversation } from './QqSandbox.types';
@@ -77,20 +77,32 @@ export function ConversationList(props: {
           />
 
           {sidebarMode === 'contacts' ? (
-            <Segmented
-              size="middle"
-              value={contactsTab}
-              onChange={(v) => {
-                const t = String(v) === 'friends' ? 'friends' : 'groups';
-                setContactsTab(t);
-                setSyncSource(t === 'groups' ? 'groups' : 'friends');
-                if (status === 'connected') {
-                  if (t === 'groups') void syncGroups();
-                  else void syncFriends();
-                }
-              }}
-              options={[{ label: '群', value: 'groups' }, { label: '好友', value: 'friends' }]}
-            />
+            <div className={styles.pillSwitch} role="tablist" aria-label="联系人切换">
+              <Button
+                className={`${styles.pillBtn} ${contactsTab === 'groups' ? styles.pillBtnActive : ''}`}
+                type="text"
+                onClick={() => {
+                  const t: any = 'groups';
+                  setContactsTab(t);
+                  setSyncSource('groups');
+                  if (status === 'connected') void syncGroups();
+                }}
+              >
+                群
+              </Button>
+              <Button
+                className={`${styles.pillBtn} ${contactsTab === 'friends' ? styles.pillBtnActive : ''}`}
+                type="text"
+                onClick={() => {
+                  const t: any = 'friends';
+                  setContactsTab(t);
+                  setSyncSource('friends');
+                  if (status === 'connected') void syncFriends();
+                }}
+              >
+                好友
+              </Button>
+            </div>
           ) : (
             <Select
               className={styles.sourceSelect}
@@ -131,10 +143,10 @@ export function ConversationList(props: {
         {list.length === 0 ? (
           <div className={styles.empty}>
             {sidebarMode === 'contacts' ? '暂无联系人。' : '暂无会话。'}
-            <div style={{ marginTop: 8, color: 'rgba(17,24,39,0.55)', fontSize: 12, lineHeight: 1.5 }}>
+            <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5 }}>
               你可以：
               <div>1) 点击上方“同步”拉取数据</div>
-              <div>2) 确认已连接 Napcat/端口配置正确</div>
+              <div>2) 确认已连接 NC沙盒/端口配置正确</div>
             </div>
           </div>
         ) : (

@@ -2839,11 +2839,11 @@ export default function ModelProvidersManager(props: { addToast: (type: ToastMes
             <Drawer
               open={modelSettingsOpen}
               placement="right"
-              width={560}
               title="更新模型信息"
               onClose={() => { setModelSettingsOpen(false); setIconPickerOpen(false); }}
               className={styles.modelSettingsDrawer}
               destroyOnHidden={false}
+              styles={{ wrapper: { width: 560, maxWidth: '92vw' } }}
             >
               <div className={styles.drawerBody}>
                 <div className={styles.modelSettingsHeaderRow}>
@@ -3087,11 +3087,11 @@ export default function ModelProvidersManager(props: { addToast: (type: ToastMes
       <Drawer
         open={providerEditorOpen}
         placement="right"
-        width={520}
         title={providerEditorMode === 'add' ? '添加供应商' : '编辑供应商'}
         onClose={() => { setProviderEditorOpen(false); setIconPickerOpen(false); }}
         className={styles.providerEditorDrawer}
         destroyOnHidden={false}
+        styles={{ wrapper: { width: 520, maxWidth: '92vw' } }}
       >
         <div className={styles.drawerBody}>
           <Form

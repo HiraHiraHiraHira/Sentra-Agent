@@ -3,6 +3,7 @@ import { promises as fsp } from 'fs';
 import * as path from 'path';
 import * as http from 'http';
 import * as https from 'https';
+import { fileURLToPath } from 'url';
 
 export interface CacheLoggerLike {
   debug?: (...args: any[]) => void;
@@ -42,11 +43,52 @@ export function getFileCacheTtlMs(): number | null {
 }
 
 export function isLocalPath(p: string | undefined | null): boolean {
-  if (!p) return false;
-  if (/^[a-zA-Z]:[\\\/]/.test(p)) return true;
-  if (p.startsWith('\\\\')) return true;
-  if (p.startsWith('/')) return true;
+  const s = normalizeLocalPath(p);
+  if (!s) return false;
+  if (/^[a-zA-Z]:[\\\/]/.test(s)) return true;
+  if (s.startsWith('\\\\')) return true;
+  if (s.startsWith('/')) return true;
   return false;
+}
+
+function normalizeLocalPath(input: string | undefined | null): string {
+  const s0 = String(input || '').trim();
+  if (!s0) return '';
+
+  if (/^file:\/\//i.test(s0)) {
+    try {
+      const u = new URL(s0);
+      if (u.protocol === 'file:') {
+        return fileURLToPath(u);
+      }
+    } catch {
+    }
+  }
+
+  // Tolerate Windows file URLs that were partially stripped to /C:/...
+  if (s0.startsWith('/') && /^[a-zA-Z]:[\\\/]/.test(s0.slice(1))) {
+    return s0.slice(1);
+  }
+
+  return s0;
+}
+
+function tryResolveFromCache(kind: CacheKind, fileRelLike: string): string | undefined {
+  try {
+    const dir = kind === 'image' ? getImageCacheDir() : getFileCacheDir();
+    if (!dir) return undefined;
+
+    const rel = String(fileRelLike || '').trim();
+    if (!rel) return undefined;
+
+    // Treat as relative to cache dir (supports nested rel paths)
+    const candidate = path.resolve(dir, rel);
+    const relToDir = path.relative(dir, candidate);
+    if (relToDir.startsWith('..') || path.isAbsolute(relToDir)) return undefined;
+    if (fs.existsSync(candidate)) return candidate;
+  } catch {
+  }
+  return undefined;
 }
 
 async function ensureDir(dir: string): Promise<void> {
@@ -130,8 +172,16 @@ export async function downloadToCache(urlStr: string, kind: CacheKind, filenameH
 export async function ensureLocalFile(opts: EnsureLocalFileOptions): Promise<string | undefined> {
   const { kind, file, url, filenameHint } = opts;
 
-  if (file && isLocalPath(file) && fs.existsSync(file)) {
-    return file;
+  const fileNorm = file ? normalizeLocalPath(file) : '';
+
+  if (fileNorm && isLocalPath(fileNorm) && fs.existsSync(fileNorm)) {
+    return fileNorm;
+  }
+
+  // Some OneBot/NapCat fields provide only a filename; resolve it to our cache dir.
+  if (fileNorm && !isLocalPath(fileNorm)) {
+    const fromCache = tryResolveFromCache(kind, fileNorm);
+    if (fromCache) return fromCache;
   }
 
   const finalUrl = url && /^https?:\/\//i.test(url) ? url : undefined;
@@ -144,7 +194,7 @@ export async function ensureLocalFile(opts: EnsureLocalFileOptions): Promise<str
     }
   }
 
-  return file && isLocalPath(file) ? file : undefined;
+  return fileNorm && isLocalPath(fileNorm) ? fileNorm : undefined;
 }
 
 async function cleanupCacheDir(dir: string, ttlMs: number, logger?: CacheLoggerLike): Promise<void> {

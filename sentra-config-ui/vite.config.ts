@@ -95,6 +95,16 @@ export default defineConfig(({ mode }) => {
     server: {
       host: true,
       port: clientPort,
+      watch: {
+        ignored: [
+          '**/dist/**',
+          '**/.git/**',
+          '**/logs/**',
+          '**/*.log',
+          '**/napcat/**',
+          '**/cache/**',
+        ],
+      },
       proxy: {
         '/api': {
           target: `http://localhost:${serverPort}`,

@@ -2270,18 +2270,18 @@ export const DeepWikiChat: React.FC<DeepWikiChatProps> = ({ theme }) => {
                       (Array.isArray(msg.meta?.agentEvents) && msg.meta.agentEvents.length > 0) ||
                       (Array.isArray(msg.meta?.agentTrace) && msg.meta.agentTrace.length > 0)
                     ) && (
-                      <details className={styles.inlineTrace}>
-                        <summary className={styles.inlineTraceSummary}>Agent 日志</summary>
-                        <div className={styles.inlineTraceBody}>
-                          {renderAgentTimeline(msg, true)}
-                          <div className={styles.inlineTraceFooter}>
-                            <button type="button" className={styles.inlineTraceOpenBtn} onClick={() => openTrace(msg.id)}>
-                              打开完整日志
-                            </button>
+                        <details className={styles.inlineTrace}>
+                          <summary className={styles.inlineTraceSummary}>Agent 日志</summary>
+                          <div className={styles.inlineTraceBody}>
+                            {renderAgentTimeline(msg, true)}
+                            <div className={styles.inlineTraceFooter}>
+                              <button type="button" className={styles.inlineTraceOpenBtn} onClick={() => openTrace(msg.id)}>
+                                打开完整日志
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      </details>
-                    )}
+                        </details>
+                      )}
                   </div>
                 </div>
 
@@ -2370,7 +2370,7 @@ export const DeepWikiChat: React.FC<DeepWikiChatProps> = ({ theme }) => {
             <textarea
               ref={textareaRef}
               className={styles.textarea}
-              placeholder="请输入要查询的文档问题，例如：如何配置 NapCat 适配器？"
+              placeholder="请输入要查询的文档问题，例如：如何配置 NC沙盒 适配器？"
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}

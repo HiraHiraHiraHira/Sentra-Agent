@@ -257,7 +257,7 @@ export const IOSHomeScreen: React.FC<IOSHomeScreenProps> = ({ icons, folders, on
                     position: 'fixed',
                     left: 0,
                     right: 0,
-                    bottom: 120,
+                    bottom: 'calc(120px + env(safe-area-inset-bottom, 0px))',
                     display: 'flex',
                     justifyContent: 'center',
                     gap: 8,

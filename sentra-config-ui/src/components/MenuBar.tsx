@@ -127,7 +127,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
       try {
         storage.setString('sentra_system_font', next);
         storage.remove('sentra_font_file');
-      } catch {}
+      } catch { }
 
       setActiveFontFile(null);
       return;
@@ -140,14 +140,14 @@ export const MenuBar: React.FC<MenuBarProps> = ({
       const face = new FontFace(family, `url(/fonts/${encodeURIComponent(fileName)})`);
       await face.load();
       document.fonts.add(face);
-    } catch {}
+    } catch { }
 
     const next = `"${family}", ${fallback}`;
     document.documentElement.style.setProperty('--system-font', next);
     try {
       storage.setString('sentra_system_font', next);
       storage.setString('sentra_font_file', fileName);
-    } catch {}
+    } catch { }
 
     setActiveFontFile(fileName);
   };
@@ -521,7 +521,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
           </div>
         )}
         onClose={() => setShowNetworkAlert(false)}
-        onConfirm={() => {}}
+        onConfirm={() => { }}
         confirmText="关闭"
         showCancel={false}
         isDanger={false}

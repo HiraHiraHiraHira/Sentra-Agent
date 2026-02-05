@@ -379,9 +379,9 @@ export function useQqWsConnection(opts: {
 
     if (cfg && cfg.enableStream === false) {
       setStatus('error');
-      setStatusText('Napcat 未启用消息流（ENABLE_STREAM=false）');
+      setStatusText('NC沙盒 未启用消息流（ENABLE_STREAM=false）');
       try {
-        if (toast && !unloadingRef.current) antdMessage.error('Napcat 未启用消息流（ENABLE_STREAM=false）');
+        if (toast && !unloadingRef.current) antdMessage.error('NC沙盒 未启用消息流（ENABLE_STREAM=false）');
       } catch {
       }
       try {
@@ -405,9 +405,9 @@ export function useQqWsConnection(opts: {
         const errMsg = String(h?.error || 'health_failed');
         if (/stream_disabled/i.test(errMsg) || /enable_stream\s*=\s*false/i.test(errMsg)) {
           setStatus('error');
-          setStatusText('Napcat 未启用消息流（ENABLE_STREAM=false）');
+          setStatusText('NC沙盒 未启用消息流（ENABLE_STREAM=false）');
           try {
-            if (toast && !unloadingRef.current) antdMessage.error('Napcat 未启用消息流（ENABLE_STREAM=false）');
+            if (toast && !unloadingRef.current) antdMessage.error('NC沙盒 未启用消息流（ENABLE_STREAM=false）');
           } catch {
           }
           try {

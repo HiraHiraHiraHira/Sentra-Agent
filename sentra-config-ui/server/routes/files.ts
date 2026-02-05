@@ -2,10 +2,50 @@ import { FastifyInstance } from 'fastify';
 import { join, resolve, relative, dirname, isAbsolute } from 'path';
 import { existsSync, statSync, readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, rmSync, createReadStream } from 'fs';
 import { getRuntimeConfig } from '../utils/runtimeConfig.ts';
+import { fileURLToPath } from 'url';
 
 // Helper to get root directory
 function getRootDir(): string {
     return resolve(process.cwd(), process.env.SENTRA_ROOT || '..');
+}
+
+function normalizeIncomingRawPath(input: string): { path: string; isAbs: boolean } {
+    const raw = String(input || '').trim();
+    if (!raw) return { path: '', isAbs: false };
+
+    // Legacy/broken format: repo-relative prefix + embedded file:// URL
+    // Example: sentra-adapter/napcat/cache/images/file:///E:/repo/artifacts/x.png
+    const embeddedIdx = raw.toLowerCase().indexOf('file://');
+    if (embeddedIdx > 0) {
+        const tail = raw.slice(embeddedIdx);
+        try {
+            const u = new URL(tail);
+            if (u.protocol === 'file:') {
+                const p = fileURLToPath(u);
+                return { path: p, isAbs: true };
+            }
+        } catch {
+        }
+    }
+
+    if (/^file:\/\//i.test(raw)) {
+        try {
+            const u = new URL(raw);
+            if (u.protocol === 'file:') {
+                const p = fileURLToPath(u);
+                return { path: p, isAbs: true };
+            }
+        } catch {
+        }
+    }
+
+    // Tolerate '/C:/...' and similar
+    if (raw.startsWith('/') && /^[a-zA-Z]:[\\/]/.test(raw.slice(1))) {
+        return { path: raw.slice(1), isAbs: true };
+    }
+
+    const isAbs = isAbsolute(raw) || /^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('\\\\');
+    return { path: raw, isAbs };
 }
 
 // Helper to check if path is safe (inside root)
@@ -85,7 +125,16 @@ function isAllowedAbsolutePath(absPath: string): boolean {
     const root = getRootDir();
     const allow: string[] = [];
 
-    // Always allow Sentra-root relative by default (handled elsewhere)
+    // Allow absolute paths that are still within Sentra root
+    // (same policy as relative safe paths, but for clients that send absolute paths)
+    try {
+        const rel = relative(root, absRaw);
+        if (!rel) return true;
+        if (!rel.startsWith('..') && !isAbsolute(rel)) {
+            return true;
+        }
+    } catch {
+    }
 
     // Allow napcat cache dirs (env-driven)
     try {
@@ -189,7 +238,8 @@ export async function fileRoutes(fastify: FastifyInstance) {
         Querystring: { path: string; download?: string };
     }>('/api/files/raw', async (request, reply) => {
         try {
-            const path = String(request.query.path || '');
+            const incoming = normalizeIncomingRawPath(String(request.query.path || ''));
+            const path = incoming.path;
             if (!path) return reply.code(400).send({ error: 'Missing path' });
 
             const allowAny = (() => {
@@ -201,7 +251,7 @@ export async function fileRoutes(fastify: FastifyInstance) {
                 }
             })();
 
-            const isAbs = isAbsolute(path) || /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith('\\\\');
+            const isAbs = incoming.isAbs;
             const fullPath = isAbs ? normalizeAbs(path) : getAbsolutePath(path);
 
             if (!allowAny) {
@@ -249,6 +299,45 @@ export async function fileRoutes(fastify: FastifyInstance) {
                 reply.header('Content-Disposition', `attachment; filename="${encodeURIComponent(name)}"`);
             }
 
+            // Support HTTP Range for audio/video streaming (seeking, iOS Safari compatibility)
+            const size = Number(stat.size || 0);
+            const range = String((request.headers as any)?.range || '').trim();
+            const isMedia = /^video\//i.test(type) || /^audio\//i.test(type);
+            if (isMedia) {
+                reply.header('Accept-Ranges', 'bytes');
+            }
+
+            if (isMedia && range && /^bytes=\d*-\d*$/i.test(range)) {
+                const m = range.match(/^bytes=(\d*)-(\d*)$/i);
+                const startRaw = m?.[1] ? Number(m?.[1]) : NaN;
+                const endRaw = m?.[2] ? Number(m?.[2]) : NaN;
+
+                let start = Number.isFinite(startRaw) ? Math.max(0, Math.trunc(startRaw)) : 0;
+                let end = Number.isFinite(endRaw) ? Math.max(0, Math.trunc(endRaw)) : (size > 0 ? size - 1 : 0);
+
+                if (size > 0) {
+                    if (start >= size) {
+                        reply.header('Content-Range', `bytes */${size}`);
+                        return reply.code(416).send();
+                    }
+                    if (end >= size) end = size - 1;
+                    if (end < start) end = Math.min(size - 1, start);
+                }
+
+                const chunkSize = size > 0 ? (end - start + 1) : undefined;
+                if (size > 0) {
+                    reply.header('Content-Range', `bytes ${start}-${end}/${size}`);
+                }
+                if (chunkSize != null) {
+                    reply.header('Content-Length', String(chunkSize));
+                }
+                const stream = createReadStream(fullPath, { start, end });
+                return reply.code(206).send(stream);
+            }
+
+            if (Number.isFinite(size) && size > 0) {
+                reply.header('Content-Length', String(size));
+            }
             const stream = createReadStream(fullPath);
             return reply.send(stream);
         } catch (error) {

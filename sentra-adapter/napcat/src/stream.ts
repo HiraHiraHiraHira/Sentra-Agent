@@ -896,53 +896,26 @@ export class MessageStream {
       return one.length > maxLen ? `${one.slice(0, maxLen)}...` : one;
     };
 
-    const pickUrlLike = (v: any, depth = 0): string | undefined => {
+    const pickUrlLike = (v: any): string | undefined => {
+      // 按 Napcat 实际字段处理：绝大多数情况下就是 string。
+      // 仅兼容 { url: string } / [string] 这类常见结构，不做“猜字段”递归。
       if (v == null) return undefined;
-      if (depth > 2) return undefined;
       if (typeof v === 'string') {
         const s = v.trim();
         return s ? s : undefined;
       }
       if (Array.isArray(v)) {
         for (const it of v) {
-          const got = pickUrlLike(it, depth + 1);
+          const got = pickUrlLike(it);
           if (got) return got;
         }
         return undefined;
       }
       if (typeof v === 'object') {
-        const obj: any = v;
-        const keys = [
-          'url',
-          'src',
-          'srcUrl',
-          'src_url',
-          'preview',
-          'previewUrl',
-          'preview_url',
-          'cover',
-          'coverUrl',
-          'cover_url',
-          'image',
-          'imageUrl',
-          'image_url',
-          'pic',
-          'picUrl',
-          'pic_url',
-          'picture',
-          'thumb',
-          'thumbUrl',
-          'thumb_url',
-          'thumbnail',
-          'thumbnailUrl',
-          'thumbnail_url',
-          'icon',
-          'iconUrl',
-          'icon_url',
-        ];
-        for (const k of keys) {
-          const got = pickUrlLike(obj?.[k], depth + 1);
-          if (got) return got;
+        const got = (v as any)?.url;
+        if (typeof got === 'string') {
+          const s = got.trim();
+          return s ? s : undefined;
         }
       }
       return undefined;
@@ -985,57 +958,24 @@ export class MessageStream {
         undefined;
 
       const url =
+        // Napcat get_mini_app_ark 响应示例：metaData.detail_1.url
         detail1?.url ||
+        // 兼容少量历史字段（非递归猜测，仅枚举）
         detail1?.jumpUrl ||
-        detail1?.qqdocurl ||
-        detail1?.jump_url ||
         metaData?.jumpUrl ||
-        metaData?.jump_url ||
         obj?.jumpUrl ||
         obj?.webUrl ||
         obj?.url ||
-        obj?.jump_url ||
-        obj?.web_url ||
-        obj?.meta?.url ||
-        obj?.meta?.news?.jumpUrl ||
-        obj?.meta?.news?.url ||
         undefined;
 
       const image =
+        // Napcat get_mini_app_ark 响应示例：metaData.detail_1.preview / icon
         pickUrlLike(detail1?.preview) ||
-        pickUrlLike(detail1?.previewUrl) ||
-        pickUrlLike(detail1?.preview_url) ||
-        pickUrlLike(detail1?.cover) ||
-        pickUrlLike(detail1?.coverUrl) ||
-        pickUrlLike(detail1?.cover_url) ||
-        pickUrlLike(detail1?.image) ||
-        pickUrlLike(detail1?.imageUrl) ||
-        pickUrlLike(detail1?.image_url) ||
-        pickUrlLike(detail1?.pic) ||
-        pickUrlLike(detail1?.picUrl) ||
-        pickUrlLike(detail1?.pic_url) ||
         pickUrlLike(detail1?.icon) ||
-        pickUrlLike(detail1?.iconUrl) ||
-        pickUrlLike(detail1?.icon_url) ||
-        pickUrlLike(metaData?.preview) ||
-        pickUrlLike(metaData?.previewUrl) ||
-        pickUrlLike(metaData?.cover) ||
-        pickUrlLike(metaData?.coverUrl) ||
-        pickUrlLike(metaData?.image) ||
-        pickUrlLike(metaData?.imageUrl) ||
-        pickUrlLike(metaData?.icon) ||
-        pickUrlLike(metaData?.iconUrl) ||
+        // 兼容少量历史字段（非递归猜测，仅枚举）
         pickUrlLike(obj?.picUrl) ||
-        pickUrlLike(obj?.pic_url) ||
         pickUrlLike(obj?.image) ||
-        pickUrlLike(obj?.imageUrl) ||
-        pickUrlLike(obj?.image_url) ||
-        pickUrlLike(obj?.meta?.preview) ||
-        pickUrlLike(obj?.meta?.news?.preview) ||
-        pickUrlLike(obj?.meta?.news?.image) ||
         pickUrlLike(obj?.cover) ||
-        pickUrlLike(obj?.coverUrl) ||
-        pickUrlLike(obj?.cover_url) ||
         undefined;
 
       const source =

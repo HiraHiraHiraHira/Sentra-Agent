@@ -955,8 +955,8 @@ export default function McpServersManager(props: Props) {
         open={editorOpen}
         title={editingId ? '编辑外部 MCP' : '新增外部 MCP'}
         onClose={() => setEditorOpen(false)}
-        width={520}
         destroyOnHidden
+        styles={{ wrapper: { width: 520, maxWidth: '92vw' } }}
         extra={(
           <Space>
             <Button onClick={() => setEditorOpen(false)}>取消</Button>
