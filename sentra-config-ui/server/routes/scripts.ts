@@ -136,6 +136,21 @@ export async function scriptRoutes(fastify: FastifyInstance) {
             return reply.code(404).send({ error: 'Process not found' });
         }
 
+        // If process has already ended, don't stream historical output - just send exit event
+        if (process.exitCode !== null) {
+            reply.raw.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'X-Accel-Buffering': 'no',
+                'Access-Control-Allow-Origin': '*',
+            });
+            reply.raw.write(`: stream-open\n\n`);
+            reply.raw.write(`data: ${JSON.stringify({ type: 'exit', code: process.exitCode })}\n\n`);
+            reply.raw.end();
+            return;
+        }
+
         reply.raw.writeHead(200, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',

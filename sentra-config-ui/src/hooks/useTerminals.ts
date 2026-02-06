@@ -3,7 +3,6 @@ import { getAuthHeaders } from '../services/api';
 import type { TerminalWin } from '../types/ui';
 import type { ToastMessage } from '../components/Toast';
 import { useTerminalStore } from '../store/terminalStore';
-import { removeTerminalSnapshot } from '../utils/terminalSnapshotDb';
 
 export type UseTerminalsParams = {
   addToast: (type: ToastMessage['type'], title: string, message?: string) => void;
@@ -179,21 +178,6 @@ export function useTerminals({ addToast, allocateZ }: UseTerminalsParams) {
         console.error('Failed to kill process on close', e);
       }
     }
-
-    // Cleanup IndexedDB snapshot when terminal is closed - critical for WSL mode
-    // to prevent old logs from reappearing on reopen
-    if (terminal) {
-      const pid = String(terminal.processId || '');
-      const kind = String(terminal.appKey || '').startsWith('execpty:') ? 'exec' : 'script';
-      try {
-        await removeTerminalSnapshot(kind, pid);
-        console.log(`[Terminals] Cleaned up snapshot for ${kind}:${pid}`);
-      } catch (e) {
-        // Non-critical, snapshot cleanup failure shouldn't block terminal close
-        console.warn(`[Terminals] Failed to cleanup snapshot for ${kind}:${pid}`, e);
-      }
-    }
-
     setTerminalWindows(prev => prev.filter(t => t.id !== id));
     if (st.activeTerminalId === id) setActiveTerminalId(null);
   };

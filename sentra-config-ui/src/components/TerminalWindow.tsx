@@ -481,7 +481,21 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
                 if (res.status === 404) return 'not_found';
                 if (!res.ok) return 'alive';
                 const st: any = await res.json();
-                if (st && (st.exitCode != null || st.endTime != null)) return 'ended';
+
+                // Check if process has ended
+                if (st && (st.exitCode != null || st.endTime != null)) {
+                    // Process has ended - treat as not_found so UI shows proper message
+                    return 'not_found';
+                }
+
+                // Additional check: if we have output but no recent activity, might be a zombie
+                const now = Date.now();
+                const lastActivity = st?.lastActivityTime || st?.startTime;
+                if (lastActivity && (now - new Date(lastActivity).getTime()) > 5 * 60 * 1000) {
+                    // No activity for 5 minutes, treat as ended
+                    return 'not_found';
+                }
+
                 return 'alive';
             } catch {
                 return 'alive';
