@@ -1,6 +1,6 @@
 
 import { FastifyInstance } from 'fastify';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -11,6 +11,64 @@ let lastUiHeartbeat = 0;
 let uiOnline = false;
 let staleLogged = false;
 let heartbeatTimer: NodeJS.Timeout | null = null;
+
+let lastUpdateCheckTs = 0;
+let lastUpdateCheckRes: any = null;
+
+function normalizeRemoteUrl(url: string): string {
+    let u = String(url || '').trim();
+    if (!u) return '';
+    u = u.replace(/\s+/g, '');
+    u = u.replace(/\/+$/g, '');
+    u = u.replace(/\.git$/i, '');
+    return u;
+}
+
+function getConfiguredUpdateSource(): { source: string; url: string } {
+    const source = String(process.env.UPDATE_SOURCE || 'github').trim().toLowerCase();
+    const customUrl = String(process.env.UPDATE_CUSTOM_URL || '').trim();
+
+    if (source === 'gitee') {
+        return { source, url: 'https://gitee.com/yuanpluss/Sentra-Agent.git' };
+    }
+    if (source === 'custom' && customUrl) {
+        return { source, url: customUrl };
+    }
+    return { source: 'github', url: 'https://github.com/JustForSO/Sentra-Agent.git' };
+}
+
+function ensureOriginRemote(repoDir: string, targetUrl: string): { ok: boolean; originUrl: string; changed: boolean; error?: string } {
+    if (!targetUrl) {
+        return { ok: true, originUrl: '', changed: false };
+    }
+
+    const getUrl = runGit(repoDir, ['remote', 'get-url', 'origin']);
+    const originUrl = String(getUrl.stdout || '').trim();
+    const same = normalizeRemoteUrl(originUrl) && normalizeRemoteUrl(originUrl) === normalizeRemoteUrl(targetUrl);
+    if (same) {
+        return { ok: true, originUrl, changed: false };
+    }
+
+    // Best-effort align origin with configured update source (matches scripts/update.mjs behavior)
+    const setUrl = runGit(repoDir, ['remote', 'set-url', 'origin', targetUrl]);
+    if (setUrl.ok) {
+        const after = runGit(repoDir, ['remote', 'get-url', 'origin']);
+        return { ok: true, originUrl: String(after.stdout || '').trim() || originUrl, changed: true };
+    }
+
+    const addUrl = runGit(repoDir, ['remote', 'add', 'origin', targetUrl]);
+    if (addUrl.ok) {
+        const after = runGit(repoDir, ['remote', 'get-url', 'origin']);
+        return { ok: true, originUrl: String(after.stdout || '').trim() || originUrl, changed: true };
+    }
+
+    return {
+        ok: false,
+        originUrl,
+        changed: false,
+        error: String(setUrl.stderr || addUrl.stderr || '').trim() || 'failed to set origin remote',
+    };
+}
 
 function fetchJson(url: string): Promise<any> {
     return new Promise((resolve, reject) => {
@@ -34,6 +92,24 @@ function fetchJson(url: string): Promise<any> {
             try { req.destroy(new Error('timeout')); } catch { }
         });
     });
+}
+
+function gitAvailable(): boolean {
+    try {
+        const r = spawnSync('git', ['--version'], { stdio: 'ignore', shell: true });
+        return r.status === 0;
+    } catch {
+        return false;
+    }
+}
+
+function runGit(repoDir: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
+    try {
+        const r = spawnSync('git', args, { cwd: repoDir, shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        return { ok: r.status === 0, stdout: String(r.stdout || ''), stderr: String(r.stderr || '') };
+    } catch (e) {
+        return { ok: false, stdout: '', stderr: e instanceof Error ? e.message : String(e) };
+    }
 }
 
 export async function systemRoutes(fastify: FastifyInstance) {
@@ -106,6 +182,183 @@ export async function systemRoutes(fastify: FastifyInstance) {
             publicError: publicError || undefined,
             fetchedAt: Date.now(),
         });
+    });
+
+    fastify.get('/api/system/update/check', async (_request, reply) => {
+        const now = Date.now();
+        const CACHE_MS = 30_000;
+        if (lastUpdateCheckRes && lastUpdateCheckTs > 0 && (now - lastUpdateCheckTs) <= CACHE_MS) {
+            reply.send(lastUpdateCheckRes);
+            return;
+        }
+
+        if (!gitAvailable()) {
+            const res = { success: false, error: 'git not available', checkedAt: now };
+            lastUpdateCheckTs = now;
+            lastUpdateCheckRes = res;
+            reply.send(res);
+            return;
+        }
+
+        const candidates: string[] = [];
+        candidates.push(process.cwd());
+
+        const sentraRootRel = String(process.env.SENTRA_ROOT || '').trim();
+        if (sentraRootRel) {
+            candidates.push(path.resolve(process.cwd(), sentraRootRel));
+        }
+
+        candidates.push(path.resolve(process.cwd(), '..'));
+        candidates.push(path.resolve(process.cwd(), '../..'));
+        candidates.push(path.resolve(process.cwd(), '../../..'));
+
+        let repoDir = '';
+        for (const c of candidates) {
+            const rev = runGit(c, ['rev-parse', '--is-inside-work-tree']);
+            if (rev.ok && String(rev.stdout || '').trim().toLowerCase().includes('true')) {
+                repoDir = c;
+                break;
+            }
+        }
+
+        if (!repoDir) {
+            const res = { success: false, error: 'not a git worktree', checkedAt: now };
+            lastUpdateCheckTs = now;
+            lastUpdateCheckRes = res;
+            reply.send(res);
+            return;
+        }
+
+        const cfg = getConfiguredUpdateSource();
+        const originRes = ensureOriginRemote(repoDir, cfg.url);
+
+        // Best-effort fetch. If network is down, still return local info.
+        const fetchRes = runGit(repoDir, ['fetch', '--prune']);
+
+        const head = runGit(repoDir, ['rev-parse', 'HEAD']);
+        const branch0 = runGit(repoDir, ['rev-parse', '--abbrev-ref', 'HEAD']);
+        const originHead = runGit(repoDir, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+
+        const currentBranch = String(branch0.stdout || '').trim() || 'main';
+        const originDefaultRef = String(originHead.stdout || '').trim();
+        const originBranch = originDefaultRef.startsWith('origin/') ? originDefaultRef.slice('origin/'.length) : '';
+        const remoteBranch = originBranch || (currentBranch === 'HEAD' ? 'main' : currentBranch);
+
+        const remoteRef = `origin/${remoteBranch}`;
+        const remote = runGit(repoDir, ['rev-parse', remoteRef]);
+        if (!remote.ok) {
+            const res = {
+                success: false,
+                checkedAt: now,
+                repoDir,
+                updateSource: cfg.source,
+                updateSourceUrl: cfg.url,
+                originUrl: originRes.originUrl || undefined,
+                originAligned: originRes.ok ? normalizeRemoteUrl(originRes.originUrl) === normalizeRemoteUrl(cfg.url) : false,
+                originChanged: !!originRes.changed,
+                originError: originRes.ok ? undefined : originRes.error,
+                branch: currentBranch,
+                remoteBranch,
+                remoteRef,
+                error: `remote ref not available: ${remoteRef}`,
+                details: String(remote.stderr || '').trim() || undefined,
+                fetchOk: fetchRes.ok,
+                fetchError: fetchRes.ok ? undefined : (String(fetchRes.stderr || '').trim() || 'git fetch failed'),
+            };
+            lastUpdateCheckTs = now;
+            lastUpdateCheckRes = res;
+            reply.send(res);
+            return;
+        }
+        const behind = runGit(repoDir, ['rev-list', '--count', `HEAD..origin/${remoteBranch}`]);
+        const ahead = runGit(repoDir, ['rev-list', '--count', `origin/${remoteBranch}..HEAD`]);
+        const log = runGit(repoDir, ['log', '--oneline', '--max-count=20', `HEAD..origin/${remoteBranch}`]);
+        const logRich = runGit(repoDir, ['log', '--max-count=20', '--date=iso', '--pretty=format:%H%x09%an%x09%ad%x09%s', `HEAD..origin/${remoteBranch}`]);
+        const diffFiles = runGit(repoDir, ['diff', '--name-status', `HEAD..origin/${remoteBranch}`]);
+
+        const behindCount = Number.parseInt(String(behind.stdout || '0').trim(), 10);
+        const aheadCount = Number.parseInt(String(ahead.stdout || '0').trim(), 10);
+        const logLines = String(log.stdout || '')
+            .split(/\r?\n/)
+            .map((x) => x.trim())
+            .filter(Boolean);
+
+        const commits = String(logRich.stdout || '')
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .map((line) => {
+                const parts = line.split('\t');
+                const sha = String(parts[0] || '').trim();
+                const author = String(parts[1] || '').trim();
+                const date = String(parts[2] || '').trim();
+                const subject = String(parts.slice(3).join('\t') || '').trim();
+                return {
+                    sha,
+                    shortSha: sha ? sha.slice(0, 7) : '',
+                    author,
+                    date,
+                    subject,
+                };
+            })
+            .filter((c) => !!c.sha);
+
+        const files = String(diffFiles.stdout || '')
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .map((line) => {
+                const [statusRaw, ...rest] = line.split(/\s+/);
+                const file = rest.join(' ').trim();
+                return { status: String(statusRaw || '').trim(), file };
+            })
+            .filter((x) => !!x.file);
+
+        // Optional per-commit file listing (best-effort, keep small)
+        if (Number.isFinite(behindCount) && behindCount > 0 && behindCount <= 30 && commits.length > 0) {
+            for (const c of commits) {
+                const show = runGit(repoDir, ['show', '--name-status', '--pretty=format:', '-1', c.sha]);
+                const cl = String(show.stdout || '')
+                    .split(/\r?\n/)
+                    .map((x) => x.trim())
+                    .filter(Boolean)
+                    .map((line) => {
+                        const [st, ...rs] = line.split(/\s+/);
+                        const file = rs.join(' ').trim();
+                        return { status: String(st || '').trim(), file };
+                    })
+                    .filter((x) => !!x.file);
+                (c as any).files = cl;
+            }
+        }
+
+        const res = {
+            success: true,
+            checkedAt: now,
+            repoDir,
+            updateSource: cfg.source,
+            updateSourceUrl: cfg.url,
+            originUrl: originRes.originUrl || undefined,
+            originAligned: originRes.ok ? normalizeRemoteUrl(originRes.originUrl) === normalizeRemoteUrl(cfg.url) : false,
+            originChanged: !!originRes.changed,
+            originError: originRes.ok ? undefined : originRes.error,
+            branch: currentBranch,
+            remoteBranch,
+            currentCommit: String(head.stdout || '').trim(),
+            remoteCommit: String(remote.stdout || '').trim(),
+            behind: Number.isFinite(behindCount) ? Math.max(0, behindCount) : 0,
+            ahead: Number.isFinite(aheadCount) ? Math.max(0, aheadCount) : 0,
+            hasUpdate: Number.isFinite(behindCount) ? behindCount > 0 : false,
+            log: logLines,
+            commits,
+            files,
+            fetchOk: fetchRes.ok,
+            fetchError: fetchRes.ok ? undefined : (String(fetchRes.stderr || '').trim() || 'git fetch failed'),
+        };
+
+        lastUpdateCheckTs = now;
+        lastUpdateCheckRes = res;
+        reply.send(res);
     });
 
     fastify.post('/api/system/restart', async (request, reply) => {

@@ -2,7 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import styles from './RedisAdminManager.module.css';
 import { Alert, Button, Checkbox, Descriptions, Divider, Empty, Input, List, Modal, Popover, Segmented, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { CopyOutlined, DeleteOutlined, EyeOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EyeOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons';
 import { XMLBuilder, XMLParser } from 'fast-xml-parser';
 import {
   fetchRedisAdminGroups,
@@ -1186,7 +1186,7 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
       width: 420,
       ellipsis: true,
       render: (v: any) => (
-        <Typography.Text code copyable={{ text: String(v || '') }} style={{ fontSize: 12 }}>
+        <Typography.Text code style={{ fontSize: 12 }}>
           {String(v || '')}
         </Typography.Text>
       ),
@@ -1205,7 +1205,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
           <Tooltip title={txt.length > 220 ? '点击查看完整内容' : null}>
             <span style={{ display: 'inline-block', maxWidth: '100%' }}>
               <Typography.Text
-                copyable={{ text: txt }}
                 style={{ fontSize: 12, wordBreak: 'break-word', cursor: 'pointer' }}
                 onClick={() => {
                   if (forbidAttr) {
@@ -1696,7 +1695,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
     if (!el) return;
     const compute = () => {
       const h = el.clientHeight;
-      // reserve some space for pagination/footer + padding
       const next = Math.max(240, Math.floor(h - 140));
       setKeyTableScrollY(next);
     };
@@ -1959,21 +1957,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
         width: 120,
         render: (_v: any, r) => (
           <Space size={6}>
-            <Tooltip title="复制 Key">
-              <Button
-                size="small"
-                type="text"
-                icon={<CopyOutlined />}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const k = String(r?.key || '');
-                  if (!k) return;
-                  navigator.clipboard?.writeText(k)
-                    .then(() => addToast('success', '已复制 Key'))
-                    .catch((err) => addToast('error', '复制失败', String((err as any)?.message || err)));
-                }}
-              />
-            </Tooltip>
             <Tooltip title="查看详情">
               <Button
                 size="small"
@@ -2046,18 +2029,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
     }
   }, []);
 
-  const copySelectedKeys = useCallback(async () => {
-    const list = (keyTableSelectedKeys || []).map(String).filter(Boolean);
-    if (!list.length) return;
-    const text = list.join('\n');
-    try {
-      await navigator.clipboard?.writeText(text);
-      addToast('success', '已复制选中 Keys', `count=${list.length}`);
-    } catch (e: any) {
-      addToast('error', '复制失败', String(e?.message || e));
-    }
-  }, [addToast, keyTableSelectedKeys]);
-
   return (
     <div className={`${styles.root} ${isCompact ? styles.mobileRoot : ''}`}>
       <Modal
@@ -2094,11 +2065,13 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
           <Divider style={{ margin: '12px 0' }} />
 
           <Descriptions size="small" column={1} bordered>
-            <Descriptions.Item label="Profile">{profile || '-'}</Descriptions.Item>
+            <Descriptions.Item label="Profile">
+              <Typography.Text copyable={!!profile}>{profile || '-'}</Typography.Text>
+            </Descriptions.Item>
             <Descriptions.Item label="Key">
               <Typography.Text
                 code
-                copyable={deleteKeyTarget ? { text: String(deleteKeyTarget) } : false}
+                copyable={!!deleteKeyTarget}
                 style={{ wordBreak: 'break-all' }}
               >
                 {deleteKeyTarget || '-'}
@@ -2249,7 +2222,9 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
           <Divider style={{ margin: '12px 0' }} />
 
           <Descriptions size="small" column={1} bordered>
-            <Descriptions.Item label="Profile">{profile || '-'}</Descriptions.Item>
+            <Descriptions.Item label="Profile">
+              <Typography.Text copyable={!!profile}>{profile || '-'}</Typography.Text>
+            </Descriptions.Item>
             <Descriptions.Item label="选中数量">{deleteKeysTargets.length}</Descriptions.Item>
             <Descriptions.Item label="删除预览(dry-run)">
               {deleteKeysPreview ? (
@@ -2261,6 +2236,20 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
               )}
             </Descriptions.Item>
             <Descriptions.Item label="Keys(前20条)">
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+                <Typography.Text
+                  copyable={
+                    deleteKeysTargets.length
+                      ? {
+                        text: deleteKeysTargets.join('\n'),
+                      }
+                      : false
+                  }
+                  style={{ fontSize: 12 }}
+                >
+                  复制全部 Keys
+                </Typography.Text>
+              </div>
               <pre className={styles.previewPre} style={{ maxHeight: 180, overflow: 'auto', margin: 0 }}>
                 {deleteKeysTargets.slice(0, 20).join('\n')}{deleteKeysTargets.length > 20 ? `\n... (+${deleteKeysTargets.length - 20})` : ''}
               </pre>
@@ -2443,7 +2432,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                 </Descriptions.Item>
                 <Descriptions.Item label="Root">
                   <Typography.Text
-                    copyable={sentraRoot ? { text: String(sentraRoot) } : false}
                     style={{ wordBreak: 'break-all' }}
                   >
                     {sentraRoot || '-'}
@@ -2451,7 +2439,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                 </Descriptions.Item>
                 <Descriptions.Item label="Env">
                   <Typography.Text
-                    copyable={redisInfo?.envPath ? { text: String(redisInfo.envPath) } : false}
                     style={{ wordBreak: 'break-all' }}
                   >
                     {String(redisInfo?.envPath || '-')}
@@ -2459,7 +2446,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                 </Descriptions.Item>
                 <Descriptions.Item label="Redis">
                   <Typography.Text
-                    copyable={redisInfo?.host ? { text: `${redisInfo.host}:${redisInfo.port ?? ''}` } : false}
                     style={{ wordBreak: 'break-all' }}
                   >
                     {redisInfo?.host ? `${redisInfo.host}:${redisInfo.port ?? '-'}` : '-'}
@@ -2637,7 +2623,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
               <div className={styles.small}>keys={filteredItems.length} / raw={items.length}</div>
               {!isCompact ? (
                 <>
-                  <Button size="small" onClick={copySelectedKeys} disabled={!keyTableSelectedKeys.length}>复制选中</Button>
                   <Button size="small" onClick={() => setKeyTableSelectedKeys([])} disabled={!keyTableSelectedKeys.length}>清空选择</Button>
                   <Button size="small" danger onClick={() => void openDeleteSelectedKeys()} disabled={busy || !keyTableSelectedKeys.length}>
                     删除选中
@@ -2725,21 +2710,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                   </div>
 
                   <div className={styles.keyCardActions}>
-                    <Button
-                      size="small"
-                      type="text"
-                      icon={<CopyOutlined />}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const k = String(it.key || '');
-                        if (!k) return;
-                        navigator.clipboard?.writeText(k)
-                          .then(() => addToast('success', '已复制 Key'))
-                          .catch((err) => addToast('error', '复制失败', String((err as any)?.message || err)));
-                      }}
-                    >
-                      复制
-                    </Button>
                     <Button
                       size="small"
                       type="text"
@@ -2864,21 +2834,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                     </Button>
                     <Button
                       size="small"
-                      onClick={async () => {
-                        if (!selectedKey) return;
-                        try {
-                          await navigator.clipboard?.writeText(selectedKey);
-                          addToast('success', '已复制 Key');
-                        } catch (e: any) {
-                          addToast('error', '复制失败', String(e?.message || e));
-                        }
-                      }}
-                      disabled={busy || !selectedKey}
-                    >
-                      复制 Key
-                    </Button>
-                    <Button
-                      size="small"
                       danger
                       onClick={() => void openDeleteSelectedKey()}
                       disabled={busy || !effectiveSelectedKey}
@@ -2911,7 +2866,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                       <Descriptions.Item label="Key">
                         <Typography.Text
                           code
-                          copyable={selectedItem.key ? { text: String(selectedItem.key) } : false}
                           style={{ wordBreak: 'break-all' }}
                         >
                           {selectedItem.key}
@@ -2935,14 +2889,14 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                       </Descriptions.Item>
                       <Descriptions.Item label="群">
                         {selectedItem.groupId ? (
-                          <Typography.Text copyable={{ text: String(selectedItem.groupId) }}>{selectedItem.groupId}</Typography.Text>
+                          <Typography.Text>{selectedItem.groupId}</Typography.Text>
                         ) : (
                           '-'
                         )}
                       </Descriptions.Item>
                       <Descriptions.Item label="用户">
                         {selectedItem.userId ? (
-                          <Typography.Text copyable={{ text: String(selectedItem.userId) }}>{selectedItem.userId}</Typography.Text>
+                          <Typography.Text>{selectedItem.userId}</Typography.Text>
                         ) : (
                           '-'
                         )}
@@ -3195,18 +3149,16 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                                                 className={styles.pairCheck}
                                                 onClick={(e) => e.stopPropagation()}
                                               >
-                                                <Tooltip title={isChecked ? '取消选择' : '选择'}>
-                                                  <Checkbox
-                                                    checked={isChecked}
-                                                    onChange={(e) => {
-                                                      const checked = (e as any)?.target?.checked;
-                                                      setPairSelectedMap((prev) => ({
-                                                        ...prev,
-                                                        [r.pairId]: !!checked,
-                                                      }));
-                                                    }}
-                                                  />
-                                                </Tooltip>
+                                                <Checkbox
+                                                  checked={isChecked}
+                                                  onChange={(e) => {
+                                                    const checked = (e as any)?.target?.checked;
+                                                    setPairSelectedMap((prev) => ({
+                                                      ...prev,
+                                                      [r.pairId]: !!checked,
+                                                    }));
+                                                  }}
+                                                />
                                               </label>
                                               <div>
                                                 <Tooltip title={r.pairId}>
@@ -3321,7 +3273,7 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                       <ul style={{ margin: 0, paddingLeft: 18 }}>
                         <li>输入 groupId / userId（至少一个）</li>
                         <li>点击“查询”获取关联 Keys 列表</li>
-                        <li>点击任意一行可打开右侧 Key 详情；也可一键复制 Key</li>
+                        <li>点击任意一行可打开右侧 Key 详情</li>
                       </ul>
                     </div>
                   }
@@ -3363,23 +3315,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                         <List.Item
                           onClick={() => { setSelectedKey(it.key); setRightTab('detail'); setDetailFocus('preview'); setPairSelectedId(''); }}
                           style={{ cursor: 'pointer' }}
-                          actions={[
-                            <Tooltip key="copy" title="复制 Key">
-                              <Button
-                                size="small"
-                                type="text"
-                                icon={<CopyOutlined />}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const k = String(it.key || '');
-                                  if (!k) return;
-                                  navigator.clipboard?.writeText(k)
-                                    .then(() => addToast('success', '已复制 Key'))
-                                    .catch((err) => addToast('error', '复制失败', String((err as any)?.message || err)));
-                                }}
-                              />
-                            </Tooltip>,
-                          ]}
                         >
                           <List.Item.Meta
                             title={
@@ -3549,7 +3484,7 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                 width: 420,
                 ellipsis: true,
                 render: (v: any) => (
-                  <Typography.Text code copyable={{ text: String(v || '') }} style={{ fontSize: 12 }}>
+                  <Typography.Text code style={{ fontSize: 12 }}>
                     {String(v || '')}
                   </Typography.Text>
                 ),
@@ -3568,7 +3503,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                     <Tooltip title={txt.length > 220 ? '点击查看完整内容' : null}>
                       <span style={{ display: 'inline-block', maxWidth: '100%' }}>
                         <Typography.Text
-                          copyable={{ text: txt }}
                           style={{ fontSize: 12, wordBreak: 'break-word', cursor: 'pointer' }}
                           onClick={() => {
                             if (forbidAttr) {
@@ -3617,20 +3551,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', marginBottom: 10 }}>
                   <Button
                     size="small"
-                    icon={<CopyOutlined />}
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard?.writeText(pairViewerData.pairId);
-                        addToast('success', '已复制 pairId');
-                      } catch (e: any) {
-                        addToast('error', '复制失败', String(e?.message || e));
-                      }
-                    }}
-                  >
-                    复制 pairId
-                  </Button>
-                  <Button
-                    size="small"
                     danger
                     type="primary"
                     onClick={() => {
@@ -3647,7 +3567,7 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                   <Descriptions.Item label="groupId">{pairViewerData.groupId || '-'}</Descriptions.Item>
                   <Descriptions.Item label="messages">{pairViewerData.count}</Descriptions.Item>
                   <Descriptions.Item label="pairId" span={2}>
-                    <Typography.Text copyable={{ text: pairViewerData.pairId }} code style={{ wordBreak: 'break-all' }}>
+                    <Typography.Text code style={{ wordBreak: 'break-all' }}>
                       {pairViewerData.pairId}
                     </Typography.Text>
                   </Descriptions.Item>
@@ -3695,9 +3615,9 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                                   >
                                     <div style={{ minWidth: 0 }}>
                                       <div className={styles.small} style={{ marginBottom: 2 }}>
-                                        <Typography.Text code copyable={{ text: it.path }} style={{ fontSize: 12 }}>{it.path || '-'}</Typography.Text>
+                                        <Typography.Text code style={{ fontSize: 12 }}>{it.path || '-'}</Typography.Text>
                                       </div>
-                                      <Typography.Text copyable={{ text: it.key }} style={{ fontWeight: 900 }}>{it.key}</Typography.Text>
+                                      <Typography.Text style={{ fontWeight: 900 }}>{it.key}</Typography.Text>
                                     </div>
                                   </List.Item>
                                 )}
@@ -3754,9 +3674,9 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
                                   >
                                     <div style={{ minWidth: 0 }}>
                                       <div className={styles.small} style={{ marginBottom: 2 }}>
-                                        <Typography.Text code copyable={{ text: it.path }} style={{ fontSize: 12 }}>{it.path || '-'}</Typography.Text>
+                                        <Typography.Text code style={{ fontSize: 12 }}>{it.path || '-'}</Typography.Text>
                                       </div>
-                                      <Typography.Text copyable={{ text: it.key }} style={{ fontWeight: 900 }}>{it.key}</Typography.Text>
+                                      <Typography.Text style={{ fontWeight: 900 }}>{it.key}</Typography.Text>
                                     </div>
                                   </List.Item>
                                 )}
@@ -3794,23 +3714,6 @@ export function RedisAdminManager(props: { addToast: ToastFn; performanceMode?: 
         styles={{ body: { height: '70vh', overflow: 'hidden' } }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
-            <Button
-              size="small"
-              icon={<CopyOutlined />}
-              onClick={async () => {
-                try {
-                  await navigator.clipboard?.writeText(pairValuePreviewText);
-                  addToast('success', '已复制');
-                } catch (e: any) {
-                  addToast('error', '复制失败', String(e?.message || e));
-                }
-              }}
-            >
-              复制
-            </Button>
-          </div>
-
           {pairValuePreviewCtx && pairValuePreviewCtx.raw && typeof pairValuePreviewCtx.raw === 'object' ? (
             <>
               <Alert

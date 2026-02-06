@@ -83,6 +83,31 @@ async function ensureGlobalPm2(pm, npmRegistry) {
     }
 }
 
+async function ensureNcSdkBuilt(pm, npmRegistry) {
+    const configUiDir = path.resolve(ROOT_DIR, 'sentra-config-ui');
+    const napcatScript = path.join(configUiDir, 'scripts', 'napcat.mjs');
+    if (!exists(napcatScript)) return;
+
+    const spinner = ora('[NC SDK] 正在构建（napcat.mjs build）...').start();
+    try {
+        const env = {
+            PACKAGE_MANAGER: pm,
+        };
+        if (npmRegistry) {
+            env.npm_config_registry = npmRegistry;
+            env.NPM_CONFIG_REGISTRY = npmRegistry;
+        }
+        await execCommand('node', [napcatScript, 'build'], configUiDir, env);
+        spinner.succeed('[NC SDK] 构建完成');
+    } catch (e) {
+        spinner.fail('[NC SDK] 构建失败（继续执行 UI 构建）');
+    }
+}
+
+async function runPreUiBuildTasks(pm, npmRegistry) {
+    await ensureNcSdkBuilt(pm, npmRegistry);
+}
+
 function isDubiousOwnershipText(text) {
     const t = String(text || '');
     return /detected\s+dubious\s+ownership/i.test(t) || /safe\.directory/i.test(t);
@@ -805,6 +830,7 @@ async function update() {
             const maxOldSpaceSizeMb = resolveBuildMaxOldSpaceSizeMb();
             spinner.start(`[UI] 正在构建（tsc && vite build，NODE_OPTIONS=--max-old-space-size=${maxOldSpaceSizeMb}）...`);
             try {
+                await runPreUiBuildTasks(pm, npmRegistry);
                 const buildEnv = { NODE_OPTIONS: `--max-old-space-size=${maxOldSpaceSizeMb}` };
                 if (npmRegistry) {
                     buildEnv.npm_config_registry = npmRegistry;

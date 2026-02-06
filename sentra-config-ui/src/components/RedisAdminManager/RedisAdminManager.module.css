@@ -391,13 +391,9 @@
   cursor: not-allowed;
 }
 
-.antdTable :global(.ant-table) {
-  background: transparent;
-}
-
 .antdTable :global(.ant-table-container) {
   border: 1px solid var(--redis-border);
-  border-radius: 14px;
+  border-radius: 0;
   overflow: hidden;
   background: var(--redis-panel-bg);
 }
@@ -541,7 +537,7 @@
 .relatedAntdList :global(.ant-list) {
   background: var(--redis-panel-bg);
   border: 1px solid var(--redis-border);
-  border-radius: 14px;
+  border-radius: 0;
 }
 
 .relatedAntdList :global(.ant-list-item) {
@@ -808,7 +804,7 @@
 .main,
 .inspector {
   border: 1px solid var(--redis-border);
-  border-radius: 12px;
+  border-radius: 0;
   overflow: hidden;
   background: var(--redis-panel-bg);
   display: flex;
@@ -908,7 +904,7 @@
 .sidebarSection {
   margin: 10px;
   border: 1px solid var(--redis-border-soft);
-  border-radius: 14px;
+  border-radius: 0;
   background: var(--redis-panel-bg-strong);
   padding: 10px;
   box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
@@ -984,7 +980,7 @@
   justify-content: space-between;
   gap: 10px;
   padding: 10px;
-  border-radius: 12px;
+  border-radius: 0;
   border: 1px solid var(--redis-border-soft);
   background: var(--redis-muted-bg);
 }
@@ -1040,7 +1036,7 @@
 .keyCard {
   border: 1px solid var(--redis-border-soft);
   background: var(--redis-panel-bg-strong);
-  border-radius: 14px;
+  border-radius: 0;
   padding: 10px;
   cursor: pointer;
 }
@@ -1086,7 +1082,7 @@
   grid-template-columns: minmax(0, 1fr) 84px 64px 64px 64px;
   gap: 6px;
   padding: 10px 8px;
-  border-radius: 12px;
+  border-radius: 0;
   cursor: pointer;
   border: 1px solid transparent;
   transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
@@ -1138,7 +1134,7 @@
 .previewPre {
   margin: 8px 0 0;
   padding: 10px;
-  border-radius: 12px;
+  border-radius: 0;
   border: 1px solid var(--redis-border-soft);
   background: var(--redis-panel-bg);
   color: var(--redis-text);
@@ -1231,7 +1227,7 @@
 .emptyHint {
   margin-top: 10px;
   border: 1px dashed var(--redis-border-soft);
-  border-radius: 12px;
+  border-radius: 0;
   padding: 10px;
   font-size: 12px;
   color: var(--redis-muted);
@@ -1244,7 +1240,7 @@
   grid-template-columns: 1fr 72px 72px;
   gap: 8px;
   padding: 8px 10px;
-  border-radius: 12px;
+  border-radius: 0;
   background: rgba(15, 23, 42, 0.04);
   color: #64748b;
   font-size: 11px;
@@ -1262,7 +1258,7 @@
   grid-template-columns: 1fr 72px 72px;
   gap: 8px;
   padding: 10px;
-  border-radius: 12px;
+  border-radius: 0;
   border: 1px solid rgba(15, 23, 42, 0.10);
   background: rgba(255, 255, 255, 0.86);
   align-items: center;
@@ -1290,7 +1286,7 @@
 .pairSection {
   margin-top: 10px;
   border: 1px solid var(--redis-border-soft);
-  border-radius: 14px;
+  border-radius: 0;
   background: var(--redis-panel-bg-strong);
   overflow: hidden;
   display: flex;
@@ -1398,7 +1394,7 @@
 
 .pairRow {
   border: 1px solid var(--redis-border-soft);
-  border-radius: 12px;
+  border-radius: 0;
   padding: 10px;
   background: var(--redis-panel-bg);
   cursor: pointer;

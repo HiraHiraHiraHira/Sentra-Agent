@@ -2,7 +2,8 @@ import React, { useRef, useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { SentraIcon } from './SentraIcon';
-import { Tooltip } from 'antd';
+import { Alert, Button, Descriptions, Modal, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MacAlert } from './MacAlert';
 import styles from './MenuBar.module.css';
@@ -12,6 +13,7 @@ import {
   BookOutlined,
   BulbOutlined,
   CheckOutlined,
+  CloudDownloadOutlined,
   ControlOutlined,
   DownOutlined,
   FontSizeOutlined,
@@ -37,6 +39,9 @@ interface MenuBarProps {
   onToggleDock: () => void;
   onOpenDeepWiki: () => void;
   performanceMode?: boolean;
+
+  onRunUpdate?: () => void;
+  onRunForceUpdate?: () => void;
 }
 
 const Clock: React.FC = () => {
@@ -65,7 +70,9 @@ export const MenuBar: React.FC<MenuBarProps> = ({
   showDock,
   onToggleDock,
   onOpenDeepWiki,
-  performanceMode = false
+  performanceMode = false,
+  onRunUpdate,
+  onRunForceUpdate,
 }) => {
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
   const [showControlCenter, setShowControlCenter] = useState(false);
@@ -77,6 +84,10 @@ export const MenuBar: React.FC<MenuBarProps> = ({
   const [networkInfo, setNetworkInfo] = useState<any>(null);
   const [networkError, setNetworkError] = useState<string>('');
   const [spotlightQuery, setSpotlightQuery] = useState('');
+  const [showUpdateAlert, setShowUpdateAlert] = useState(false);
+  const [updateLoading, setUpdateLoading] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<any>(null);
+  const [updateError, setUpdateError] = useState('');
   const accentButtonRef = useRef<HTMLDivElement | null>(null);
   const [accentPickerPos, setAccentPickerPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const fontButtonRef = useRef<HTMLDivElement | null>(null);
@@ -101,6 +112,120 @@ export const MenuBar: React.FC<MenuBarProps> = ({
 
     setFontPickerPos({ top, left, width: panelWidth });
   };
+
+  const updateHas = !!(updateInfo?.success && updateInfo?.hasUpdate);
+
+  const updateCommits: any[] = Array.isArray(updateInfo?.commits) ? updateInfo.commits : [];
+  const updateFiles: any[] = Array.isArray(updateInfo?.files) ? updateInfo.files : [];
+
+  const updateCommitColumns: ColumnsType<any> = [
+    {
+      title: 'SHA',
+      dataIndex: 'shortSha',
+      width: 86,
+      render: (v: any) => (
+        <Typography.Text code>
+          {String(v || '').slice(0, 7)}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: '标题',
+      dataIndex: 'subject',
+      ellipsis: true,
+      render: (v: any) => <Typography.Text>{String(v || '')}</Typography.Text>,
+    },
+    {
+      title: '作者',
+      dataIndex: 'author',
+      width: 120,
+      ellipsis: true,
+      render: (v: any) => <Typography.Text type="secondary">{String(v || '')}</Typography.Text>,
+    },
+    {
+      title: '时间',
+      dataIndex: 'date',
+      width: 180,
+      ellipsis: true,
+      render: (v: any) => <Typography.Text type="secondary">{String(v || '')}</Typography.Text>,
+    },
+  ];
+
+  const updateFileColumns: ColumnsType<any> = [
+    {
+      title: '类型',
+      dataIndex: 'status',
+      width: 80,
+      render: (v: any) => {
+        const s = String(v || '').toUpperCase();
+        const color = s === 'A' ? 'green' : s === 'D' ? 'red' : s === 'M' ? 'blue' : 'default';
+        return <Tag color={color}>{s || '-'}</Tag>;
+      },
+    },
+    {
+      title: '文件',
+      dataIndex: 'file',
+      render: (v: any) => <Typography.Text>{String(v || '')}</Typography.Text>,
+    },
+  ];
+
+  const networkLocalRows: any[] = Array.isArray(networkInfo?.local) ? networkInfo.local : [];
+  const networkLocalColumns: ColumnsType<any> = [
+    { title: '网卡', dataIndex: 'name', width: 120, ellipsis: true },
+    {
+      title: '地址',
+      dataIndex: 'address',
+      render: (v: any) => <Typography.Text>{String(v || '')}</Typography.Text>,
+    },
+    { title: '协议', dataIndex: 'family', width: 80, ellipsis: true },
+    {
+      title: '类型',
+      dataIndex: 'internal',
+      width: 80,
+      render: (v: any) => (v ? <Tag>Internal</Tag> : <Tag color="blue">LAN</Tag>),
+    },
+  ];
+
+  const fetchUpdateInfo = async () => {
+    setUpdateLoading(true);
+    setUpdateError('');
+    try {
+      const controller = new AbortController();
+      const t = window.setTimeout(() => controller.abort(), 60_000);
+      const res = await fetch('/api/system/update/check', {
+        method: 'GET',
+        headers: getAuthHeaders({ json: false }),
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      window.clearTimeout(t);
+      const data: any = await res.json().catch(() => null);
+      if (!res.ok) {
+        setUpdateInfo(null);
+        setUpdateError(`HTTP ${res.status} ${res.statusText}`);
+        return;
+      }
+      if (!data?.success) {
+        setUpdateInfo(data);
+        setUpdateError(String(data?.error || 'update check failed'));
+        return;
+      }
+      setUpdateInfo(data);
+    } catch (e) {
+      setUpdateInfo(null);
+      setUpdateError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUpdateLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchUpdateInfo();
+    const t = window.setInterval(() => {
+      void fetchUpdateInfo();
+    }, 60_000);
+    return () => window.clearInterval(t);
+  }, []);
 
   const computeAccentPickerPos = () => {
     const rect = accentButtonRef.current?.getBoundingClientRect();
@@ -231,7 +356,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
     setNetworkError('');
     try {
       const controller = new AbortController();
-      const t = window.setTimeout(() => controller.abort(), 5000);
+      const t = window.setTimeout(() => controller.abort(), 60_000);
       const res = await fetch('/api/system/network', {
         method: 'GET',
         headers: getAuthHeaders({ json: false }),
@@ -456,6 +581,37 @@ export const MenuBar: React.FC<MenuBarProps> = ({
               <BookOutlined style={{ fontSize: 18 }} />
             </div>
           </Tooltip>
+
+          <Tooltip
+            title={updateInfo?.success
+              ? (updateInfo?.hasUpdate ? `发现更新（落后 ${String(updateInfo?.behind ?? '')}）` : '已是最新')
+              : (updateError ? `更新检查失败：${updateError}` : '检查更新')}
+          >
+            <div
+              className={styles.menuItem}
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveMenu(null);
+                setShowControlCenter(false);
+                setShowAccentPicker(false);
+                setShowFontPicker(false);
+                setShowSpotlight(false);
+                setShowUpdateAlert(true);
+                void fetchUpdateInfo();
+              }}
+              aria-label="检查更新"
+            >
+              <CloudDownloadOutlined style={{ fontSize: 18 }} />
+              {updateInfo?.success && updateInfo?.hasUpdate ? (
+                Number(updateInfo?.behind || 0) > 0 ? (
+                  <span className={styles.badgeCount}>{Number(updateInfo?.behind || 0) > 99 ? '99+' : String(updateInfo?.behind || 0)}</span>
+                ) : (
+                  <span className={styles.badgeDot} />
+                )
+              ) : null}
+            </div>
+          </Tooltip>
+
           <Tooltip title="重启系统">
             <div
               className={styles.menuItem}
@@ -480,52 +636,266 @@ export const MenuBar: React.FC<MenuBarProps> = ({
         isDanger={true}
       />
 
-      <MacAlert
-        isOpen={showNetworkAlert}
-        title="网络信息"
-        message={(
-          <div style={{ textAlign: 'left' }}>
-            <div style={{ fontWeight: 600, color: 'var(--sentra-fg)', marginBottom: 6 }}>
-              {networkLoading ? '加载中…' : (networkError ? '获取失败' : '当前网络状态')}
-            </div>
-            {networkError ? (
-              <div style={{ whiteSpace: 'pre-wrap' }}>{networkError}</div>
-            ) : null}
-            {!networkError && networkInfo ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div>
-                  <div style={{ fontWeight: 600, marginBottom: 2 }}>本机</div>
-                  <div>Hostname: {String(networkInfo?.hostname || '')}</div>
-                  <div>Server Port: {String(networkInfo?.serverPort || '')}</div>
-                  <div>Client Port: {String(networkInfo?.clientPort || '')}</div>
-                </div>
-                <div>
-                  <div style={{ fontWeight: 600, marginBottom: 2 }}>局域网 IP</div>
-                  <div style={{ whiteSpace: 'pre-wrap' }}>
-                    {(Array.isArray(networkInfo?.local) ? networkInfo.local : [])
-                      .filter((x: any) => x && !x.internal && String(x.family || '').toLowerCase().includes('ipv4') && String(x.address || '') && !String(x.address || '').startsWith('169.254.'))
-                      .map((x: any) => `${String(x.name || '')}: ${String(x.address || '')}${x.cidr ? ` (${String(x.cidr)})` : ''}`)
-                      .join('\n') || '未检测到'}
+      <Modal
+        open={showUpdateAlert}
+        title={(
+          <Space size={8}>
+            <span>系统更新</span>
+            {updateLoading ? <Tag color="processing">检查中</Tag> : updateHas ? <Tag color="warning">发现更新</Tag> : <Tag color="success">已是最新</Tag>}
+          </Space>
+        )}
+        onCancel={() => setShowUpdateAlert(false)}
+        width={900}
+        footer={(
+          <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+            <Typography.Text type="secondary">更新会在“终端窗口”中执行；完成后请手动点击右上角“重启系统”。</Typography.Text>
+            <Space>
+              <Button onClick={() => void fetchUpdateInfo()} loading={updateLoading}>重新检查</Button>
+              <Button
+                danger
+                disabled={!onRunForceUpdate}
+                onClick={() => {
+                  if (onRunForceUpdate) onRunForceUpdate();
+                  setShowUpdateAlert(false);
+                }}
+              >
+                强制更新
+              </Button>
+              <Button
+                type="primary"
+                disabled={!onRunUpdate}
+                onClick={() => {
+                  if (onRunUpdate) onRunUpdate();
+                  setShowUpdateAlert(false);
+                }}
+              >
+                更新
+              </Button>
+            </Space>
+          </Space>
+        )}
+        destroyOnHidden
+      >
+        {updateError ? (
+          <Alert type="error" showIcon message="更新检查失败" description={updateError} />
+        ) : null}
+
+        {!updateError && updateInfo?.success && updateInfo?.fetchOk === false ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="远端更新拉取失败：显示的结果可能不是最新"
+            description={String(updateInfo?.fetchError || 'git fetch failed')}
+            style={{ marginBottom: 12 }}
+          />
+        ) : null}
+
+        <Tabs
+          items={[
+            {
+              key: 'overview',
+              label: '概览',
+              children: (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <Descriptions
+                    size="small"
+                    bordered
+                    column={2}
+                    items={[
+                      {
+                        key: 'branch',
+                        label: '当前分支',
+                        children: <Typography.Text>{String(updateInfo?.branch || '')}</Typography.Text>,
+                      },
+                      {
+                        key: 'remote',
+                        label: '远端分支',
+                        children: <Typography.Text>{`origin/${String(updateInfo?.remoteBranch || '')}`}</Typography.Text>,
+                      },
+                      {
+                        key: 'behind',
+                        label: '落后',
+                        children: <Typography.Text>{String(updateInfo?.behind ?? '')}</Typography.Text>,
+                      },
+                      {
+                        key: 'ahead',
+                        label: '领先',
+                        children: <Typography.Text>{String(updateInfo?.ahead ?? '')}</Typography.Text>,
+                      },
+                      {
+                        key: 'head',
+                        label: '本地 Commit',
+                        span: 2,
+                        children: <Typography.Text code>{String(updateInfo?.currentCommit || '')}</Typography.Text>,
+                      },
+                      {
+                        key: 'remoteCommit',
+                        label: '远端 Commit',
+                        span: 2,
+                        children: <Typography.Text code>{String(updateInfo?.remoteCommit || '')}</Typography.Text>,
+                      },
+                    ]}
+                  />
+
+                  <div>
+                    <Typography.Title level={5} style={{ margin: '0 0 8px 0' }}>文件变更（汇总）</Typography.Title>
+                    <Table
+                      size="small"
+                      rowKey={(r) => `${String(r.status || '')}:${String(r.file || '')}`}
+                      columns={updateFileColumns}
+                      dataSource={updateFiles}
+                      pagination={false}
+                      scroll={{ y: 260 }}
+                      locale={{ emptyText: updateLoading ? '加载中…' : '无变更' }}
+                    />
                   </div>
                 </div>
-                <div>
-                  <div style={{ fontWeight: 600, marginBottom: 2 }}>公网 / 位置</div>
-                  <div>IP: {String(networkInfo?.public?.ip || '')}</div>
-                  <div>ISP/Org: {String(networkInfo?.public?.org || networkInfo?.public?.asn || '')}</div>
-                  <div>Location: {String(networkInfo?.public?.city || '')}{networkInfo?.public?.region ? `, ${String(networkInfo.public.region)}` : ''}{networkInfo?.public?.country_name ? `, ${String(networkInfo.public.country_name)}` : ''}</div>
-                  <div>Timezone: {String(networkInfo?.public?.timezone || '')}</div>
-                  <div>Lat/Lon: {String(networkInfo?.public?.latitude ?? '')}, {String(networkInfo?.public?.longitude ?? '')}</div>
-                </div>
-              </div>
-            ) : null}
-          </div>
+              )
+            },
+            {
+              key: 'commits',
+              label: `提交 (${updateCommits.length})`,
+              children: (
+                <Table
+                  size="small"
+                  rowKey={(r) => String(r.sha || r.shortSha || Math.random())}
+                  columns={updateCommitColumns}
+                  dataSource={updateCommits}
+                  pagination={{ pageSize: 10, showSizeChanger: false }}
+                  expandable={{
+                    expandedRowRender: (row) => {
+                      const fs = Array.isArray(row?.files) ? row.files : [];
+                      if (!fs.length) return <Typography.Text type="secondary">（无文件列表）</Typography.Text>;
+                      return (
+                        <div style={{ padding: 8 }}>
+                          <Table
+                            size="small"
+                            rowKey={(r) => `${String(r.status || '')}:${String(r.file || '')}`}
+                            columns={updateFileColumns}
+                            dataSource={fs}
+                            pagination={false}
+                          />
+                        </div>
+                      );
+                    },
+                    rowExpandable: (row) => Array.isArray(row?.files) && row.files.length > 0,
+                  }}
+                  locale={{ emptyText: updateLoading ? '加载中…' : '无提交' }}
+                />
+              )
+            }
+          ]}
+        />
+      </Modal>
+
+      <Modal
+        open={showNetworkAlert}
+        title={(
+          <Space size={8}>
+            <span>网络信息</span>
+            {networkLoading ? <Tag color="processing">加载中</Tag> : networkError ? <Tag color="error">失败</Tag> : <Tag color="success">正常</Tag>}
+          </Space>
         )}
-        onClose={() => setShowNetworkAlert(false)}
-        onConfirm={() => { }}
-        confirmText="关闭"
-        showCancel={false}
-        isDanger={false}
-      />
+        onCancel={() => setShowNetworkAlert(false)}
+        width={860}
+        footer={<Button onClick={() => setShowNetworkAlert(false)}>关闭</Button>}
+        destroyOnHidden
+      >
+        {networkError ? (
+          <Alert type="error" showIcon message="网络信息获取失败" description={networkError} />
+        ) : null}
+
+        {!networkError && networkInfo?.publicError ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="公网信息获取失败（不影响局域网）"
+            description={String(networkInfo.publicError || '')}
+            style={{ marginBottom: 12 }}
+          />
+        ) : null}
+
+        <Tabs
+          items={[
+            {
+              key: 'overview',
+              label: '概览',
+              children: (
+                <Descriptions
+                  size="small"
+                  bordered
+                  column={2}
+                  items={[
+                    {
+                      key: 'hostname',
+                      label: 'Hostname',
+                      children: <Typography.Text>{String(networkInfo?.hostname || '')}</Typography.Text>,
+                    },
+                    {
+                      key: 'serverPort',
+                      label: 'Server Port',
+                      children: <Typography.Text>{String(networkInfo?.serverPort || '')}</Typography.Text>,
+                    },
+                    {
+                      key: 'clientPort',
+                      label: 'Client Port',
+                      children: <Typography.Text>{String(networkInfo?.clientPort || '')}</Typography.Text>,
+                    },
+                    {
+                      key: 'publicIp',
+                      label: '公网 IP',
+                      children: <Typography.Text>{String(networkInfo?.public?.ip || '')}</Typography.Text>,
+                    },
+                    {
+                      key: 'isp',
+                      label: 'ISP/Org',
+                      span: 2,
+                      children: <Typography.Text>{String(networkInfo?.public?.org || networkInfo?.public?.asn || '')}</Typography.Text>,
+                    },
+                    {
+                      key: 'location',
+                      label: '位置',
+                      span: 2,
+                      children: (
+                        <Typography.Text>
+                          {String(networkInfo?.public?.city || '')}
+                          {networkInfo?.public?.region ? `, ${String(networkInfo.public.region)}` : ''}
+                          {networkInfo?.public?.country_name ? `, ${String(networkInfo.public.country_name)}` : ''}
+                        </Typography.Text>
+                      ),
+                    },
+                    {
+                      key: 'timezone',
+                      label: 'Timezone',
+                      children: <Typography.Text>{String(networkInfo?.public?.timezone || '')}</Typography.Text>,
+                    },
+                    {
+                      key: 'latlon',
+                      label: 'Lat/Lon',
+                      children: <Typography.Text>{`${String(networkInfo?.public?.latitude ?? '')}, ${String(networkInfo?.public?.longitude ?? '')}`}</Typography.Text>,
+                    },
+                  ]}
+                />
+              )
+            },
+            {
+              key: 'lan',
+              label: `局域网 (${networkLocalRows.length})`,
+              children: (
+                <Table
+                  size="small"
+                  rowKey={(r) => `${String(r.name || '')}-${String(r.address || '')}-${String(r.family || '')}`}
+                  columns={networkLocalColumns}
+                  dataSource={networkLocalRows}
+                  pagination={false}
+                  scroll={{ y: 360 }}
+                  locale={{ emptyText: networkLoading ? '加载中…' : '无数据' }}
+                />
+              )
+            }
+          ]}
+        />
+      </Modal>
 
       {/* Restarting Overlay */}
       <AnimatePresence>

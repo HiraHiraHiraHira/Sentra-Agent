@@ -169,6 +169,8 @@ export const DesktopView = (props: DesktopViewProps) => {
     bringTerminalToFront,
     handleCloseTerminal,
     handleMinimizeTerminal,
+    handleRunUpdate,
+    handleRunForceUpdate,
   } = useTerminals({ addToast, allocateZ });
 
   const {
@@ -662,7 +664,7 @@ export const DesktopView = (props: DesktopViewProps) => {
     extraTabs.push({
       id: 'deepwiki',
       title: 'DeepWiki',
-      icon: <IoBookOutline style={{ color: '#2563eb' }} />, 
+      icon: <IoBookOutline style={{ color: '#2563eb' }} />,
       isActive: activeUtilityId === 'deepwiki',
       onActivate: () => {
         setDeepWikiOpen(true);
@@ -951,6 +953,8 @@ export const DesktopView = (props: DesktopViewProps) => {
         showDock={showDock}
         onToggleDock={toggleDock}
         performanceMode={performanceMode}
+        onRunUpdate={handleRunUpdate}
+        onRunForceUpdate={handleRunForceUpdate}
         menus={[
           {
             label: '文件',

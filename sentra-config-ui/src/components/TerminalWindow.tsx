@@ -36,6 +36,7 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
     const persistFlushTimerRef = useRef<number | null>(null);
     const [uiFontFamily, setUiFontFamily] = useState(TERMINAL_FONT_FALLBACK);
     const [autoScroll, setAutoScroll] = useState(true);
+    const [isInitializing, setIsInitializing] = useState(true);  // Loading state for fast render
     const autoScrollRef = useRef(true);
     const userScrolledRef = useRef(false);
     const lastScrollPositionRef = useRef(0);
@@ -613,13 +614,42 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             let restoredSnapshot = '';
             let restoredTs = 0;
 
+            // Check process status BEFORE restoring snapshot
+            const checkAlive = await checkProcessAlive();
+            if (disposed || stoppedRef.current) return;
+
+            // If process is not found or has ended, clean up and don't restore snapshot
+            if (checkAlive === 'not_found' || checkAlive === 'ended') {
+                stoppedRef.current = true;
+                if (reconnectTimerRef.current) {
+                    window.clearTimeout(reconnectTimerRef.current);
+                    reconnectTimerRef.current = null;
+                }
+                cleanupEventSource();
+                void removeTerminalSnapshot('script', pid);
+                try { storage.remove(tsKey, 'session'); } catch { }
+                try { storage.remove(cursorKey, 'session'); } catch { }
+                try { storage.remove(snapshotKey, 'session'); } catch { }
+                try { storage.remove(tsKey, 'local'); } catch { }
+                try { storage.remove(cursorKey, 'local'); } catch { }
+                try { storage.remove(snapshotKey, 'local'); } catch { }
+                const errorMsg = checkAlive === 'not_found'
+                    ? 'Process not found (stale terminal window)'
+                    : 'Process has ended';
+                safeWrite(`\r\n\x1b[31m✗ ${errorMsg}.\x1b[0m\r\n`);
+                try { onProcessNotFound?.(); } catch { }
+                setIsInitializing(false);
+                return;
+            }
+
+            // Load snapshot from IndexedDB (now uses pooled connection - fast)
             const fromDb = await getTerminalSnapshot('script', pid);
             if (fromDb && fromDb.ts > 0 && now0 - fromDb.ts <= TERMINAL_PERSIST_TTL_MS) {
                 restoredCursor = Number(fromDb.cursor || 0);
                 restoredSnapshot = String(fromDb.snapshot || '');
                 restoredTs = Number(fromDb.ts || 0);
             } else if (fromDb) {
-                try { await removeTerminalSnapshot('script', pid); } catch { }
+                void removeTerminalSnapshot('script', pid);  // Fire and forget
             }
 
             if (!restoredTs) {
@@ -638,10 +668,12 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
                     const snapLocal = storage.getString(snapshotKey, { backend: 'local', fallback: '' });
                     restoredSnapshot = snapSession || snapLocal;
                     restoredTs = legacyTs;
+                    // Async migration - don't await, fire and forget
                     void appendTerminalSnapshotChunk({ id: pid, kind: 'script', ts: legacyTs, cursor: restoredCursor, chunk: restoredSnapshot });
                 }
 
                 if (!legacyFresh && legacyTs > 0) {
+                    // Cleanup legacy data async
                     try { storage.remove(tsKey, 'session'); } catch { }
                     try { storage.remove(cursorKey, 'session'); } catch { }
                     try { storage.remove(snapshotKey, 'session'); } catch { }
@@ -659,12 +691,16 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
                 safeWrite(snapshotRef.current);
             }
 
+            // Cleanup legacy storage async (fire and forget)
             try { storage.remove(tsKey, 'session'); } catch { }
             try { storage.remove(cursorKey, 'session'); } catch { }
             try { storage.remove(snapshotKey, 'session'); } catch { }
             try { storage.remove(tsKey, 'local'); } catch { }
             try { storage.remove(cursorKey, 'local'); } catch { }
             try { storage.remove(snapshotKey, 'local'); } catch { }
+
+            // Mark initialization complete - terminal is now responsive
+            setIsInitializing(false);
 
             void connectEventSource('init');
         })();
@@ -744,7 +780,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
         ro.observe(terminalRef.current);
 
         return () => {
-            cancelAnimationFrame(animationFrameId);
             ro.disconnect();
         };
     }, []);
@@ -758,6 +793,21 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             )}
 
             <div style={{ flex: 1, position: 'relative', width: '100%', overflow: 'hidden' }}>
+                {isInitializing && (
+                    <div style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: '#0b1020',
+                        color: '#64748b',
+                        fontSize: 13,
+                        zIndex: 10,
+                    }}>
+                        正在初始化终端...
+                    </div>
+                )}
                 <div
                     ref={terminalRef}
                     className={styles.terminalWrapper}

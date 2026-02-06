@@ -13,31 +13,30 @@ const STORE_META = 'snapshots';
 const STORE_CHUNKS = 'snapshot_chunks';
 const DB_VERSION = 2;
 
-type TerminalSnapshotMeta = {
-  key: string;
-  id: string;
-  kind: TerminalSnapshotKind;
-  ts: number;
-  cursor: number;
-  snapshot?: string;
-  mode?: 'chunked';
-  lastSeq?: number;
-  headSeq?: number;
-  totalChars?: number;
-  chunkCount?: number;
-};
+// Connection pool: reuse a single DB instance for the session
+let pooledDb: IDBDatabase | null = null;
+let pooledDbPromise: Promise<IDBDatabase> | null = null;
 
-type TerminalSnapshotChunk = {
-  key: string;
-  owner: string;
-  seq: number;
-  ts: number;
-  cursor: number;
-  data: string;
-};
+function getPooledDb(): Promise<IDBDatabase> {
+  // If we already have an open connection and it's not closed, reuse it
+  if (pooledDb && pooledDb.objectStoreNames.length > 0) {
+    try {
+      // Check if connection is still valid (not closed)
+      pooledDb.transaction;
+      return Promise.resolve(pooledDb);
+    } catch {
+      // Connection is closed, fall through to reopen
+      pooledDb = null;
+    }
+  }
 
-function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  // If a connection is being opened, wait for it
+  if (pooledDbPromise) {
+    return pooledDbPromise;
+  }
+
+  // Open a new connection and pool it
+  pooledDbPromise = new Promise((resolve, reject) => {
     try {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = () => {
@@ -62,12 +61,67 @@ function openDb(): Promise<IDBDatabase> {
           }
         }
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        pooledDb = req.result;
+        pooledDbPromise = null;
+        resolve(pooledDb);
+      };
+      req.onerror = () => {
+        pooledDbPromise = null;
+        reject(req.error);
+      };
     } catch (e) {
+      pooledDbPromise = null;
       reject(e);
     }
   });
+
+  return pooledDbPromise;
+}
+
+// Call this when the app is shutting down to close the pooled connection
+export async function closePooledDb(): Promise<void> {
+  if (pooledDb) {
+    try {
+      pooledDb.close();
+    } catch {
+    }
+    pooledDb = null;
+    pooledDbPromise = null;
+  }
+}
+
+// Reset the pool (useful for testing or when DB version changes)
+export function resetPooledDb(): void {
+  pooledDb = null;
+  pooledDbPromise = null;
+}
+
+type TerminalSnapshotMeta = {
+  key: string;
+  id: string;
+  kind: TerminalSnapshotKind;
+  ts: number;
+  cursor: number;
+  snapshot?: string;
+  mode?: 'chunked';
+  lastSeq?: number;
+  headSeq?: number;
+  totalChars?: number;
+  chunkCount?: number;
+};
+
+type TerminalSnapshotChunk = {
+  key: string;
+  owner: string;
+  seq: number;
+  ts: number;
+  cursor: number;
+  data: string;
+};
+
+function openDb(): Promise<IDBDatabase> {
+  return getPooledDb();
 }
 
 function makeKey(kind: TerminalSnapshotKind, id: string) {
@@ -223,13 +277,13 @@ export async function setTerminalSnapshot(rec: TerminalSnapshotRecord): Promise<
     const db = await openDb();
     try {
       await withTx(db, STORE_META, 'readwrite', (st) => st.put({
-          key,
-          id: String(rec.id || ''),
-          kind: rec.kind,
-          ts: Number(rec.ts || 0),
-          cursor: Number.isFinite(Number(rec.cursor)) ? Number(rec.cursor) : 0,
-          snapshot: String(rec.snapshot || ''),
-        }));
+        key,
+        id: String(rec.id || ''),
+        kind: rec.kind,
+        ts: Number(rec.ts || 0),
+        cursor: Number.isFinite(Number(rec.cursor)) ? Number(rec.cursor) : 0,
+        snapshot: String(rec.snapshot || ''),
+      }));
       return true;
     } finally {
       try { db.close(); } catch { }
@@ -269,30 +323,30 @@ export async function appendTerminalSnapshotChunk(rec: { id: string; kind: Termi
             const raw: any = getReq.result;
             const meta: TerminalSnapshotMeta = raw && typeof raw === 'object'
               ? {
-                  key: String(raw.key || metaKey),
-                  id: String(raw.id || id),
-                  kind: raw.kind === 'exec' ? 'exec' : 'script',
-                  ts: Number(raw.ts || 0),
-                  cursor: Number(raw.cursor || 0),
-                  snapshot: typeof raw.snapshot === 'string' ? raw.snapshot : undefined,
-                  mode: raw.mode === 'chunked' ? 'chunked' : undefined,
-                  lastSeq: Number(raw.lastSeq || 0) || 0,
-                  headSeq: Number(raw.headSeq || 0) || 0,
-                  totalChars: Number(raw.totalChars || 0) || 0,
-                  chunkCount: Number(raw.chunkCount || 0) || 0,
-                }
+                key: String(raw.key || metaKey),
+                id: String(raw.id || id),
+                kind: raw.kind === 'exec' ? 'exec' : 'script',
+                ts: Number(raw.ts || 0),
+                cursor: Number(raw.cursor || 0),
+                snapshot: typeof raw.snapshot === 'string' ? raw.snapshot : undefined,
+                mode: raw.mode === 'chunked' ? 'chunked' : undefined,
+                lastSeq: Number(raw.lastSeq || 0) || 0,
+                headSeq: Number(raw.headSeq || 0) || 0,
+                totalChars: Number(raw.totalChars || 0) || 0,
+                chunkCount: Number(raw.chunkCount || 0) || 0,
+              }
               : {
-                  key: metaKey,
-                  id,
-                  kind,
-                  ts: 0,
-                  cursor: 0,
-                  mode: 'chunked',
-                  lastSeq: 0,
-                  headSeq: 0,
-                  totalChars: 0,
-                  chunkCount: 0,
-                };
+                key: metaKey,
+                id,
+                kind,
+                ts: 0,
+                cursor: 0,
+                mode: 'chunked',
+                lastSeq: 0,
+                headSeq: 0,
+                totalChars: 0,
+                chunkCount: 0,
+              };
 
             meta.mode = 'chunked';
             meta.snapshot = undefined;
