@@ -48,8 +48,24 @@ function commandExists(cmd: string): boolean {
     }
 }
 
+// Detect if running inside WSL (Windows Subsystem for Linux)
+function isRunningInWsl(): boolean {
+    if (os.platform() !== 'linux') return false;
+    try {
+        const release = execSync('uname -r', { stdio: 'pipe' }).toString();
+        return release.toLowerCase().includes('microsoft') || release.toLowerCase().includes('wsl');
+    } catch {
+        return false;
+    }
+}
+
 function resolvePm2Bin(): string {
     const isWin = os.platform() === 'win32';
+    const isWsl = isRunningInWsl();
+    // In WSL, prefer global pm2 installation
+    if (isWsl) {
+        if (commandExists('pm2')) return 'pm2';
+    }
     if (commandExists('pm2')) return 'pm2';
     const local = path.join(process.cwd(), 'node_modules', '.bin', isWin ? 'pm2.cmd' : 'pm2');
     if (fs.existsSync(local)) return local;
@@ -439,6 +455,60 @@ export class ScriptRunner {
         return this.processes.get(id);
     }
 
+    // Helper: Check if process is still running
+    private isProcessRunning(pid: number): boolean {
+        try {
+            if (os.platform() === 'win32') {
+                execSync(`tasklist /NH /FO CSV /FI "PID eq ${pid}"`, { stdio: 'pipe' });
+                return true;
+            } else {
+                execSync(`kill -0 ${pid}`, { stdio: 'ignore' });
+                return true;
+            }
+        } catch {
+            return false;
+        }
+    }
+
+    // Helper: Gracefully terminate a process with retry
+    private terminateProcess(pid: number, force: boolean = false): boolean {
+        const signal = force ? 'SIGKILL' : 'SIGTERM';
+
+        try {
+            // Method 1: Node.js process.kill
+            process.kill(pid, signal);
+        } catch { }
+
+        try {
+            // Method 2: Shell kill command (works in WSL and native Linux)
+            execSync(`kill -${force ? 'KILL' : 'TERM'} ${pid}`, { stdio: 'ignore' });
+        } catch { }
+
+        // For Windows, use taskkill
+        if (os.platform() === 'win32') {
+            try {
+                const flags = force ? '/F' : '';
+                const tree = force ? '/T' : '';
+                execSync(`taskkill /PID ${pid} ${flags} ${tree} /FI "STATUS eq RUNNING"`, { stdio: 'ignore' });
+            } catch { }
+        }
+
+        return !this.isProcessRunning(pid);
+    }
+
+    // Helper: Wait for process to exit with timeout (using polling instead of setTimeout)
+    private waitForProcessExit(pid: number, timeoutMs: number = 2000): boolean {
+        const startTime = Date.now();
+        const checkInterval = 50; // Check every 50ms
+        while (Date.now() - startTime < timeoutMs) {
+            if (!this.isProcessRunning(pid)) return true;
+            // Use sync sleep to avoid CPU spinning
+            const end = Date.now() + checkInterval;
+            while (Date.now() < end) { /* spin wait */ }
+        }
+        return false;
+    }
+
     killProcess(id: string): { success: boolean; message: string; pm2?: Pm2DeleteResult } {
         const record = this.processes.get(id);
         if (!record || record.exitCode !== null) {
@@ -466,48 +536,37 @@ export class ScriptRunner {
             // Special handling for PM2-managed start script
             if (record.name === 'start') {
                 // Kill the wrapper process first
-                if (os.platform() === 'win32') {
-                    execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
-                } else {
-                    try { process.kill(pid, 'SIGTERM'); } catch { }
-                }
+                this.terminateProcess(pid, false);
+                // Wait briefly for graceful shutdown
+                this.waitForProcessExit(pid, 300);
 
                 // Always attempt to delete the scoped PM2 process. If it doesn't exist, it's a no-op.
                 const pm2 = deletePm2ProcessByName('sentra-agent');
                 return { success: pm2.ok, pm2, message: pm2.ok ? 'Process terminated (PM2 deleted)' : (pm2.message || 'Wrapper terminated but PM2 delete failed') };
             } else if (record.name === 'napcat') {
-                if (os.platform() === 'win32') {
-                    execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
-                } else {
-                    try { process.kill(pid, 'SIGTERM'); } catch { }
-                    setTimeout(() => {
-                        try { process.kill(pid, 'SIGKILL'); } catch { }
-                    }, 500);
+                // Try graceful termination first
+                if (!this.terminateProcess(pid, false)) {
+                    // Force kill if still running
+                    this.terminateProcess(pid, true);
                 }
 
                 const pm2 = deletePm2ProcessByName('sentra-napcat');
                 return { success: pm2.ok, pm2, message: pm2.ok ? 'Process terminated (PM2 deleted)' : (pm2.message || 'Wrapper terminated but PM2 delete failed') };
             } else if (record.name === 'sentiment') {
-                if (os.platform() === 'win32') {
-                    execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
-                } else {
-                    try { process.kill(pid, 'SIGTERM'); } catch { }
-                    setTimeout(() => {
-                        try { process.kill(pid, 'SIGKILL'); } catch { }
-                    }, 500);
+                // Try graceful termination first
+                if (!this.terminateProcess(pid, false)) {
+                    // Force kill if still running
+                    this.terminateProcess(pid, true);
                 }
 
                 const pm2 = deletePm2ProcessByName('sentra-emo');
                 return { success: pm2.ok, pm2, message: pm2.ok ? 'Process terminated (PM2 deleted)' : (pm2.message || 'Wrapper terminated but PM2 delete failed') };
             } else {
                 // Normal process termination for other scripts
-                if (os.platform() === 'win32') {
-                    execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
-                } else {
-                    try { process.kill(pid, 'SIGTERM'); } catch { }
-                    setTimeout(() => {
-                        try { process.kill(pid, 'SIGKILL'); } catch { }
-                    }, 500);
+                // Try graceful termination first
+                if (!this.terminateProcess(pid, false)) {
+                    // Force kill if still running
+                    this.terminateProcess(pid, true);
                 }
                 return { success: true, message: 'Process terminated' };
             }
@@ -533,20 +592,15 @@ export class ScriptRunner {
         }
 
         if (includePm2) {
-            try {
-                const a = deletePm2ProcessByName('sentra-napcat');
-                pm2Res.push({ name: 'sentra-napcat', ok: a.ok, message: a.message });
-            } catch {
-            }
-            try {
-                const a = deletePm2ProcessByName('sentra-agent');
-                pm2Res.push({ name: 'sentra-agent', ok: a.ok, message: a.message });
-            } catch {
-            }
-            try {
-                const a = deletePm2ProcessByName('sentra-emo');
-                pm2Res.push({ name: 'sentra-emo', ok: a.ok, message: a.message });
-            } catch {
+            // In WSL mode, try to delete PM2 processes
+            const apps: Array<'sentra-napcat' | 'sentra-agent' | 'sentra-emo'> = ['sentra-napcat', 'sentra-agent', 'sentra-emo'];
+            for (const app of apps) {
+                try {
+                    const a = deletePm2ProcessByName(app);
+                    pm2Res.push({ name: app, ok: a.ok, message: a.message });
+                } catch {
+                    pm2Res.push({ name: app, ok: false, message: 'Exception during delete' });
+                }
             }
         }
 

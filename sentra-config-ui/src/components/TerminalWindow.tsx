@@ -614,34 +614,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             let restoredSnapshot = '';
             let restoredTs = 0;
 
-            // Check process status BEFORE restoring snapshot
-            const checkAlive = await checkProcessAlive();
-            if (disposed || stoppedRef.current) return;
-
-            // If process is not found or has ended, clean up and don't restore snapshot
-            if (checkAlive === 'not_found' || checkAlive === 'ended') {
-                stoppedRef.current = true;
-                if (reconnectTimerRef.current) {
-                    window.clearTimeout(reconnectTimerRef.current);
-                    reconnectTimerRef.current = null;
-                }
-                cleanupEventSource();
-                void removeTerminalSnapshot('script', pid);
-                try { storage.remove(tsKey, 'session'); } catch { }
-                try { storage.remove(cursorKey, 'session'); } catch { }
-                try { storage.remove(snapshotKey, 'session'); } catch { }
-                try { storage.remove(tsKey, 'local'); } catch { }
-                try { storage.remove(cursorKey, 'local'); } catch { }
-                try { storage.remove(snapshotKey, 'local'); } catch { }
-                const errorMsg = checkAlive === 'not_found'
-                    ? 'Process not found (stale terminal window)'
-                    : 'Process has ended';
-                safeWrite(`\r\n\x1b[31m✗ ${errorMsg}.\x1b[0m\r\n`);
-                try { onProcessNotFound?.(); } catch { }
-                setIsInitializing(false);
-                return;
-            }
-
             // Load snapshot from IndexedDB (now uses pooled connection - fast)
             const fromDb = await getTerminalSnapshot('script', pid);
             if (fromDb && fromDb.ts > 0 && now0 - fromDb.ts <= TERMINAL_PERSIST_TTL_MS) {
