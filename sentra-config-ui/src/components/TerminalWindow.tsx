@@ -479,7 +479,9 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
             try {
                 const res = await fetch(`/api/scripts/status/${processId}?token=${encodeURIComponent(token || '')}`);
                 if (res.status === 404) return 'not_found';
-                if (!res.ok) return 'alive';
+                if (res.status === 401 || res.status === 403) return 'not_found';
+                if (res.status >= 500) return 'alive';
+                if (!res.ok) return 'not_found';
                 const st: any = await res.json();
 
                 // Check if process has ended

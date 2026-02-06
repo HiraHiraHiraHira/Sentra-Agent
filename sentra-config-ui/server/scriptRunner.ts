@@ -152,6 +152,21 @@ function deletePm2ByProcessId(processId: string): Pm2DeleteResult {
 export class ScriptRunner {
     private processes: Map<string, ScriptProcess> = new Map();
 
+    private markEndedAndCleanup(id: string, rec: ScriptProcess, code: number | null) {
+        try {
+            if (rec.exitCode === null) {
+                rec.exitCode = code;
+                rec.endTime = new Date();
+                try { rec.emitter.emit('exit', { code }); } catch { }
+            }
+        } catch { }
+
+        // Remove immediately to avoid dedupe returning a stale id on reopen.
+        try {
+            this.processes.delete(id);
+        } catch { }
+    }
+
     private computeDedupeKey(name: ScriptProcess['name'], args: string[]): string {
         // Some scripts accept sub-commands; they must not share the same running instance.
         // Otherwise UI actions like "napcat build" and "napcat start" will reuse the same processId
@@ -474,6 +489,9 @@ export class ScriptRunner {
 
                 // Always attempt to delete the scoped PM2 process. If it doesn't exist, it's a no-op.
                 const pm2 = deletePm2ProcessByName('sentra-agent');
+                if (pm2.ok) {
+                    this.markEndedAndCleanup(id, record, 0);
+                }
                 return { success: pm2.ok, pm2, message: pm2.ok ? 'Process terminated (PM2 deleted)' : (pm2.message || 'Wrapper terminated but PM2 delete failed') };
             } else if (record.name === 'napcat') {
                 if (os.platform() === 'win32') {
@@ -486,6 +504,9 @@ export class ScriptRunner {
                 }
 
                 const pm2 = deletePm2ProcessByName('sentra-napcat');
+                if (pm2.ok) {
+                    this.markEndedAndCleanup(id, record, 0);
+                }
                 return { success: pm2.ok, pm2, message: pm2.ok ? 'Process terminated (PM2 deleted)' : (pm2.message || 'Wrapper terminated but PM2 delete failed') };
             } else if (record.name === 'sentiment') {
                 if (os.platform() === 'win32') {
@@ -498,6 +519,9 @@ export class ScriptRunner {
                 }
 
                 const pm2 = deletePm2ProcessByName('sentra-emo');
+                if (pm2.ok) {
+                    this.markEndedAndCleanup(id, record, 0);
+                }
                 return { success: pm2.ok, pm2, message: pm2.ok ? 'Process terminated (PM2 deleted)' : (pm2.message || 'Wrapper terminated but PM2 delete failed') };
             } else {
                 // Normal process termination for other scripts
@@ -509,6 +533,7 @@ export class ScriptRunner {
                         try { process.kill(pid, 'SIGKILL'); } catch { }
                     }, 500);
                 }
+                this.markEndedAndCleanup(id, record, 0);
                 return { success: true, message: 'Process terminated' };
             }
         } catch {
