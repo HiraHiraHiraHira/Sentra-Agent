@@ -559,7 +559,7 @@ export function DesktopUtilityWindowsLayer(props: DesktopUtilityWindowsLayerProp
       {deepWikiOpen && (
         <MacWindow
           id="deepwiki"
-          title="DeepWiki · Sentra Agent"
+          title="DeepWiki 助手"
           icon={<IoBookOutline style={{ color: '#2563eb' }} />}
           initialPos={getInitialPos('deepwiki')}
           safeArea={desktopSafeArea}

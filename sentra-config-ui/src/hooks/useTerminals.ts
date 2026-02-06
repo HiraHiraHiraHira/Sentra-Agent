@@ -99,13 +99,13 @@ export function useTerminals({ addToast, allocateZ }: UseTerminalsParams) {
     }
   };
 
-  const handleRunBootstrap = async () => runScript('/api/scripts/bootstrap', 'Bootstrap Script', 'bootstrap', ['--force']);
-  const handleRunStart = async () => runScript('/api/scripts/start', 'Start Script', 'start', []);
+  const handleRunBootstrap = async () => runScript('/api/scripts/bootstrap', '系统引导（安装/修复依赖）', 'bootstrap', ['--force']);
+  const handleRunStart = async () => runScript('/api/scripts/start', '启动主程序', 'start', []);
   const handleRunNapcatBuild = async () => runScript('/api/scripts/napcat', 'NC沙盒 构建', 'nc-sandbox-build', ['build']);
   const handleRunNapcatStart = async () => runScript('/api/scripts/napcat', 'NC沙盒 启动', 'nc-sandbox-start', ['start']);
   const handleRunNapcatStartSilent = async () => runScriptSilent('/api/scripts/napcat', 'NC沙盒 启动', ['start']);
-  const handleRunUpdate = async () => runScript('/api/scripts/update', 'Update Project', 'update', []);
-  const handleRunForceUpdate = async () => runScript('/api/scripts/update', 'Force Update Project', 'force-update', ['force']);
+  const handleRunUpdate = async () => runScript('/api/scripts/update', '检查并更新项目', 'update', []);
+  const handleRunForceUpdate = async () => runScript('/api/scripts/update', '强制更新项目（覆盖本地改动）', 'force-update', ['force']);
   const handleRunSentiment = async () => runScript('/api/scripts/sentiment', '情感分析服务', 'sentiment', [], {
     headerText: 'Sentra Emotion Analysis Engine v1.0',
     theme: {

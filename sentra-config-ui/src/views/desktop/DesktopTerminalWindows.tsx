@@ -50,7 +50,7 @@ export function DesktopTerminalWindows(props: DesktopTerminalWindowsProps) {
           title={terminal.title}
           icon={
             <span style={{ fontSize: '16px', display: 'flex', alignItems: 'center' }}>
-              {terminal.title.includes('Bootstrap') ? <IoCubeOutline /> : <IoTerminalOutline />}
+              {String(terminal.appKey || '') === 'bootstrap' ? <IoCubeOutline /> : <IoTerminalOutline />}
             </span>
           }
           initialPos={terminal.pos}

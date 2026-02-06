@@ -50,6 +50,21 @@ function commandExists(cmd, checkArgs = ['--version']) {
   }
 }
 
+function commandOutput(cmd, args = []) {
+  try {
+    const r = spawnSync(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], shell: true });
+    if (r.status === 0) return String(r.stdout || '').trim();
+  } catch {
+  }
+  return '';
+}
+
+function resolveCommandLocation(cmd) {
+  const isWin = process.platform === 'win32';
+  const out = commandOutput(isWin ? 'where' : 'which', [cmd]);
+  return out;
+}
+
 function run(cmd, args, cwd, extraEnv) {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, { cwd, stdio: 'inherit', shell: true, env: { ...process.env, ...(extraEnv || {}) } });
@@ -177,26 +192,84 @@ function choosePM(preferred) {
 
 function buildGlobalPm2InstallArgs(pm) {
   const v = String(pm || '').toLowerCase();
-  if (v === 'pnpm') return ['add', '-g', 'pm2@latest'];
   if (v === 'yarn') return ['global', 'add', 'pm2@latest'];
   if (v === 'bun') return ['add', '-g', 'pm2@latest'];
   return ['install', '-g', 'pm2@latest'];
 }
 
+function resolveLocalPm2Bin() {
+  const isWin = process.platform === 'win32';
+  const local = path.join(uiDir, 'node_modules', '.bin', isWin ? 'pm2.cmd' : 'pm2');
+  if (exists(local) && commandExists(local, ['--version'])) return local;
+  const rootLocal = path.join(repoRoot, 'node_modules', '.bin', isWin ? 'pm2.cmd' : 'pm2');
+  if (exists(rootLocal) && commandExists(rootLocal, ['--version'])) return rootLocal;
+  return '';
+}
+
 async function ensureGlobalPm2(pm, dryRun, registry) {
   const spinner = ora(`Ensuring global pm2@latest (using ${pm})...`).start();
   if (dryRun) {
-    spinner.info(chalk.yellow(`[DRY] ${pm} ${buildGlobalPm2InstallArgs(pm).join(' ')}`));
+    const preferred = String(pm || '').toLowerCase() === 'pnpm' ? '' : pm;
+    const installer = preferred || (commandExists('npm') ? 'npm' : pm);
+    spinner.info(chalk.yellow(`[DRY] ${installer} ${buildGlobalPm2InstallArgs(installer).join(' ')}`));
     return;
   }
+
+  const beforeVersion = commandOutput('pm2', ['--version']);
+  const beforeLocation = resolveCommandLocation('pm2');
+
+  let hasAnyPm2 = false;
+  try {
+    if (commandExists('pm2', ['--version'])) {
+      hasAnyPm2 = true;
+    } else {
+      const localPm2 = resolveLocalPm2Bin();
+      if (localPm2) hasAnyPm2 = true;
+    }
+  } catch {
+  }
+
   try {
     const extraEnv = {};
     if (registry) {
       extraEnv.npm_config_registry = registry;
       extraEnv.NPM_CONFIG_REGISTRY = registry;
     }
-    await run(pm, buildGlobalPm2InstallArgs(pm), repoRoot, extraEnv);
-    spinner.succeed(chalk.green('Global pm2 is ready'));
+    const preferred = String(pm || '').toLowerCase() === 'pnpm' ? '' : pm;
+    const installer = preferred || (commandExists('npm') ? 'npm' : '');
+    if (!installer) {
+      if (hasAnyPm2) {
+        spinner.succeed(chalk.green('pm2 is available (skipped upgrade: no supported global installer found)'));
+        return;
+      }
+      throw new Error('No supported global installer found for pm2@latest');
+    }
+
+    spinner.text = hasAnyPm2
+      ? `Upgrading global pm2@latest (using ${installer})...`
+      : `Installing global pm2@latest (using ${installer})...`;
+
+    const installArgs = buildGlobalPm2InstallArgs(installer);
+    if (hasAnyPm2 && String(installer).toLowerCase() === 'npm') {
+      installArgs.push('--force');
+    }
+    await run(installer, installArgs, repoRoot, extraEnv);
+    const afterVersion = commandOutput('pm2', ['--version']);
+    const afterLocation = resolveCommandLocation('pm2');
+
+    if (afterVersion) {
+      spinner.succeed(chalk.green(`Global pm2 is ready (pm2 ${afterVersion})`));
+    } else {
+      spinner.succeed(chalk.green('Global pm2 is ready'));
+    }
+
+    if (beforeVersion && afterVersion && beforeVersion === afterVersion) {
+      console.log(chalk.yellow(`pm2 version did not change (still ${afterVersion}). This may be normal if already latest, or PATH points to a different pm2.`));
+    }
+    const loc = String(afterLocation || beforeLocation || '').trim();
+    if (loc) {
+      console.log(chalk.gray(`pm2 location:\n${loc}`));
+    }
   } catch (e) {
     spinner.fail(chalk.yellow('Failed to install/upgrade global pm2 (continuing)'));
     try {
@@ -208,9 +281,21 @@ async function ensureGlobalPm2(pm, dryRun, registry) {
         }
         await run('npm', ['install', '-g', 'pm2@latest'], repoRoot, extraEnv);
         console.log(chalk.green('Global pm2 installed via npm fallback'));
+
+        const afterVersion = commandOutput('pm2', ['--version']);
+        const afterLocation = resolveCommandLocation('pm2');
+        if (afterVersion) {
+          console.log(chalk.green(`pm2 version: ${afterVersion}`));
+        }
+        if (afterLocation) {
+          console.log(chalk.gray(`pm2 location:\n${afterLocation}`));
+        }
       }
     } catch {
       console.log(chalk.gray('You can try manually: npm install -g pm2@latest'));
+      if (String(pm || '').toLowerCase() === 'pnpm') {
+        console.log(chalk.gray('If you insist on pnpm global installs, run: pnpm setup (or set PNPM_HOME and add it to PATH), then retry.'));
+      }
     }
   }
 }

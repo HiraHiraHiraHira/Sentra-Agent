@@ -11,7 +11,6 @@ import { RightPanel } from './RightPanel';
 import { SettingsDrawer } from './SettingsDrawer';
 import { useQqRuntimeConfig } from './useQqRuntimeConfig';
 import { useQqPersistence } from './useQqPersistence';
-import { useQqUiHeartbeat } from './useQqUiHeartbeat';
 import { useQqWsConnection } from './useQqWsConnection';
 import type { Conversation, FormattedMessage } from './QqSandbox.types';
 import {
@@ -708,8 +707,6 @@ export function QqSandbox() {
     if (token) h['x-auth-token'] = token;
     return h;
   }, [token]);
-
-  useQqUiHeartbeat({ authHeaders, scope: 'qq_sandbox', intervalMs: 15_000 });
 
   const sleep = useCallback((ms: number) => new Promise<void>((r) => setTimeout(r, ms)), []);
 

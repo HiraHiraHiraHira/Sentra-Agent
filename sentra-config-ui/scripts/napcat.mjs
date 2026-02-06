@@ -164,6 +164,38 @@ function windowsGetProcessImageName(pid) {
   }
 }
 
+function windowsGetProcessDetails(pid) {
+  const safePid = Number(pid);
+  if (!Number.isFinite(safePid) || safePid <= 0) return { name: '', commandLine: '' };
+
+  let name = '';
+  try {
+    name = String(windowsGetProcessImageName(safePid) || '');
+  } catch {
+  }
+
+  // tasklist can fail to return a row for some processes (permissions / cross-session).
+  // Try PowerShell for more reliable output.
+  let commandLine = '';
+  try {
+    const ps = [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `try { $p = Get-CimInstance Win32_Process -Filter \"ProcessId=${safePid}\"; if ($p) { Write-Output ($p.Name); Write-Output ($p.CommandLine) } } catch { }`,
+    ];
+    const r = spawnSync('powershell.exe', ps, { stdio: ['ignore', 'pipe', 'ignore'], shell: true });
+    if (r.status === 0) {
+      const out = String(r.stdout || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      if (out[0] && !name) name = out[0];
+      if (out.length > 1) commandLine = out.slice(1).join(' ');
+    }
+  } catch {
+  }
+
+  return { name: String(name || ''), commandLine: String(commandLine || '') };
+}
+
 function windowsKillPid(pid) {
   try {
     const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', shell: true });
@@ -179,12 +211,24 @@ async function ensurePortFreeBeforeStart(port) {
   if (!pids.length) return;
 
   for (const pid of pids) {
-    const img = windowsGetProcessImageName(pid).toLowerCase();
-    // Safety guard: only auto-kill likely node processes (napcat is node).
-    const allowed = img.includes('node');
+    const det = windowsGetProcessDetails(pid);
+    const img = String(det.name || '').toLowerCase();
+    const cmd = String(det.commandLine || '').toLowerCase();
+
+    // Safety guard: only auto-kill when we can reasonably tell it's node/napcat related.
+    const looksLikeNode = img.includes('node') || cmd.includes('node');
+    const looksLikeNapcat = cmd.includes('napcat') || cmd.includes('sentra-adapter') || cmd.includes('sentra-napcat');
+    const allowed = looksLikeNode && (looksLikeNapcat || img.includes('node'));
+
     if (!allowed) {
-      throw new Error(`Port ${port} is already in use by PID ${pid} (${img || 'unknown'}). Please close that process or change REVERSE_PORT/STREAM_PORT, then retry.`);
+      const detailText = `${det.name || 'unknown'}${det.commandLine ? ` | ${det.commandLine}` : ''}`;
+      throw new Error(
+        `Port ${port} is already in use by PID ${pid} (${detailText || 'unknown'}). ` +
+        `Please close/kill that process or change REVERSE_PORT/STREAM_PORT, then retry. ` +
+        `Tip: run \"netstat -ano | findstr :${port}\" then \"tasklist /FI \\\"PID eq ${pid}\\\"\" to identify it.`
+      );
     }
+
     windowsKillPid(pid);
   }
 

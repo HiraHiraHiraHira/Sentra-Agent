@@ -223,7 +223,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
     void fetchUpdateInfo();
     const t = window.setInterval(() => {
       void fetchUpdateInfo();
-    }, 60_000);
+    }, 10 * 60_000);
     return () => window.clearInterval(t);
   }, []);
 

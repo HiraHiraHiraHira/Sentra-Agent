@@ -7,11 +7,6 @@ import os from 'os';
 import https from 'https';
 import { scriptRunner } from '../scriptRunner';
 
-let lastUiHeartbeat = 0;
-let uiOnline = false;
-let staleLogged = false;
-let heartbeatTimer: NodeJS.Timeout | null = null;
-
 let lastUpdateCheckTs = 0;
 let lastUpdateCheckRes: any = null;
 
@@ -113,31 +108,6 @@ function runGit(repoDir: string, args: string[]): { ok: boolean; stdout: string;
 }
 
 export async function systemRoutes(fastify: FastifyInstance) {
-    if (!heartbeatTimer) {
-        heartbeatTimer = setInterval(() => {
-            if (!uiOnline) return;
-            const now = Date.now();
-            const STALE_MS = 60_000;
-            if (!lastUiHeartbeat || (now - lastUiHeartbeat) <= STALE_MS) {
-                staleLogged = false;
-                return;
-            }
-            uiOnline = false;
-            if (!staleLogged) {
-                staleLogged = true;
-                fastify.log.warn({ lastUiHeartbeat }, '[System] UI heartbeat stale; marking UI offline (no auto-cleanup).');
-            }
-        }, 15_000);
-    }
-
-    fastify.post<{
-        Body: { scope?: string; ts?: number };
-    }>('/api/system/ui/heartbeat', async (_request) => {
-        uiOnline = true;
-        lastUiHeartbeat = Date.now();
-        return { success: true, ts: lastUiHeartbeat };
-    });
-
     fastify.post('/api/system/cleanup', async () => {
         const res = scriptRunner.cleanupAll({ includePm2: true });
         return { success: true, res };

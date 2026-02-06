@@ -331,9 +331,9 @@ export function DesktopDock(props: DesktopDockProps) {
           },
           onClose: isOpen
             ? () => {
-                const win = openWindows.find((w) => w.file.name === item.name && w.file.type === item.type);
-                if (win) closeWindow(win.id);
-              }
+              const win = openWindows.find((w) => w.file.name === item.name && w.file.type === item.type);
+              if (win) closeWindow(win.id);
+            }
             : undefined,
           onRemove: () => setDockFavorites((prev) => prev.filter((id) => id !== favId)),
         };
