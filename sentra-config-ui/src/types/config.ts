@@ -21,9 +21,14 @@ export interface PluginConfig {
   hasEnv: boolean;
   hasExample: boolean;
   hasConfigJson: boolean;
+  hasSkill?: boolean;
+  hasSkillExample?: boolean;
   variables: EnvVariable[];
   exampleVariables?: EnvVariable[];
   configJson?: any;
+  skillMarkdown?: string;
+  skillIsDefault?: boolean;
+  skillDefaultSource?: 'example' | 'generated';
 }
 
 export interface PresetFile {

@@ -16,17 +16,19 @@ function sendJson(conn: any, payload: any) {
 
 export async function terminalExecutorRoutes(fastify: FastifyInstance) {
   fastify.post<{
-    Body: { shellType?: ShellType; cols?: number; rows?: number };
+    Body: { shellType?: ShellType; cols?: number; rows?: number; cwd?: string };
   }>('/api/terminal-executor/create', async (request, reply) => {
     const shellType = (String(request.body?.shellType || 'powershell').trim().toLowerCase() || 'powershell') as ShellType;
     const cols = Number(request.body?.cols);
     const rows = Number(request.body?.rows);
+    const cwd = String(request.body?.cwd || '').trim();
 
     try {
       const s = terminalExecutorManager.createSession({
         shellType,
         cols: Number.isFinite(cols) ? cols : undefined,
         rows: Number.isFinite(rows) ? rows : undefined,
+        cwd: cwd || undefined,
       });
       return { success: true, sessionId: s.id };
     } catch (error) {

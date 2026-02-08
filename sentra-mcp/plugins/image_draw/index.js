@@ -133,7 +133,7 @@ function guessImageExtFromUrl(u) {
       // e.g. format=png / ext=jpg
       if (isLikelyImageExt(c)) return `.${c.replace(/^\./, '')}`;
     }
-  } catch {}
+  } catch { }
   return '';
 }
 
@@ -314,7 +314,8 @@ export default async function handler(args = {}, options = {}) {
   const penv = options?.pluginEnv || {};
   const apiKey = penv.DRAW_API_KEY || process.env.DRAW_API_KEY || config.llm.apiKey;
   const baseURL = penv.DRAW_BASE_URL || process.env.DRAW_BASE_URL || config.llm.baseURL;
-  const model = String(penv.DRAW_MODEL || process.env.DRAW_MODEL || '').trim();
+  const modelArg = String(args.model || '').trim();
+  const model = String(modelArg || penv.DRAW_MODEL || process.env.DRAW_MODEL || '').trim();
   const mode = String(penv.DRAW_MODE || process.env.DRAW_MODE || 'images').toLowerCase();
   const imageSize = String(penv.DRAW_IMAGE_SIZE || process.env.DRAW_IMAGE_SIZE || '1024x1024');
 
@@ -380,7 +381,7 @@ export default async function handler(args = {}, options = {}) {
         if (typeof options?.onStream === 'function') {
           try {
             options.onStream({ type: 'delta', delta, content });
-          } catch {}
+          } catch { }
         }
       }
     }

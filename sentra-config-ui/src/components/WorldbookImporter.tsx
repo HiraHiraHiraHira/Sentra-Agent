@@ -134,94 +134,94 @@ export const WorldbookImporter: React.FC<WorldbookImporterProps> = ({ open, onCl
 
   const content = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: embedded ? '100%' : undefined }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-          <Segmented
-            value={mode}
-            onChange={(v) => setMode(v as any)}
-            options={[
-              { label: '上传', value: 'upload' },
-              { label: '文本', value: 'text' },
-            ]}
-            disabled={saving}
-          />
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ fontSize: 12, opacity: 0.75 }}>保存后设为当前</div>
-            <Switch checked={setAsActive} onChange={setSetAsActive} disabled={saving} />
-          </div>
-        </div>
-
-        {mode === 'upload' ? (
-          <Upload.Dragger
-            multiple={false}
-            showUploadList={false}
-            accept=".json"
-            disabled={saving}
-            beforeUpload={(f) => {
-              void handlePick(f as any);
-              return false;
-            }}
-            style={{ borderRadius: 14 }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <InboxOutlined />
-              <div style={{ textAlign: 'left' }}>
-                <div style={{ fontWeight: 600 }}>{file ? '已选择文件' : '拖拽世界书 JSON 到这里'}</div>
-                <div style={{ fontSize: 12, opacity: 0.75 }}>或点击选择文件（仅 .json）</div>
-              </div>
-            </div>
-          </Upload.Dragger>
-        ) : null}
-
-        {mode === 'text' ? (
-          <Input.TextArea
-            value={rawText}
-            onChange={(e) => setRawText(e.target.value)}
-            placeholder="粘贴 worldbook JSON..."
-            autoSize={{ minRows: 8, maxRows: 18 }}
-            disabled={saving}
-            style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace" }}
-          />
-        ) : null}
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 12, alignItems: 'start' }}>
-          <div style={{
-            background: theme === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.04)',
-            borderRadius: 12,
-            padding: 12,
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-            fontSize: 12,
-            whiteSpace: 'pre-wrap',
-            minHeight: 160,
-          }}>
-            {preparedJson || '预览区：选择文件或粘贴 JSON 后会显示格式化内容'}
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ fontSize: 12, opacity: 0.75 }}>文件名（保存到 agent-presets/）</div>
-            <Input value={fileName} onChange={(e) => setFileName(e.target.value)} disabled={saving} />
-
-            <Button
-              type="primary"
-              icon={setAsActive ? <StarOutlined /> : <SaveOutlined />}
-              onClick={() => void handleSave()}
-              loading={saving}
-              disabled={!String(preparedJson || '').trim()}
-            >
-              {setAsActive ? '保存并启用' : '保存'}
-            </Button>
-
-            <Button onClick={onClose} disabled={saving}>取消</Button>
-          </div>
-        </div>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".json"
-          style={{ display: 'none' }}
-          onChange={(e) => void handlePick(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+        <Segmented
+          value={mode}
+          onChange={(v) => setMode(v as any)}
+          options={[
+            { label: '上传', value: 'upload' },
+            { label: '文本', value: 'text' },
+          ]}
+          disabled={saving}
         />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ fontSize: 12, opacity: 0.75 }}>保存后设为当前</div>
+          <Switch checked={setAsActive} onChange={setSetAsActive} disabled={saving} />
+        </div>
+      </div>
+
+      {mode === 'upload' ? (
+        <Upload.Dragger
+          multiple={false}
+          showUploadList={false}
+          accept=".json"
+          disabled={saving}
+          beforeUpload={(f) => {
+            void handlePick(f as any);
+            return false;
+          }}
+          style={{ borderRadius: 14 }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <InboxOutlined />
+            <div style={{ textAlign: 'left' }}>
+              <div style={{ fontWeight: 600 }}>{file ? '已选择文件' : '拖拽世界书 JSON 到这里'}</div>
+              <div style={{ fontSize: 12, opacity: 0.75 }}>或点击选择文件（仅 .json）</div>
+            </div>
+          </div>
+        </Upload.Dragger>
+      ) : null}
+
+      {mode === 'text' ? (
+        <Input.TextArea
+          value={rawText}
+          onChange={(e) => setRawText(e.target.value)}
+          placeholder="粘贴 worldbook JSON..."
+          autoSize={{ minRows: 8, maxRows: 18 }}
+          disabled={saving}
+          style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace" }}
+        />
+      ) : null}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 12, alignItems: 'start' }}>
+        <div style={{
+          background: theme === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.04)',
+          borderRadius: 12,
+          padding: 12,
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+          fontSize: 12,
+          whiteSpace: 'pre-wrap',
+          minHeight: 160,
+        }}>
+          {preparedJson || '预览区：选择文件或粘贴 JSON 后会显示格式化内容'}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ fontSize: 12, opacity: 0.75 }}>文件名（保存到 agent-presets/）</div>
+          <Input value={fileName} onChange={(e) => setFileName(e.target.value)} disabled={saving} />
+
+          <Button
+            type="primary"
+            icon={setAsActive ? <StarOutlined /> : <SaveOutlined />}
+            onClick={() => void handleSave()}
+            loading={saving}
+            disabled={!String(preparedJson || '').trim()}
+          >
+            {setAsActive ? '保存并启用' : '保存'}
+          </Button>
+
+          <Button onClick={onClose} disabled={saving}>取消</Button>
+        </div>
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        style={{ display: 'none' }}
+        onChange={(e) => void handlePick(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
+      />
     </div>
   );
 

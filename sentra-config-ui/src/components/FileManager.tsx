@@ -655,7 +655,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ onClose, addToast, the
                                                 automaticLayout: true,
                                                 contextmenu: true,
                                                 find: {
-                                                    addExtraSpaceOnTop: true,
+                                                    addExtraSpaceOnTop: false,
                                                     autoFindInSelection: 'never',
                                                     seedSearchStringFromSelection: 'always'
                                                 }

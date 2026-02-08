@@ -11,6 +11,9 @@ export type DeskWindow = {
   z: number;
   minimized: boolean;
   editedVars: EnvVariable[];
+  section?: 'mcp' | 'skills';
+  skillDraft?: string;
+  skillDirty?: boolean;
   maximized?: boolean;
 };
 
@@ -41,6 +44,9 @@ export type IOSEditorWin = {
   file: FileItem;
   editedVars: EnvVariable[];
   minimized: boolean;
+  section?: 'mcp' | 'skills';
+  skillDraft?: string;
+  skillDirty?: boolean;
 };
 
 export type AppFolder = {

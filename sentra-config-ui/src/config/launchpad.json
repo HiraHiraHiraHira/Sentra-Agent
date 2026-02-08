@@ -1,0 +1,210 @@
+{
+  "pages": [
+    {
+      "id": "boards",
+      "title": "大板块",
+      "include": [
+        {
+          "kind": "builtin",
+          "match": "exact",
+          "value": "file-manager"
+        },
+        {
+          "kind": "builtin",
+          "match": "exact",
+          "value": "terminal-manager"
+        },
+        {
+          "kind": "builtin",
+          "match": "exact",
+          "value": "qq-sandbox"
+        },
+        {
+          "kind": "builtin",
+          "match": "exact",
+          "value": "deepwiki"
+        },
+        {
+          "kind": "builtin",
+          "match": "exact",
+          "value": "presets-editor"
+        },
+        {
+          "kind": "builtin",
+          "match": "exact",
+          "value": "preset-importer"
+        }
+      ],
+      "sort": "none",
+      "overflow": "split"
+    },
+    {
+      "id": "important",
+      "title": "重要应用",
+      "include": [
+        {
+          "kind": "builtin",
+          "match": "exact",
+          "value": "mcp-servers-manager"
+        },
+        {
+          "kind": "builtin",
+          "match": "exact",
+          "value": "model-providers-manager"
+        },
+        {
+          "kind": "builtin",
+          "match": "exact",
+          "value": "emoji-stickers-manager"
+        },
+        {
+          "kind": "builtin",
+          "match": "exact",
+          "value": "redis-admin"
+        },
+        {
+          "kind": "builtin",
+          "match": "exact",
+          "value": "dev-center"
+        }
+      ],
+      "sort": "none",
+      "overflow": "split"
+    },
+    {
+      "id": "mcp-plugins",
+      "title": "MCP Plugins（非QQ）",
+      "include": [
+        {
+          "kind": "type",
+          "match": "exact",
+          "value": "plugin"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "name",
+          "match": "includes",
+          "value": "qq_"
+        },
+        {
+          "kind": "name",
+          "match": "includes",
+          "value": "qq-"
+        },
+        {
+          "kind": "name",
+          "match": "exact",
+          "value": "utils/emoji-stickers"
+        }
+      ],
+      "sort": "name",
+      "overflow": "split"
+    },
+    {
+      "id": "qq-plugins",
+      "title": "QQ Plugins",
+      "include": [
+        {
+          "kind": "type",
+          "match": "exact",
+          "value": "plugin"
+        }
+      ],
+      "require": [
+        {
+          "kind": "name",
+          "match": "includes",
+          "value": "qq_"
+        },
+        {
+          "kind": "name",
+          "match": "includes",
+          "value": "qq-"
+        }
+      ],
+      "sort": "name",
+      "overflow": "split"
+    },
+    {
+      "id": "others",
+      "title": "其他",
+      "include": [
+        {
+          "kind": "any",
+          "match": "always",
+          "value": ""
+        }
+      ],
+      "sort": "name",
+      "overflow": "split"
+    }
+  ],
+  "builtinToolOrder": [
+    "file-manager",
+    "terminal-manager",
+    "qq-sandbox",
+    "deepwiki",
+    "presets-editor",
+    "preset-importer",
+    "emoji-stickers-manager",
+    "model-providers-manager",
+    "mcp-servers-manager",
+    "dev-center",
+    "redis-admin"
+  ],
+  "priorityRules": [
+    {
+      "type": "exact",
+      "value": "."
+    },
+    {
+      "type": "includes",
+      "value": "sentra-config-ui"
+    }
+  ],
+  "groups": [
+    {
+      "id": "core",
+      "match": [
+        "sentra-prompts",
+        "sentra-mcp",
+        "sentra-emo",
+        "sentra-adapter",
+        "sentra-rag"
+      ],
+      "sort": "name"
+    },
+    {
+      "id": "qq",
+      "match": [
+        "qq_",
+        "qq-"
+      ],
+      "sort": "name"
+    },
+    {
+      "id": "tools",
+      "match": [],
+      "sort": "name"
+    }
+  ],
+  "layout": {
+    "desktop": {
+      "rowHeight": 120,
+      "minCols": 3,
+      "colWidth": 130,
+      "minRows": 3
+    },
+    "mobile": {
+      "rowHeight": 92,
+      "cols": 4,
+      "maxRows": 4,
+      "reservedBottom": 120
+    },
+    "pageCapacity": {
+      "min": 4,
+      "default": 20
+    }
+  }
+}

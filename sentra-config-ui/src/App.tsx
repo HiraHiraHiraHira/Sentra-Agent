@@ -22,6 +22,7 @@ import { useAppAppearance } from './hooks/useAppAppearance';
 import { useDesktopShortcuts } from './hooks/useDesktopShortcuts';
 import { useWallpaperTargetMetrics } from './hooks/useWallpaperTargetMetrics';
 import { useConfirmDeleteWallpaper } from './hooks/useConfirmDeleteWallpaper';
+import { TerminalWindowsLayer } from './components/TerminalWindowsLayer';
 function App() {
   const { isMobile, isTablet } = useDevice();
   const isPortable = isMobile || isTablet;
@@ -155,6 +156,7 @@ function App() {
           loadConfigs={loadConfigs}
           presetsState={presetsState}
         />
+        <TerminalWindowsLayer isPortable={true} />
       </Suspense>
     );
   }
@@ -193,6 +195,7 @@ function App() {
         loadConfigs={loadConfigs}
         presetsState={presetsState}
       />
+      <TerminalWindowsLayer isPortable={false} />
     </Suspense>
   );
 }

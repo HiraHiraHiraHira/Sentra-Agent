@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { scanAllConfigs } from '../utils/configScanner';
 import { writeEnvFile } from '../utils/envParser';
 import { join, resolve } from 'path';
-import { copyFileSync, existsSync } from 'fs';
+import { copyFileSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { EnvVariable } from '../types';
 import { getRuntimeConfig, getRuntimeConfigVersion, reloadRuntimeConfigFromEnvFile, onRuntimeConfigChange, getCurrentConfigVersion, getCurrentConfig } from '../utils/runtimeConfig.ts';
 
@@ -191,6 +191,74 @@ export async function configRoutes(fastify: FastifyInstance) {
     } catch (error) {
       reply.code(500).send({
         error: 'Failed to restore configuration',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  fastify.get<{
+    Querystring: { pluginName: string };
+  }>('/api/configs/plugin-skill', async (request, reply) => {
+    try {
+      const pluginName = String((request.query as any)?.pluginName || '').trim();
+      if (!pluginName) return reply.code(400).send({ error: 'Missing pluginName' });
+
+      const pluginPath = join(getRootDir(), 'sentra-mcp', 'plugins', pluginName);
+      const skillPath = join(pluginPath, 'skill.md');
+      if (!existsSync(skillPath)) {
+        return reply.code(404).send({ error: 'skill.md not found' });
+      }
+      const content = readFileSync(skillPath, 'utf-8');
+      return { success: true, pluginName, content };
+    } catch (error) {
+      reply.code(500).send({
+        error: 'Failed to read plugin skill',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  fastify.post<{
+    Body: { pluginName: string; content: string };
+  }>('/api/configs/plugin-skill', async (request, reply) => {
+    try {
+      const pluginName = String((request.body as any)?.pluginName || '').trim();
+      const content = (request.body as any)?.content;
+      if (!pluginName) return reply.code(400).send({ error: 'Missing pluginName' });
+      if (typeof content !== 'string') return reply.code(400).send({ error: 'Missing content' });
+
+      const pluginPath = join(getRootDir(), 'sentra-mcp', 'plugins', pluginName);
+      const skillPath = join(pluginPath, 'skill.md');
+      writeFileSync(skillPath, content, 'utf-8');
+      return { success: true, message: `Skill saved for plugin ${pluginName}` };
+    } catch (error) {
+      reply.code(500).send({
+        error: 'Failed to save plugin skill',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  fastify.post<{
+    Body: { pluginName: string };
+  }>('/api/configs/plugin-skill/restore', async (request, reply) => {
+    try {
+      const pluginName = String((request.body as any)?.pluginName || '').trim();
+      if (!pluginName) return reply.code(400).send({ error: 'Missing pluginName' });
+
+      const pluginPath = join(getRootDir(), 'sentra-mcp', 'plugins', pluginName);
+      const skillPath = join(pluginPath, 'skill.md');
+      if (existsSync(skillPath)) {
+        try {
+          unlinkSync(skillPath);
+        } catch {
+          // ignore
+        }
+      }
+      return { success: true, message: 'Skill restored to default (skill.md removed)' };
+    } catch (error) {
+      reply.code(500).send({
+        error: 'Failed to restore plugin skill',
         message: error instanceof Error ? error.message : String(error),
       });
     }

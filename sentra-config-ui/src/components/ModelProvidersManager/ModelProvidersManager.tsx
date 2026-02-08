@@ -1,6 +1,6 @@
 import { Component, type PropsWithChildren, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { fetchConfigs, fetchFileContent, saveFileContent, saveModuleConfig, savePluginConfig } from '../../services/api.ts';
+import { fetchConfigs, fetchFileContent, saveFileContent, saveModuleConfig } from '../../services/api.ts';
 import { testProviderModels } from '../../services/llmProvidersApi.ts';
 import type { ConfigData, EnvVariable } from '../../types/config.ts';
 import type { ToastMessage } from '../Toast';
@@ -1455,10 +1455,8 @@ export default function ModelProvidersManager(props: { addToast: (type: ToastMes
     if (!Array.isArray(vars) || vars.length === 0) return;
     setMcpPluginSaving(true);
     try {
-      await savePluginConfig(mcpPluginName, vars);
-      addToast('success', '已保存', `sentra-mcp/plugins/${mcpPluginName} / .env`);
-      setMcpPluginDirty(prev => ({ ...prev, [mcpPluginName]: false }));
-      await loadConfigData();
+      // ModelProvidersManager does not manage plugin .env anymore.
+      return;
     } catch (e: any) {
       addToast('error', '保存失败', e?.message ? String(e.message) : String(e));
     } finally {

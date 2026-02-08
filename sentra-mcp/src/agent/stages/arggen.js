@@ -44,13 +44,7 @@ export async function generateToolArgs(params) {
   const skillDoc = currentToolFull?.skillDoc && typeof currentToolFull.skillDoc === 'object'
     ? currentToolFull.skillDoc
     : (manifestItem?.skillDoc && typeof manifestItem.skillDoc === 'object' ? manifestItem.skillDoc : null);
-  const skillDigest = (skillDoc && typeof skillDoc.digest === 'string') ? skillDoc.digest : '';
   const skillMarkdownRaw = (skillDoc && typeof skillDoc.raw === 'string') ? skillDoc.raw : '';
-  const skillCfg = (config && config.skillDoc && typeof config.skillDoc === 'object') ? config.skillDoc : {};
-  const maxSkillDigestChars = Number.isFinite(Number(skillCfg.maxDigestChars)) ? Number(skillCfg.maxDigestChars) : 0;
-  const maxSkillMarkdownChars = Number.isFinite(Number(skillCfg.maxMarkdownChars)) ? Number(skillCfg.maxMarkdownChars) : 0;
-  const skillDigestClipped = clipText(skillDigest, maxSkillDigestChars);
-  const skillMarkdownClipped = clipText(skillMarkdownRaw, maxSkillMarkdownChars);
 
   const perStepTools = [{
     type: 'function',
@@ -127,13 +121,13 @@ export async function generateToolArgs(params) {
     const overlays = (context?.promptOverlays || context?.overlays || {});
     const overlayGlobal = overlays.global?.system || overlays.global || '';
     const overlayArgs = overlays.arggen?.system || overlays.arggen || overlays.args || '';
-    
+
     // FC 模式：构建 system（协议在前，用户内容在后）
     let systemContent;
     if (useFC) {
       const policy = await buildFCPolicy();
       const userSystem = [overlayGlobal, overlayArgs, ap.system].filter(Boolean).join('\n\n');
-      systemContent = userSystem 
+      systemContent = userSystem
         ? `${policy}\n\n---\n【Protocol Requirements】Above is system protocol, must be strictly followed. Below are specific task settings and requirements:\n---\n\n${userSystem}`
         : policy;
     } else {
@@ -156,7 +150,7 @@ export async function generateToolArgs(params) {
     // FC 模式：也保留原始对话，确保能看到用户上下文（如 QQ 群消息），与 Plan 阶段保持一致
     // 历史工具调用通过 buildToolDialogueMessages 提供（XML 格式）
     const convWrapped = conv;
-    
+
     const taskInstruction = renderTemplate(ap.user_task, {
       objective: objectiveText,
       stepIndex: stepIndex + 1,
@@ -164,8 +158,7 @@ export async function generateToolArgs(params) {
       aiName,
       reason: reason || '',
       description: currentToolFull?.description || '',
-      skillDigest: skillDigestClipped || '(无)',
-      skillMarkdown: useFC ? toXmlCData(skillMarkdownClipped || '') : (skillMarkdownClipped || ''),
+      skillMarkdown: useFC ? toXmlCData(skillMarkdownRaw || '') : (skillMarkdownRaw || ''),
       draftArgs: draftArgs ? JSON.stringify(draftArgs, null, 2) : '(无)',
       requiredList: Array.isArray(requiredList) && requiredList.length ? requiredList.join(', ') : '(无)',
       requiredDetail: requiredDetail || '(无)',
@@ -207,9 +200,9 @@ export async function generateToolArgs(params) {
           reinforce,
           instruction
         ].filter(Boolean).join('\n\n');
-        
+
         const messagesFC = [...baseMessages, { role: 'user', content: finalUserContent }];
-        
+
         // 调试日志：打印请求的 messages 数组
         if (config.flags.enableVerboseSteps) {
           logger.info('ArgGen FC 请求 messages', {
@@ -224,7 +217,7 @@ export async function generateToolArgs(params) {
             }))
           });
         }
-        
+
         const provider = getStageProvider('arg');
         const argModel = getStageModel('arg');
         const resp = await chatCompletion({
@@ -299,7 +292,7 @@ export async function generateToolArgs(params) {
           }))
         });
       }
-      
+
       const resp = await chatCompletion({
         messages: baseMessages,
         tools: perStepTools,
@@ -333,10 +326,10 @@ export async function generateToolArgs(params) {
           }
           // Auto 回退：baseMessages 已包含完整 user，使用 compactMessages 合并避免两条 user
           const messagesFC = compactMessages([
-            ...baseMessages, 
+            ...baseMessages,
             { role: 'user', content: [reinforce, instruction].filter(Boolean).join('\n\n') }
           ]);
-          
+
           // 调试日志：打印 auto 回退请求的 messages 数组
           if (config.flags.enableVerboseSteps) {
             logger.info('ArgGen Auto回退 请求 messages', {
@@ -351,7 +344,7 @@ export async function generateToolArgs(params) {
               }))
             });
           }
-          
+
           const provider = getStageProvider('arg');
           const argModel = getStageModel('arg');
           const resp2 = await chatCompletion({
@@ -442,7 +435,7 @@ export async function validateArgs(params) {
         }
       }
     }
-  } catch {}
+  } catch { }
 
   try {
     const out = validateAndRepairArgs(schema, toolArgs);
@@ -504,13 +497,7 @@ export async function fixToolArgs(params) {
   const skillDoc = currentToolFull?.skillDoc && typeof currentToolFull.skillDoc === 'object'
     ? currentToolFull.skillDoc
     : null;
-  const skillDigest = (skillDoc && typeof skillDoc.digest === 'string') ? skillDoc.digest : '';
   const skillMarkdownRaw = (skillDoc && typeof skillDoc.raw === 'string') ? skillDoc.raw : '';
-  const skillCfg = (config && config.skillDoc && typeof config.skillDoc === 'object') ? config.skillDoc : {};
-  const maxSkillDigestChars = Number.isFinite(Number(skillCfg.maxDigestChars)) ? Number(skillCfg.maxDigestChars) : 0;
-  const maxSkillMarkdownChars = Number.isFinite(Number(skillCfg.maxMarkdownChars)) ? Number(skillCfg.maxMarkdownChars) : 0;
-  const skillDigestClipped = clipText(skillDigest, maxSkillDigestChars);
-  const skillMarkdownClipped = clipText(skillMarkdownRaw, maxSkillMarkdownChars);
 
   try {
     const requiredList = Array.isArray((schema || {}).required) ? schema.required : [];
@@ -521,28 +508,28 @@ export async function fixToolArgs(params) {
       ? summarizeRequiredFieldsDetailXml(schema || {})
       : summarizeRequiredFieldsDetail(schema || {});
     const useAuto = String(config.llm?.toolStrategy || 'auto') === 'auto';
-    
+
     // FC 模式使用专用模板（XML 结构化格式）
     const ap = await loadPrompt(useFC ? 'arggen_fc' : 'arggen');
     const overlays = (context?.promptOverlays || context?.overlays || {});
     const overlayGlobal = overlays.global?.system || overlays.global || '';
     const overlayFix = overlays.arggen_fix?.system || overlays.arggen_fix || overlays.argfix || overlays.arggen || '';
-    
+
     // FC 模式：构建 system（协议在前，用户内容在后）
     let sysFix;
     if (useFC) {
       const policy = await buildFCPolicy();
       const userSystem = [overlayGlobal, overlayFix, ap.system_fix].filter(Boolean).join('\n\n');
-      sysFix = userSystem 
+      sysFix = userSystem
         ? `${policy}\n\n---\n【Protocol Requirements】Above is system protocol, must be strictly followed. Below are specific task settings and requirements:\n---\n\n${userSystem}`
         : policy;
     } else {
       sysFix = composeSystem(ap.system_fix, [overlayGlobal, overlayFix].filter(Boolean).join('\n\n'));
     }
-    
+
     // FC 模式：不提前包装 objective（新模板已在整体结构外层使用 <sentra-user-question>）
     const objectiveTextFix = objective;
-    
+
     const taskInstructionFix = renderTemplate(ap.user_task_fix, {
       objective: objectiveTextFix,
       stepIndex: stepIndex + 1,
@@ -551,11 +538,10 @@ export async function fixToolArgs(params) {
       reason: reason || '',
       description: currentToolFull?.description || '',
       draftArgs: draftArgs ? JSON.stringify(draftArgs, null, 2) : '(无)',
-      skillDigest: skillDigestClipped || '(无)',
-      skillMarkdown: useFC ? toXmlCData(skillMarkdownClipped || '') : (skillMarkdownClipped || ''),
+      skillMarkdown: useFC ? toXmlCData(skillMarkdownRaw || '') : (skillMarkdownRaw || ''),
       errors: JSON.stringify(ajvErrors || [], null, 2),
       requiredList: Array.isArray(requiredList) && requiredList.length ? requiredList.join(', ') : '(无)',
-      requiredDetail: requiredDetail || '(无)' 
+      requiredDetail: requiredDetail || '(无)'
     });
 
     // 构建上下文（FC 模式使用 XML 格式）
@@ -575,7 +561,7 @@ export async function fixToolArgs(params) {
       const omit = !(Number.isFinite(fc.maxTokens) && fc.maxTokens > 0);
       const maxRetries = Math.max(1, Number(fc.argMaxRetries ?? 3));
       const missingFromAjv = Array.isArray(ajvErrors) ? ajvErrors.filter((e) => e?.keyword === 'required' && e?.params?.missingProperty).map((e) => e.params.missingProperty) : [];
-      const invalidFromAjv = Array.isArray(ajvErrors) ? ajvErrors.filter((e) => e?.keyword === 'type' && e?.params?.type && (e.instancePath || e.dataPath)).map((e) => `${(e.instancePath || e.dataPath || '').replace(/^\./,'') || 'value'}(${e.params.type})`) : [];
+      const invalidFromAjv = Array.isArray(ajvErrors) ? ajvErrors.filter((e) => e?.keyword === 'type' && e?.params?.type && (e.instancePath || e.dataPath)).map((e) => `${(e.instancePath || e.dataPath || '').replace(/^\./, '') || 'value'}(${e.params.type})`) : [];
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         const instruction = await buildFunctionCallInstruction({ name: aiName, parameters: schema || { type: 'object', properties: {} }, locale: 'zh-CN' });
         let reinforce = '';
@@ -636,13 +622,13 @@ export async function fixToolArgs(params) {
       });
       const callFix = respFix.choices?.[0]?.message?.tool_calls?.[0];
       if (callFix?.function?.arguments) {
-        try { fixedArgs = JSON.parse(callFix.function.arguments); } catch {}
+        try { fixedArgs = JSON.parse(callFix.function.arguments); } catch { }
       } else if (useAuto) {
         const fc = config.fcLlm || {};
         const omit = !(Number.isFinite(fc.maxTokens) && fc.maxTokens > 0);
         const maxRetries = Math.max(1, Number(fc.argMaxRetries ?? 3));
         const missingFromAjv2 = Array.isArray(ajvErrors) ? ajvErrors.filter((e) => e?.keyword === 'required' && e?.params?.missingProperty).map((e) => e.params.missingProperty) : [];
-        const invalidFromAjv2 = Array.isArray(ajvErrors) ? ajvErrors.filter((e) => e?.keyword === 'type' && e?.params?.type && (e.instancePath || e.dataPath)).map((e) => `${(e.instancePath || e.dataPath || '').replace(/^\./,'') || 'value'}(${e.params.type})`) : [];
+        const invalidFromAjv2 = Array.isArray(ajvErrors) ? ajvErrors.filter((e) => e?.keyword === 'type' && e?.params?.type && (e.instancePath || e.dataPath)).map((e) => `${(e.instancePath || e.dataPath || '').replace(/^\./, '') || 'value'}(${e.params.type})`) : [];
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
           const instruction = await buildFunctionCallInstruction({ name: aiName, parameters: schema || { type: 'object', properties: {} }, locale: 'zh-CN' });
           let reinforce = '';

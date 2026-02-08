@@ -82,7 +82,6 @@ function toMarkdownCatalog(items = []) {
 
     const skill = t.skillDoc && typeof t.skillDoc === 'object' ? t.skillDoc : null;
     const attrs = skill && skill.attributes && typeof skill.attributes === 'object' ? skill.attributes : {};
-    const digest = typeof skill?.digest === 'string' ? skill.digest : '';
     const rawMd = typeof skill?.raw === 'string' ? skill.raw : '';
     void attrs;
 
@@ -109,12 +108,6 @@ function toMarkdownCatalog(items = []) {
     }
 
     lines.push(`**超时(ms)**: ${t.timeoutMs}ms`);
-
-    if (digest) {
-      lines.push('**技能摘要**:');
-      const ex = String(digest).split('\n').map((l) => `  ${l}`);
-      lines.push(...ex);
-    }
 
     if (includeFull && rawMd) {
       lines.push('**技能文档(skill.md)**:');
@@ -154,7 +147,6 @@ function toXmlCatalog(items = []) {
     const condLine = conditionalGroups.length
       ? `anyOf/oneOf: one of ${conditionalGroups.map((g) => `[${g.join(', ')}]`).join(' OR ')}`
       : '';
-    const digest = typeof skill?.digest === 'string' ? skill.digest : '';
     const rawMd = typeof skill?.raw === 'string' ? skill.raw : '';
     void attrs;
 
@@ -164,11 +156,6 @@ function toXmlCatalog(items = []) {
     if (provider) lines.push(`    <provider>${escapeXmlEntities(provider)}</provider>`);
     if (serverId) lines.push(`    <server_id>${escapeXmlEntities(serverId)}</server_id>`);
     if (desc) lines.push(`    <description>${escapeXmlEntities(desc)}</description>`);
-    if (!includeFull && digest) {
-      lines.push('    <skill_digest>');
-      lines.push(`${escapeXmlEntities(String(digest))}`);
-      lines.push('    </skill_digest>');
-    }
     if (includeFull && rawMd) {
       lines.push('    <skill_markdown><![CDATA[');
       lines.push(`${toXmlCData(String(rawMd))}`);
@@ -191,7 +178,6 @@ function toJsonCatalog(items = []) {
 
   return (items || []).map((t) => {
     const skill = t && t.skillDoc && typeof t.skillDoc === 'object' ? t.skillDoc : null;
-    const digest = typeof skill?.digest === 'string' ? skill.digest : '';
     const rawMd = typeof skill?.raw === 'string' ? skill.raw : '';
     const schema = t?.inputSchema || {};
     const { required, conditionalGroups } = formatRequiredHint(schema);
@@ -210,7 +196,6 @@ function toJsonCatalog(items = []) {
       requiredParams: required,
       conditionalRequired: conditionalGroups,
       skill: {
-        digest: digest || undefined,
         markdown: includeFull ? (rawMd || undefined) : undefined,
         updatedAt: skill?.updatedAt || undefined,
         path: skill?.path || undefined,

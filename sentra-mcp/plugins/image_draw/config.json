@@ -8,6 +8,10 @@
         "type": "string",
         "description": "绘图指令/主题描述，英文描述的编辑/生成指令（必须为英文）。重要规则：如果描述中包含男性角色，必须在开头添加 '1boy'（一个男性）或 'xboy'（x个男性，如 2boy）；如果包含女性角色，必须添加 '1girl' 或 'xgirl'。例如：'1boy, a handsome man' 或 '1girl, beautiful woman' 或 '2boy 1girl, group photo'。"
       },
+      "model": {
+        "type": "string",
+        "description": "可选：绘图模型名称。若不传，将回退到插件环境变量 DRAW_MODEL"
+      },
       "schedule": {
         "type": "object",
         "properties": {

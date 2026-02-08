@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { saveModuleConfig, savePluginConfig } from '../services/api';
+import { restorePluginSkill, saveModuleConfig, savePluginConfig, savePluginSkill } from '../services/api';
 import { getDisplayName } from '../utils/icons';
 import type { FileItem, IOSEditorWin } from '../types/ui';
 import type { EnvVariable } from '../types/config';
@@ -32,19 +32,91 @@ export function useIOSEditor({ setSaving, addToast, loadConfigs }: UseIOSEditorP
       if (existing.minimized) {
         setIosEditorWindows(prev => prev.map(w => w.id === existing.id ? { ...w, minimized: false } : w));
       }
+
+      // Refresh window data from the latest file snapshot.
+      setIosEditorWindows(prev => prev.map(w => {
+        if (w.id !== existing.id) return w;
+        const rawSkill = (file as any)?.skillMarkdown;
+        const nextSkill = typeof rawSkill === 'string' ? rawSkill : '';
+        const shouldRefreshDraft = !w.skillDirty && (w.skillDraft == null || w.skillDraft === '' || w.skillDraft === nextSkill);
+        return {
+          ...w,
+          file,
+          editedVars: filterVarsByExample(file, file.variables ? [...file.variables] : []),
+          skillDraft: shouldRefreshDraft ? nextSkill : w.skillDraft,
+        };
+      }));
+
       setActiveIOSEditorId(existing.id);
       return existing.id;
     }
     const id = `ios-editor-${Date.now()}`;
+
+    const rawSkill = (file as any)?.skillMarkdown;
+    const skillDraft = typeof rawSkill === 'string' ? rawSkill : '';
     const win: IOSEditorWin = {
       id,
       file,
       editedVars: filterVarsByExample(file, file.variables ? [...file.variables] : []),
       minimized: false,
+      section: 'mcp',
+      skillDraft,
+      skillDirty: false,
     };
     setIosEditorWindows(prev => [...prev, win]);
     setActiveIOSEditorId(id);
     return id;
+  };
+
+  const setSection = (id: string, section: 'mcp' | 'skills') => {
+    setIosEditorWindows(prev => prev.map(w => w.id === id ? { ...w, section } : w));
+  };
+
+  const updateSkillDraft = (id: string, next: string) => {
+    setIosEditorWindows(prev => prev.map(w => w.id === id ? { ...w, skillDraft: next, skillDirty: true } : w));
+  };
+
+  const saveSkill = async (id: string) => {
+    const win = iosEditorWindows.find(w => w.id === id);
+    if (!win) return;
+    if (win.file.type !== 'plugin') {
+      addToast('error', '保存失败', 'Skills 仅适用于插件（plugin）');
+      return;
+    }
+    try {
+      setSaving(true);
+      await savePluginSkill(win.file.name, String(win.skillDraft || ''));
+      setIosEditorWindows(prev => prev.map(w => w.id === id ? { ...w, skillDirty: false } : w));
+      addToast('success', '保存成功', `已更新 ${getDisplayName(win.file.name)} · skill.md`);
+      await loadConfigs(true);
+    } catch (e) {
+      addToast('error', '保存失败', e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const restoreSkill = async (id: string) => {
+    const win = iosEditorWindows.find(w => w.id === id);
+    if (!win) return;
+    if (win.file.type !== 'plugin') {
+      addToast('error', '恢复失败', 'Skills 仅适用于插件（plugin）');
+      return;
+    }
+    try {
+      setSaving(true);
+      await restorePluginSkill(win.file.name);
+      setIosEditorWindows(prev => prev.map(w => {
+        if (w.id !== id) return w;
+        return { ...w, skillDraft: undefined, skillDirty: false };
+      }));
+      addToast('success', '已恢复默认', `已删除 ${getDisplayName(win.file.name)} · skill.md`);
+      await loadConfigs(true);
+    } catch (e) {
+      addToast('error', '恢复失败', e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const minimize = (id: string) => {
@@ -118,6 +190,10 @@ export function useIOSEditor({ setSaving, addToast, loadConfigs }: UseIOSEditorP
     addVar,
     deleteVar,
     save,
+    setSection,
+    updateSkillDraft,
+    saveSkill,
+    restoreSkill,
     setActiveIOSEditorId,
   } as const;
 }

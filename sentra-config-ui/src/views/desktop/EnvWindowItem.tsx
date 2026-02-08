@@ -1,8 +1,17 @@
-import { memo, useCallback } from 'react';
+import { memo, Suspense, lazy, useCallback, useMemo } from 'react';
 import { MacWindow } from '../../components/MacWindow';
 import { EnvEditor } from '../../components/EnvEditor';
 import { getDisplayName, getIconForType } from '../../utils/icons';
 import type { DeskWindow } from '../../types/ui';
+import { Alert, Button, Divider, Tag, Typography, Tabs } from 'antd';
+import { ReloadOutlined, SaveOutlined } from '@ant-design/icons';
+import { restorePluginSkill, savePluginSkill } from '../../services/api';
+
+const MonacoEditor = lazy(async () => {
+  await import('../../utils/monacoSetup.ts');
+  const mod = await import('@monaco-editor/react');
+  return { default: mod.default };
+});
 
 type SetOpenWindows = (next: DeskWindow[] | ((prev: DeskWindow[]) => DeskWindow[])) => void;
 
@@ -45,6 +54,9 @@ export const EnvWindowItem = memo(({
   handleRestore,
   handleWindowMaximize,
 }: EnvWindowItemProps) => {
+  const isPlugin = w.file.type === 'plugin';
+  const activeSection = (w.section || 'mcp') as 'mcp' | 'skills';
+
   const handleCloseWin = useCallback(() => {
     handleWindowMaximize(w.id, false);
     handleClose(w.id);
@@ -89,10 +101,132 @@ export const EnvWindowItem = memo(({
     handleRestore(w.id);
   }, [handleRestore, w.id]);
 
+  const setSection = useCallback((next: 'mcp' | 'skills') => {
+    setOpenWindows(ws => ws.map(win => win.id === w.id ? { ...win, section: next } : win));
+  }, [setOpenWindows, w.id]);
+
+  const skillText = useMemo(() => {
+    if (!isPlugin) return '';
+    if (typeof w.skillDraft === 'string') return w.skillDraft;
+    const raw = (w.file as any)?.skillMarkdown;
+    return typeof raw === 'string' ? raw : '';
+  }, [isPlugin, w.file, w.skillDraft]);
+
+  const skillIsDefault = useMemo(() => {
+    if (!isPlugin) return true;
+    const v = (w.file as any)?.skillIsDefault;
+    return Boolean(v);
+  }, [isPlugin, w.file]);
+
+  const skillDefaultSource = useMemo(() => {
+    if (!isPlugin) return null;
+    const v = (w.file as any)?.skillDefaultSource;
+    return v === 'example' || v === 'generated' ? v : null;
+  }, [isPlugin, w.file]);
+
+  const handleSaveSkill = useCallback(async () => {
+    if (!isPlugin) return;
+    await savePluginSkill(w.file.name, skillText);
+    setOpenWindows(ws => ws.map(win => win.id === w.id ? { ...win, skillDirty: false } : win));
+    await handleSave(w.id);
+  }, [handleSave, isPlugin, setOpenWindows, skillText, w.file.name, w.id]);
+
+  const handleRestoreSkill = useCallback(async () => {
+    if (!isPlugin) return;
+    await restorePluginSkill(w.file.name);
+    setOpenWindows(ws => ws.map(win => {
+      if (win.id !== w.id) return win;
+      return { ...win, skillDraft: undefined, skillDirty: false };
+    }));
+    await handleSave(w.id);
+  }, [handleSave, isPlugin, setOpenWindows, w.file.name, w.id]);
+
   const handleMaximizeWin = useCallback((isMax: boolean) => {
     handleWindowMaximize(w.id, isMax);
     setOpenWindows(ws => ws.map(win => win.id === w.id ? { ...win, maximized: isMax } : win));
   }, [handleWindowMaximize, setOpenWindows, w.id]);
+
+  const pluginSidebarAddon = useMemo(() => {
+    if (!isPlugin) return null;
+
+    const statusText = skillIsDefault
+      ? (skillDefaultSource === 'example'
+        ? '默认：来自 skill.example.md'
+        : '默认：自动生成模板')
+      : '已自定义：来自 skill.md（优先生效）';
+
+    const statusHint = skillIsDefault
+      ? (skillDefaultSource === 'example'
+        ? '你可以直接在这里编辑；点击“保存为 skill.md”后将创建/覆盖 skill.md。'
+        : '该插件没有 skill.example.md，当前内容为系统生成模板。建议保存一次生成 skill.md 以便后续维护。')
+      : '当前已存在 skill.md。恢复默认会删除 skill.md，回到 skill.example.md（如果存在）或生成模板。';
+
+    const helperText = activeSection === 'skills'
+      ? '编辑插件技能提示词（Markdown），用于约束/增强该插件的工具调用与输出风格。'
+      : '编辑插件运行所需的环境变量（.env）。';
+
+    return (
+      <div style={{ padding: 8 }}>
+        <div style={{ marginBottom: 12 }}>
+          <Typography.Text type="secondary" style={{ fontSize: 12, marginBottom: 6, display: 'block' }}>模式</Typography.Text>
+          <Tabs
+            size="small"
+            activeKey={activeSection}
+            onChange={(key) => setSection(key as 'mcp' | 'skills')}
+            items={[
+              { key: 'mcp', label: 'MCP 配置' },
+              { key: 'skills', label: 'Skills 提示词' }
+            ]}
+            style={{ marginBottom: 0 }}
+          />
+        </div>
+
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>说明</Typography.Text>
+        <Typography.Text type="secondary" style={{ fontSize: 12, opacity: 0.85, display: 'block' }}>{helperText}</Typography.Text>
+
+        {activeSection === 'skills' ? (
+          <>
+            <Divider style={{ margin: '12px 0' }} />
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+              <Tag color={skillIsDefault ? 'default' : 'success'}>{statusText}</Tag>
+              {w.skillDirty && <Tag color="warning">未保存</Tag>}
+            </div>
+
+            <Alert
+              type={skillIsDefault ? 'info' : 'success'}
+              showIcon
+              message={statusHint}
+              style={{ marginBottom: 12 }}
+            />
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <Button
+                size="small"
+                icon={<SaveOutlined />}
+                type="primary"
+                onClick={handleSaveSkill}
+                disabled={saving || !w.skillDirty}
+                block
+              >
+                保存为 skill.md
+              </Button>
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={handleRestoreSkill}
+                disabled={saving}
+                danger={!skillIsDefault}
+                block
+              >
+                恢复默认（删除 skill.md）
+              </Button>
+            </div>
+          </>
+        ) : null}
+      </div>
+    );
+  }, [activeSection, handleRestoreSkill, handleSaveSkill, isPlugin, saving, setSection, skillDefaultSource, skillIsDefault, w.skillDirty]);
 
   return (
     <MacWindow
@@ -125,7 +259,44 @@ export const EnvWindowItem = memo(({
         saving={saving}
         isExample={!w.file.hasEnv && w.file.hasExample}
         theme={theme}
-      />
+        sidebarAddon={isPlugin ? pluginSidebarAddon : undefined}
+        showToolbarActions={!isPlugin || activeSection === 'mcp'}
+      >
+        {isPlugin && activeSection === 'skills' ? (
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', paddingTop: 8 }}>
+            <Suspense fallback={<div style={{ padding: 12, opacity: 0.7, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>编辑器加载中...</div>}>
+              <div style={{ flex: 1, minHeight: 0 }}>
+                <MonacoEditor
+                  height="100%"
+                  width="100%"
+                  defaultLanguage="markdown"
+                  theme={theme === 'dark' ? 'vs-dark' : 'light'}
+                  value={skillText}
+                  options={{
+                    fontSize: 13,
+                    minimap: { enabled: false },
+                    wordWrap: 'on',
+                    scrollBeyondLastLine: false,
+                    automaticLayout: true,
+                    find: {
+                      addExtraSpaceOnTop: false,
+                      autoFindInSelection: 'never',
+                      seedSearchStringFromSelection: 'always',
+                    },
+                  }}
+                  onChange={(v) => {
+                    const next = String(v ?? '');
+                    setOpenWindows(ws => ws.map(win => {
+                      if (win.id !== w.id) return win;
+                      return { ...win, skillDraft: next, skillDirty: true };
+                    }));
+                  }}
+                />
+              </div>
+            </Suspense>
+          </div>
+        ) : null}
+      </EnvEditor>
     </MacWindow>
   );
 });

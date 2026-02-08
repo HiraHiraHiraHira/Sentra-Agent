@@ -10,3 +10,4 @@ mcp/servers.json
 
 # 忽略所有插件目录中的 .env 文件
 plugins/**/.env
+plugins/**/skill.md

@@ -43,7 +43,7 @@ export async function loadPlugins(pluginsDir) {
     const __dirname = path.dirname(__filename);
     const libRoot = path.resolve(__dirname, '../..');
     candidates.push(path.join(libRoot, 'plugins'));
-  } catch {}
+  } catch { }
   // project cwd fallback
   candidates.push(path.resolve(process.cwd(), 'plugins'));
   // de-duplicate candidates
@@ -56,10 +56,10 @@ export async function loadPlugins(pluginsDir) {
   // pick the first existing candidate
   let baseDir = uniq.find((d) => fs.existsSync(d));
   if (!baseDir) {
-    try { logger.warn('未找到可用的插件目录', { label: 'PLUGIN', candidates: uniq }); } catch {}
+    try { logger.warn('未找到可用的插件目录', { label: 'PLUGIN', candidates: uniq }); } catch { }
     return [];
   }
-  try { logger.info('扫描插件目录', { label: 'PLUGIN', baseDir, candidates: uniq }); } catch {}
+  try { logger.info('扫描插件目录', { label: 'PLUGIN', baseDir, candidates: uniq }); } catch { }
 
   const entries = fs.readdirSync(baseDir, { withFileTypes: true });
   const dirNames = entries.filter((e) => e.isDirectory()).map((e) => e.name);
@@ -68,7 +68,7 @@ export async function loadPlugins(pluginsDir) {
   const tools = [];
   const loadedNames = new Set();
 
-  try { logger.info('扫描插件目录', { label: 'PLUGIN', baseDir, folders: dirNames.length, files: fileNames.length }); } catch {}
+  try { logger.info('扫描插件目录', { label: 'PLUGIN', baseDir, folders: dirNames.length, files: fileNames.length }); } catch { }
 
   // 1) Load folder-based plugins first
   for (const dir of dirNames) {
@@ -94,7 +94,7 @@ export async function loadPlugins(pluginsDir) {
               dir,
               envPath
             });
-          } catch {}
+          } catch { }
         }
       } catch (e) {
         try {
@@ -103,7 +103,7 @@ export async function loadPlugins(pluginsDir) {
             dir,
             error: String(e)
           });
-        } catch {}
+        } catch { }
       }
 
       // Per-plugin env overrides (parse BEFORE importing handler so we can decide to skip disabled plugins)
@@ -128,11 +128,11 @@ export async function loadPlugins(pluginsDir) {
           else if (s === '1' || s === 'true' || s === 'on' || s === 'yes') enabled = true;
           // any other value keeps default 'true'
         }
-      } catch {}
+      } catch { }
 
       if (!enabled) {
         const name = cfg.name || dir;
-        try { logger.info('跳过插件（.env 关闭）', { label: 'PLUGIN', name, dir, reason: 'PLUGIN_ENABLED=true' }); } catch {}
+        try { logger.info('跳过插件（.env 关闭）', { label: 'PLUGIN', name, dir, reason: 'PLUGIN_ENABLED=true' }); } catch { }
         continue; // do not import handler, do not expose in SDK
       }
 
@@ -214,7 +214,7 @@ export async function loadPlugins(pluginsDir) {
     }
   }
 
-  try { logger.info('插件加载完成', { label: 'PLUGIN', total: tools.length }); } catch {}
+  try { logger.info('插件加载完成', { label: 'PLUGIN', total: tools.length }); } catch { }
   return tools;
 }
 

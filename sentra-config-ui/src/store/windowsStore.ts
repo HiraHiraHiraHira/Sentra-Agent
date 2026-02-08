@@ -89,7 +89,10 @@ function normalizePersistedWindows(raw: any): DeskWindow[] {
       p.x == null || p.y == null ||
       p.x < 20 || p.y < 30 ||
       p.x > window.innerWidth - 100 || p.y > window.innerHeight - 100;
-    return invalid ? { ...w, pos: c } : w;
+    const normalized = invalid ? { ...w, pos: c } : w;
+    // backward compatible defaults
+    if (!normalized.section) normalized.section = 'mcp';
+    return normalized;
   });
 }
 
@@ -199,6 +202,9 @@ export const useWindowsStore = create<WindowsStore>((set, get) => {
       z: zNext,
       minimized: false,
       editedVars: filterVarsByExample(file, file.variables ? [...file.variables] : []),
+      section: 'mcp',
+      skillDraft: undefined,
+      skillDirty: false,
       pos: c,
       maximized: !!opts?.maximize,
     };
@@ -238,6 +244,7 @@ export const useWindowsStore = create<WindowsStore>((set, get) => {
           ...w,
           file: nextFile,
           editedVars: filterVarsByExample(nextFile, found.variables ? [...found.variables] : []),
+          section: w.section || 'mcp',
         };
       });
       return { ...prev, openWindows: next };

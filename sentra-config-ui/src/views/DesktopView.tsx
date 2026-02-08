@@ -3,7 +3,6 @@ import { MenuBar } from '../components/MenuBar';
 import { DesktopDock } from './desktop/DesktopDock';
 import { DesktopContextMenu } from './desktop/DesktopContextMenu';
 import { DesktopIconsLayer } from './desktop/DesktopIconsLayer';
-import { DesktopTerminalWindows } from './desktop/DesktopTerminalWindows';
 import { DesktopWindowsLayer } from './desktop/DesktopWindowsLayer';
 import { DesktopUtilityWindowsLayer } from './desktop/DesktopUtilityWindowsLayer';
 
@@ -25,6 +24,7 @@ import { useDesktopWindows } from '../hooks/useDesktopWindows';
 import { useOpenWindowWithRefresh } from '../hooks/useOpenWindowWithRefresh';
 import { useTerminals } from '../hooks/useTerminals';
 import { useDockFavorites } from '../hooks/useDockFavorites';
+import { getLaunchpadConfig } from '../utils/launchpadOrder';
 
 export type DesktopViewProps = {
   isSolidColor: boolean;
@@ -164,11 +164,9 @@ export const DesktopView = (props: DesktopViewProps) => {
 
   const {
     terminalWindows,
-    setTerminalWindows,
     activeTerminalId,
     bringTerminalToFront,
     handleCloseTerminal,
-    handleMinimizeTerminal,
     handleRunUpdate,
     handleRunForceUpdate,
   } = useTerminals({ addToast, allocateZ });
@@ -835,98 +833,88 @@ export const DesktopView = (props: DesktopViewProps) => {
     show({ event: e });
   };
 
-  // Launchpad 应用列表：包含 Dev Center + 所有模块/插件
+  const launchpadCfg = getLaunchpadConfig();
+
+  const builtinHandlers: Record<string, (() => void) | undefined> = {
+    'dev-center': () => {
+      recordUsage('app:dev-center');
+      setDevCenterOpen(true);
+      setDevCenterMinimized(false);
+      bringUtilityToFront('dev-center');
+    },
+    'deepwiki': () => {
+      recordUsage('app:deepwiki');
+      handleOpenDeepWiki();
+    },
+    'presets-editor': () => {
+      recordUsage('app:presets');
+      setPresetsEditorOpen(true);
+      setPresetsEditorMinimized(false);
+      bringUtilityToFront('presets-editor');
+    },
+    'preset-importer': () => {
+      recordUsage('app:preset-importer');
+      setPresetImporterOpen(true);
+      setPresetImporterMinimized(false);
+      bringUtilityToFront('preset-importer');
+    },
+    'file-manager': () => {
+      recordUsage('app:filemanager');
+      setFileManagerOpen(true);
+      setFileManagerMinimized(false);
+      bringUtilityToFront('file-manager');
+    },
+    'redis-admin': () => {
+      recordUsage('app:redis-admin');
+      setRedisAdminOpen(true);
+      setRedisAdminMinimized(false);
+      bringUtilityToFront('redis-admin');
+    },
+    'model-providers-manager': () => {
+      recordUsage('app:model-providers-manager');
+      setModelProvidersManagerOpen(true);
+      setModelProvidersManagerMinimized(false);
+      bringUtilityToFront('model-providers-manager');
+    },
+    'mcp-servers-manager': () => {
+      recordUsage('app:mcp-servers-manager');
+      setMcpServersManagerOpen(true);
+      setMcpServersManagerMinimized(false);
+      bringUtilityToFront('mcp-servers-manager');
+    },
+    'emoji-stickers-manager': () => {
+      recordUsage('app:emoji-stickers-manager');
+      setEmojiStickersManagerOpen(true);
+      setEmojiStickersManagerMinimized(false);
+      bringUtilityToFront('emoji-stickers-manager');
+    },
+    'terminal-manager': () => {
+      recordUsage('app:terminal-manager');
+      setTerminalManagerOpen(true);
+      setTerminalManagerMinimized(false);
+      bringUtilityToFront('terminal-manager');
+    },
+    'qq-sandbox': () => {
+      recordUsage('app:qq-sandbox');
+      setQqSandboxOpen(true);
+      setQqSandboxMinimized(false);
+      bringUtilityToFront('qq-sandbox');
+    },
+  };
+
+  const builtinNames = Array.isArray(launchpadCfg?.builtinToolOrder) ? launchpadCfg.builtinToolOrder : [];
+  const builtinItems = builtinNames
+    .map((n) => {
+      const key = String(n || '').toLowerCase();
+      const onClick = builtinHandlers[key];
+      if (!onClick) return null;
+      return { name: key, type: 'module' as const, onClick };
+    })
+    .filter(Boolean) as { name: string; type: 'module'; onClick: () => void }[];
+
+  // Launchpad 应用列表：内置工具（由 JSON 决定展示/顺序） + 所有模块/插件
   const launchpadItems = [
-    {
-      name: 'dev-center',
-      type: 'module' as const,
-      onClick: () => {
-        recordUsage('app:dev-center');
-        setDevCenterOpen(true);
-        setDevCenterMinimized(false);
-        bringUtilityToFront('dev-center');
-      }
-    },
-    {
-      name: 'presets-editor',
-      type: 'module' as const,
-      onClick: () => {
-        recordUsage('app:presets');
-        setPresetsEditorOpen(true);
-        setPresetsEditorMinimized(false);
-        bringUtilityToFront('presets-editor');
-      }
-    },
-    {
-      name: 'preset-importer',
-      type: 'module' as const,
-      onClick: () => {
-        recordUsage('app:preset-importer');
-        setPresetImporterOpen(true);
-        setPresetImporterMinimized(false);
-        bringUtilityToFront('preset-importer');
-      }
-    },
-    {
-      name: 'file-manager',
-      type: 'module' as const,
-      onClick: () => {
-        recordUsage('app:filemanager');
-        setFileManagerOpen(true);
-        setFileManagerMinimized(false);
-        bringUtilityToFront('file-manager');
-      }
-    },
-    {
-      name: 'redis-admin',
-      type: 'module' as const,
-      onClick: () => {
-        recordUsage('app:redis-admin');
-        setRedisAdminOpen(true);
-        setRedisAdminMinimized(false);
-        bringUtilityToFront('redis-admin');
-      }
-    },
-    {
-      name: 'model-providers-manager',
-      type: 'module' as const,
-      onClick: () => {
-        recordUsage('app:model-providers-manager');
-        setModelProvidersManagerOpen(true);
-        setModelProvidersManagerMinimized(false);
-        bringUtilityToFront('model-providers-manager');
-      }
-    },
-    {
-      name: 'mcp-servers-manager',
-      type: 'module' as const,
-      onClick: () => {
-        recordUsage('app:mcp-servers-manager');
-        setMcpServersManagerOpen(true);
-        setMcpServersManagerMinimized(false);
-        bringUtilityToFront('mcp-servers-manager');
-      }
-    },
-    {
-      name: 'emoji-stickers-manager',
-      type: 'module' as const,
-      onClick: () => {
-        recordUsage('app:emoji-stickers-manager');
-        setEmojiStickersManagerOpen(true);
-        setEmojiStickersManagerMinimized(false);
-        bringUtilityToFront('emoji-stickers-manager');
-      }
-    },
-    {
-      name: 'terminal-manager',
-      type: 'module' as const,
-      onClick: () => {
-        recordUsage('app:terminal-manager');
-        setTerminalManagerOpen(true);
-        setTerminalManagerMinimized(false);
-        bringUtilityToFront('terminal-manager');
-      }
-    },
+    ...builtinItems,
     ...allItems.filter(item => item.name !== 'utils/emoji-stickers').map(item => ({
       name: item.name,
       type: item.type,
@@ -1138,19 +1126,6 @@ export const DesktopView = (props: DesktopViewProps) => {
             onClose={() => setOpenFolder(null)}
           />
         )}
-
-        {/* 终端窗口 */}
-        <DesktopTerminalWindows
-          terminalWindows={terminalWindows}
-          activeTerminalId={activeTerminalId}
-          bringTerminalToFront={bringTerminalToFrontExclusive}
-          handleCloseTerminal={handleCloseTerminal}
-          handleMinimizeTerminal={handleMinimizeTerminal}
-          setTerminalWindows={setTerminalWindows}
-          handleWindowMaximize={handleWindowMaximize}
-          desktopSafeArea={desktopSafeArea}
-          performanceMode={performanceMode}
-        />
 
         {/* Launchpad 与 Dock、通知、对话框 等 */}
         <Launchpad

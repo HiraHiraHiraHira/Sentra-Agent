@@ -26,7 +26,13 @@ type TerminalExecutorSession = {
 };
 
 const MAX_BUFFER_CHARS = 240_000;
-const IDLE_KILL_MS = 5 * 60 * 1000;
+const IDLE_KILL_MS = (() => {
+  const raw = process.env.TERMINAL_EXECUTOR_IDLE_KILL_MS;
+  if (raw == null || raw === '') return 5 * 60 * 1000;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 5 * 60 * 1000;
+  return n;
+})();
 
 function capBuffer(s: TerminalExecutorSession, nextChunk: string) {
   if (!nextChunk) return;
@@ -238,7 +244,7 @@ class TerminalExecutorManager {
     if (!s) return;
     s.clients = Math.max(0, s.clients - 1);
     s.lastClientAt = Date.now();
-    if (s.clients === 0 && !s.killTimer) {
+    if (s.clients === 0 && !s.killTimer && IDLE_KILL_MS > 0) {
       s.killTimer = setTimeout(() => {
         this.closeSession(id);
       }, IDLE_KILL_MS);

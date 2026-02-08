@@ -47,6 +47,7 @@ export interface AdapterConfig {
 }
 
 export function loadConfig(): AdapterConfig {
+  const reverseFromUrl = parseReverseListenUrl(process.env.REVERSE_WS_URL) ?? { port: 5140, path: '/onebot' };
   return {
     wsUrl: process.env.NAPCAT_WS_URL || 'ws://127.0.0.1:6700',
     accessToken: process.env.NAPCAT_ACCESS_TOKEN || undefined,
@@ -67,14 +68,14 @@ export function loadConfig(): AdapterConfig {
     eventSummary: (process.env.EVENT_SUMMARY as any) === 'always'
       ? 'always'
       : (process.env.EVENT_SUMMARY as any) === 'never'
-      ? 'never'
-      : 'debug',
+        ? 'never'
+        : 'debug',
     jsonLog: envBool(process.env.JSON_LOG, false),
     whitelistGroups: parseNumberArray(process.env.WHITELIST_GROUPS),
     whitelistUsers: parseNumberArray(process.env.WHITELIST_USERS),
     logFiltered: envBool(process.env.LOG_FILTERED, false),
-    reversePort: toInt(process.env.REVERSE_PORT, 6701),
-    reversePath: process.env.REVERSE_PATH || '/onebot',
+    reversePort: reverseFromUrl.port,
+    reversePath: reverseFromUrl.path,
     enableStream: envBool(process.env.ENABLE_STREAM, false),
     streamPort: toInt(process.env.STREAM_PORT, 6702),
     streamIncludeRaw: envBool(process.env.STREAM_INCLUDE_RAW, false),
@@ -112,4 +113,21 @@ function envBool(v: string | undefined, def: boolean): boolean {
   if (['1', 'true', 'yes', 'y', 'on'].includes(s)) return true;
   if (['0', 'false', 'no', 'n', 'off'].includes(s)) return false;
   return def;
+}
+
+function parseReverseListenUrl(raw: string | undefined): { port: number; path: string } | null {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  try {
+    const u = new URL(s);
+    const proto = String(u.protocol || '').toLowerCase();
+    if (proto !== 'ws:' && proto !== 'wss:') return null;
+    const port = u.port ? parseInt(u.port, 10) : NaN;
+    const finalPort = Number.isFinite(port) ? port : 5140;
+    const path = u.pathname && u.pathname !== '/' ? u.pathname : '/onebot';
+    return { port: finalPort, path };
+  } catch {
+    return null;
+  }
 }

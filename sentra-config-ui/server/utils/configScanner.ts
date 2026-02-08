@@ -3,6 +3,50 @@ import { join, resolve } from 'path';
 import { ModuleConfig, PluginConfig, ConfigData, EnvVariable } from '../types';
 import { readEnvFile, mergeEnvWithExample } from './envParser';
 
+function stripBom(s: string): string {
+  if (!s) return '';
+  return s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s;
+}
+
+function buildDefaultSkillMarkdown(toolName: string): string {
+  const name = String(toolName || '').trim() || 'plugin';
+  return `# ${name}
+
+## Capability
+
+- Describe what this tool can do in one sentence.
+
+## Real-world impact
+
+- Unknown/depends on implementation; be conservative and verify inputs carefully.
+
+## Typical scenarios
+
+- Use when the user explicitly requests this capability and the required inputs can be extracted from context or asked via a follow-up question.
+
+## Non-goals
+
+- Do not use when inputs are missing and cannot be reliably inferred. Ask a follow-up question instead.
+- Do not fabricate IDs, paths, URLs, tokens, or example values.
+
+## Input
+
+- Required fields:
+  - See tool schema
+
+- Prefer batch/array fields when the schema provides both singular and plural versions (e.g., query/queries, file/files, keyword/keywords).
+- Prefer real values extracted from conversation history or prior tool results; do not use placeholders.
+
+## Output
+
+- The tool returns structured data. If it produces local files, paths must be absolute paths.
+
+## Failure modes
+
+- If execution fails, explain the reason and provide actionable next steps (e.g., correct inputs, retry later, narrow scope).
+`;
+}
+
 // Resolve root directory dynamically at runtime so env can override
 function getRootDir(): string {
   return resolve(process.cwd(), process.env.SENTRA_ROOT || '..');
@@ -82,10 +126,14 @@ function scanPlugins(): PluginConfig[] {
     const envPath = join(pluginPath, '.env');
     const examplePath = join(pluginPath, '.env.example');
     const configPath = join(pluginPath, 'config.json');
+    const skillPath = join(pluginPath, 'skill.md');
+    const skillExamplePath = join(pluginPath, 'skill.example.md');
 
     const hasEnv = existsSync(envPath);
     const hasExample = existsSync(examplePath);
     const hasConfigJson = existsSync(configPath);
+    const hasSkill = existsSync(skillPath);
+    const hasSkillExample = existsSync(skillExamplePath);
 
     // 如果没有 .env 但有 .env.example，则使用 example 作为预览
     // 如果没有 .env 但有 .env.example，则使用 example 作为预览
@@ -115,15 +163,59 @@ function scanPlugins(): PluginConfig[] {
       }
     }
 
+    let skillMarkdown: string | undefined;
+    let skillIsDefault: boolean | undefined;
+    let skillDefaultSource: 'example' | 'generated' | undefined;
+    try {
+      if (hasSkill) {
+        skillMarkdown = stripBom(readFileSync(skillPath, 'utf-8'));
+        skillIsDefault = false;
+        skillDefaultSource = undefined;
+      } else if (hasSkillExample) {
+        skillMarkdown = stripBom(readFileSync(skillExamplePath, 'utf-8'));
+        skillIsDefault = true;
+        skillDefaultSource = 'example';
+      } else {
+        skillMarkdown = buildDefaultSkillMarkdown(entry);
+        skillIsDefault = true;
+        skillDefaultSource = 'generated';
+      }
+    } catch {
+      if (hasSkill) {
+        skillMarkdown = buildDefaultSkillMarkdown(entry);
+        skillIsDefault = true;
+        skillDefaultSource = 'generated';
+      } else if (hasSkillExample) {
+        try {
+          skillMarkdown = stripBom(readFileSync(skillExamplePath, 'utf-8'));
+          skillIsDefault = true;
+          skillDefaultSource = 'example';
+        } catch {
+          skillMarkdown = buildDefaultSkillMarkdown(entry);
+          skillIsDefault = true;
+          skillDefaultSource = 'generated';
+        }
+      } else {
+        skillMarkdown = buildDefaultSkillMarkdown(entry);
+        skillIsDefault = true;
+        skillDefaultSource = 'generated';
+      }
+    }
+
     plugins.push({
       name: entry,
       path: pluginPath,
       hasEnv,
       hasExample,
       hasConfigJson,
+      hasSkill,
+      hasSkillExample,
       variables,
       exampleVariables,
       configJson,
+      skillMarkdown,
+      skillIsDefault,
+      skillDefaultSource,
     });
   }
 

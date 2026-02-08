@@ -321,6 +321,32 @@ export async function verifyToken(token: string): Promise<boolean> {
   }
 }
 
+export async function savePluginSkill(pluginName: string, content: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/configs/plugin-skill`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ pluginName, content }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || 'Failed to save plugin skill');
+  }
+}
+
+export async function restorePluginSkill(pluginName: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/configs/plugin-skill/restore`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ pluginName }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || 'Failed to restore plugin skill');
+  }
+}
+
 export async function checkHealth(): Promise<number | null> {
   try {
     const response = await fetch(`${API_BASE}/health`);
@@ -471,7 +497,7 @@ export async function restorePluginConfig(pluginName: string): Promise<void> {
   }
 }
 
-export async function fetchFileContent(path: string): Promise<{ content: string; isBinary: boolean }>{
+export async function fetchFileContent(path: string): Promise<{ content: string; isBinary: boolean }> {
   const response = await fetch(`${API_BASE}/files/content?path=${encodeURIComponent(path)}`, {
     headers: getAuthHeaders(),
   });

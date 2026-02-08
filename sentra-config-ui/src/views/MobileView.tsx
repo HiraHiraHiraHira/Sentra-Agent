@@ -15,12 +15,11 @@ import { useUIStore } from '../store/uiStore';
 import { useWindowsStore } from '../store/windowsStore';
 import { useTerminals } from '../hooks/useTerminals';
 import { useIOSEditor } from '../hooks/useIOSEditor';
+import { getLaunchpadConfig } from '../utils/launchpadOrder';
 
 const ModelProvidersManager = React.lazy(() => import('../components/ModelProvidersManager/ModelProvidersManager').then(module => ({ default: module.default })));
 const McpServersManager = React.lazy(() => import('../components/McpServersManager/McpServersManager').then(module => ({ default: module.default })));
 const RedisAdminManager = React.lazy(() => import('../components/RedisAdminManager/RedisAdminManager').then(module => ({ default: module.RedisAdminManager })));
-const TerminalWindow = React.lazy(() => import('../components/TerminalWindow').then(module => ({ default: module.TerminalWindow })));
-const TerminalExecutorWindow = React.lazy(() => import('../components/TerminalExecutorWindow').then(module => ({ default: module.TerminalExecutorWindow })));
 const IOSTerminalManager = React.lazy(() => import('../components/IOSTerminalManager').then(module => ({ default: module.IOSTerminalManager })));
 const IOSEmojiStickersManager = React.lazy(() => import('../components/IOSEmojiStickersManager').then(module => ({ default: module.IOSEmojiStickersManager })));
 const QqSandbox = React.lazy(() => import('../components/QqSandbox/QqSandbox').then(module => ({ default: module.QqSandbox })));
@@ -84,7 +83,6 @@ export function MobileView(props: MobileViewProps) {
     terminalWindows,
     bringTerminalToFront,
     handleCloseTerminal,
-    handleMinimizeTerminal,
   } = useTerminals({ addToast, allocateZ });
 
   const {
@@ -97,6 +95,10 @@ export function MobileView(props: MobileViewProps) {
     addVar: handleIOSAddVar,
     deleteVar: handleIOSDeleteVar,
     save: handleIOSSave,
+    setSection: handleIOSSetSection,
+    updateSkillDraft: handleIOSSkillChange,
+    saveSkill: handleIOSSaveSkill,
+    restoreSkill: handleIOSRestoreSkill,
   } = useIOSEditor({ setSaving, addToast, loadConfigs });
 
   const allocateIOSZ = React.useCallback(() => {
@@ -752,157 +754,104 @@ export function MobileView(props: MobileViewProps) {
         </div>
       )}
 
-      {terminalWindows.map(term => (
-        <div
-          key={term.id}
-          className="ios-app-window"
-          style={{ display: term.minimized ? 'none' : 'flex', zIndex: (term.z ?? 2000) + 3000 }}
-          onPointerDownCapture={() => {
-            bringTerminalToFront(term.id);
-          }}
-        >
-          <div className="ios-app-header">
-            <div className="ios-back-btn" onClick={() => {
-              handleMinimizeTerminal(term.id);
-              if (iosTerminalManagerOpen) {
-                bringIOSAppToFront('ios-terminal-manager');
-              }
-              if (returnToLaunchpad) {
-                setLaunchpadOpen(true);
-              }
-            }}>
-              <IoChevronBack /> {iosTerminalManagerOpen ? '终端' : (returnToLaunchpad ? '应用' : '主页')}
-            </div>
-            <div>{term.title}</div>
-            <div style={{ color: '#ff3b30', cursor: 'pointer', fontWeight: 'bold' }} onClick={() => handleCloseTerminal(term.id)}>
-              关闭
-            </div>
-          </div>
-          <Suspense fallback={<SentraLoading title="加载终端" subtitle="首次打开可能较慢，请稍等..." />}>
-            {String(term.appKey || '').startsWith('execpty:') ? (
-              <TerminalExecutorWindow sessionId={term.processId} onSessionNotFound={() => handleCloseTerminal(term.id)} />
-            ) : (
-              <TerminalWindow processId={term.processId} onProcessNotFound={() => handleCloseTerminal(term.id)} />
-            )}
-          </Suspense>
-        </div>
-      ))}
-
       <Launchpad
         isOpen={launchpadOpen}
         onClose={() => setLaunchpadOpen(false)}
-        items={[
-          {
-            name: 'presets-editor',
-            type: 'module' as const,
-            onClick: () => {
+        items={(() => {
+          const launchpadCfg = getLaunchpadConfig();
+
+          const builtinHandlers: Record<string, (() => void) | undefined> = {
+            'presets-editor': () => {
               recordUsage('app:presets');
               setReturnToLaunchpad(true);
               setIosPresetsEditorOpen(true);
               bringIOSAppToFront('ios-presets-editor');
               setLaunchpadOpen(false);
-            }
-          },
-          {
-            name: 'preset-importer',
-            type: 'module' as const,
-            onClick: () => {
+            },
+            'preset-importer': () => {
               recordUsage('app:preset-importer');
               setReturnToLaunchpad(true);
               setIosPresetImporterOpen(true);
               bringIOSAppToFront('ios-preset-importer');
               setLaunchpadOpen(false);
-            }
-          },
-          {
-            name: 'file-manager',
-            type: 'module' as const,
-            onClick: () => {
+            },
+            'file-manager': () => {
               recordUsage('app:filemanager');
               setReturnToLaunchpad(true);
               setIosFileManagerOpen(true);
               bringIOSAppToFront('ios-file-manager');
               setLaunchpadOpen(false);
-            }
-          },
-          {
-            name: 'model-providers-manager',
-            type: 'module' as const,
-            onClick: () => {
+            },
+            'model-providers-manager': () => {
               recordUsage('app:model-providers-manager');
               setReturnToLaunchpad(true);
               setIosModelProvidersManagerOpen(true);
               bringIOSAppToFront('ios-model-providers-manager');
               setLaunchpadOpen(false);
-            }
-          },
-          {
-            name: 'mcp-servers-manager',
-            type: 'module' as const,
-            onClick: () => {
+            },
+            'mcp-servers-manager': () => {
               recordUsage('app:mcp-servers-manager');
               setReturnToLaunchpad(true);
               setIosMcpServersManagerOpen(true);
               bringIOSAppToFront('ios-mcp-servers-manager');
               setLaunchpadOpen(false);
-            }
-          },
-          {
-            name: 'terminal-manager',
-            type: 'module' as const,
-            onClick: () => {
+            },
+            'terminal-manager': () => {
               recordUsage('app:terminal-manager');
               setReturnToLaunchpad(true);
               setIosTerminalManagerOpen(true);
               bringIOSAppToFront('ios-terminal-manager');
               setLaunchpadOpen(false);
-            }
-          },
-          {
-            name: 'emoji-stickers-manager',
-            type: 'module' as const,
-            onClick: () => {
+            },
+            'emoji-stickers-manager': () => {
               recordUsage('app:emoji-stickers-manager');
               setReturnToLaunchpad(true);
               setIosEmojiStickersManagerOpen(true);
               bringIOSAppToFront('ios-emoji-stickers-manager');
               setLaunchpadOpen(false);
-            }
-          },
-          {
-            name: 'redis-admin',
-            type: 'module' as const,
-            onClick: () => {
+            },
+            'redis-admin': () => {
               recordUsage('app:redis-admin');
               setReturnToLaunchpad(true);
               setIosRedisAdminOpen(true);
               bringIOSAppToFront('ios-redis-admin');
               setLaunchpadOpen(false);
-            }
-          },
-          {
-            name: 'qq-sandbox',
-            type: 'module' as const,
-            onClick: () => {
+            },
+            'qq-sandbox': () => {
               recordUsage('app:qq-sandbox');
               setReturnToLaunchpad(true);
               setIosQqSandboxOpen(true);
               bringIOSAppToFront('ios-qq-sandbox');
               setLaunchpadOpen(false);
-            }
-          },
-          ...allItems.filter(item => item.name !== 'utils/emoji-stickers').map(item => ({
-            name: item.name,
-            type: item.type,
-            onClick: () => {
-              recordUsage(`${item.type}:${item.name}`);
-              setReturnToLaunchpad(true); // Set flag when opening from Launchpad
-              const id = openIOSWindow(item);
-              bringIOSAppToFront(id);
-              setLaunchpadOpen(false);
-            }
-          }))
-        ]}
+            },
+          };
+
+          const builtinNames = Array.isArray(launchpadCfg?.builtinToolOrder) ? launchpadCfg.builtinToolOrder : [];
+          const builtinItems = builtinNames
+            .map((n) => {
+              const key = String(n || '').toLowerCase();
+              const onClick = builtinHandlers[key];
+              if (!onClick) return null;
+              return { name: key, type: 'module' as const, onClick };
+            })
+            .filter(Boolean) as { name: string; type: 'module'; onClick: () => void }[];
+
+          const dynamicItems = allItems
+            .filter(item => item.name !== 'utils/emoji-stickers')
+            .map(item => ({
+              name: item.name,
+              type: item.type,
+              onClick: () => {
+                recordUsage(`${item.type}:${item.name}`);
+                setReturnToLaunchpad(true);
+                const id = openIOSWindow(item);
+                bringIOSAppToFront(id);
+                setLaunchpadOpen(false);
+              }
+            }));
+
+          return [...builtinItems, ...dynamicItems];
+        })()}
       />
 
       {iosEditorWindows
@@ -914,12 +863,21 @@ export function MobileView(props: MobileViewProps) {
             onPointerDownCapture={() => bringIOSAppToFront(win.id)}
           >
             <IOSEditor
+              fileType={win.file.type}
+              fileName={win.file.name}
               appName={getDisplayName(win.file.name)}
               vars={win.editedVars}
               onUpdate={(idx, field, val) => handleIOSVarChange(win.id, idx, field, val)}
               onAdd={() => handleIOSAddVar(win.id)}
               onDelete={(idx) => handleIOSDeleteVar(win.id, idx)}
               onSave={() => handleIOSSave(win.id)}
+              section={win.section}
+              onSectionChange={(next) => handleIOSSetSection(win.id, next)}
+              skillDraft={win.skillDraft}
+              skillDirty={win.skillDirty}
+              onSkillChange={(next) => handleIOSSkillChange(win.id, next)}
+              onSaveSkill={() => void handleIOSSaveSkill(win.id)}
+              onRestoreSkill={() => void handleIOSRestoreSkill(win.id)}
               onMinimize={() => {
                 handleIOSMinimizeEditor(win.id);
                 if (returnToLaunchpad) {

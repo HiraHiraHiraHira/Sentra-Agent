@@ -8,15 +8,10 @@ import logger from '../../logger/index.js';
  * - 可选兜底：当 skill.md 为空时，是否回退到 description（受 RERANK_USE_DESC_FALLBACK 控制）
  */
 export function buildToolDoc(t) {
-  const digest = String(t?.skillDoc?.digest || '').trim();
-  if (digest) return digest;
-
   const raw = String(t?.skillDoc?.raw || '').trim();
   if (raw) return raw.length > 2000 ? raw.slice(0, 2000) : raw;
 
-  const useFallback = (config.rerank?.useDescFallback !== false)
-    || String(process.env.RERANK_USE_DESC_FALLBACK || '').toLowerCase() === 'true';
-  return useFallback ? String(t?.description || '').trim() : '';
+  return '';
 }
 
 /**

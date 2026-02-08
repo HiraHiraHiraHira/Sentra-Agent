@@ -686,8 +686,8 @@ async function collectXmlWithContinue({
     omitMaxTokens,
     onDelta: (delta, content) => {
       if (typeof onStream === 'function') {
-        try { onStream({ type: 'delta', delta, content }); } catch {}
-        try { onStream({ type: 'llm_delta', stage: 'first', delta, content }); } catch {}
+        try { onStream({ type: 'delta', delta, content }); } catch { }
+        try { onStream({ type: 'llm_delta', stage: 'first', delta, content }); } catch { }
       }
     },
   });
@@ -701,13 +701,13 @@ async function collectXmlWithContinue({
   while (!isProjectXmlReady(candidate) && used < limit) {
     const diagnosis = diagnoseProjectXml(candidate || acc);
     if (typeof onStream === 'function') {
-      try { onStream({ type: 'log', stage: 'diagnose', message: 'xml diagnosis', detail: diagnosis }); } catch {}
-      try { onStream({ type: 'delta', delta: `\n[html_to_app][diagnose] xml diagnosis\n`, content: '' }); } catch {}
+      try { onStream({ type: 'log', stage: 'diagnose', message: 'xml diagnosis', detail: diagnosis }); } catch { }
+      try { onStream({ type: 'delta', delta: `\n[html_to_app][diagnose] xml diagnosis\n`, content: '' }); } catch { }
     }
     for (let i = 0; i < 2 && used < limit; i += 1) {
       if (typeof onStream === 'function') {
-        try { onStream({ type: 'log', stage: 'continue', message: 'requesting continue', detail: { attempt: used + 1, maxContinueCalls: limit } }); } catch {}
-        try { onStream({ type: 'delta', delta: `\n[html_to_app][continue] requesting continue (${used + 1}/${limit})\n`, content: '' }); } catch {}
+        try { onStream({ type: 'log', stage: 'continue', message: 'requesting continue', detail: { attempt: used + 1, maxContinueCalls: limit } }); } catch { }
+        try { onStream({ type: 'delta', delta: `\n[html_to_app][continue] requesting continue (${used + 1}/${limit})\n`, content: '' }); } catch { }
       }
       convo.push({ role: 'user', content: buildContinuePrompt({ diagnosis }) });
       const r = await chatCompletionStream({
@@ -719,8 +719,8 @@ async function collectXmlWithContinue({
         omitMaxTokens,
         onDelta: (delta, content) => {
           if (typeof onStream === 'function') {
-            try { onStream({ type: 'delta', delta, content }); } catch {}
-            try { onStream({ type: 'llm_delta', stage: 'continue', delta, content }); } catch {}
+            try { onStream({ type: 'delta', delta, content }); } catch { }
+            try { onStream({ type: 'llm_delta', stage: 'continue', delta, content }); } catch { }
           }
         },
       });
@@ -1071,13 +1071,13 @@ function generateInstructions(projectPath, appName, automated = false, packageMa
 export default async function handler(args = {}, options = {}) {
   const emit = (payload) => {
     if (typeof options?.onStream === 'function') {
-      try { options.onStream(payload); } catch {}
+      try { options.onStream(payload); } catch { }
       if (payload && payload.type === 'log') {
         const msg = String(payload.message || '').trim();
         const stage = String(payload.stage || '').trim();
         const line = `[html_to_app]${stage ? `[${stage}]` : ''} ${msg}`.trim();
         if (line) {
-          try { options.onStream({ type: 'delta', delta: `\n${line}\n`, content: '' }); } catch {}
+          try { options.onStream({ type: 'delta', delta: `\n${line}\n`, content: '' }); } catch { }
         }
       }
     }
@@ -1209,7 +1209,7 @@ export default async function handler(args = {}, options = {}) {
           onDelta: (delta, full) => {
             emit({ type: 'llm_delta', stage: 'markdown', delta, content: full });
             if (typeof options?.onStream === 'function') {
-              try { options.onStream({ type: 'delta', delta, content: full }); } catch {}
+              try { options.onStream({ type: 'delta', delta, content: full }); } catch { }
             }
           },
         });
@@ -1226,7 +1226,7 @@ export default async function handler(args = {}, options = {}) {
         advice: buildAdvice(isTimeout ? 'TIMEOUT' : 'ERR', { stage: 'chatCompletion' }),
       };
     }
-    
+
     if (!validateProjectFiles(files)) {
       const extractedFiles = Object.keys(files || {});
       const check = checkProjectFiles(files);
@@ -1238,13 +1238,13 @@ export default async function handler(args = {}, options = {}) {
         advice: buildAdvice('INVALID_PROJECT', { extractedFiles, reason: check?.error })
       };
     }
-    
+
     // === 4. 写入项目文件 ===
     logger.info?.('html_to_app: 开始写入项目文件', { projectPath, filesCount: Object.keys(files).length });
     emit({ type: 'log', stage: 'write_files', message: 'writing project files', detail: { projectPath, filesCount: Object.keys(files).length } });
     const writtenFiles = await writeProjectFiles(projectPath, files);
     emit({ type: 'log', stage: 'write_files', message: 'project files written', detail: { projectPath, writtenCount: writtenFiles.length } });
-    
+
     // === 5. 可选：自动化流程（安装、打包、压缩）===
     const autoInstall = String(penv.HTML_TO_APP_AUTO_INSTALL || 'false').toLowerCase() === 'true';
     const autoBuild = String(penv.HTML_TO_APP_AUTO_BUILD || 'false').toLowerCase() === 'true';
@@ -1254,12 +1254,12 @@ export default async function handler(args = {}, options = {}) {
     const installArgs = penv.HTML_TO_APP_INSTALL_ARGS || '';
 
     let effectivePackageManager = requestedPackageManager;
-    
+
     let installResult = null;
     let buildResult = null;
     let zipResult = null;
     let buildFiles = [];
-    
+
     if (autoInstall) {
       logger.info?.('html_to_app: 开始自动安装依赖', { packageManager: requestedPackageManager, projectPath });
       emit({ type: 'log', stage: 'install', message: 'installing dependencies', detail: { packageManager: requestedPackageManager, projectPath } });
@@ -1268,50 +1268,50 @@ export default async function handler(args = {}, options = {}) {
         effectivePackageManager = installResult.packageManagerUsed;
       }
       emit({ type: 'log', stage: 'install', message: 'dependencies install finished', detail: { success: !!installResult?.success } });
-      
+
       if (!installResult.success) {
         logger.warn?.('html_to_app: 依赖安装失败，跳过后续自动化步骤', { error: installResult.error });
         // 不返回错误，继续返回项目路径
       }
     }
-    
+
     if (autoInstall && installResult?.success && autoBuild) {
       logger.info?.('html_to_app: 开始自动打包应用', { projectPath });
       emit({ type: 'log', stage: 'build', message: 'building app', detail: { projectPath } });
-      
+
       // 准备环境变量（镜像和代理）
       const buildEnv = {};
-      
+
       // Electron 镜像配置
       if (penv.HTML_TO_APP_ELECTRON_MIRROR) {
         buildEnv.ELECTRON_MIRROR = penv.HTML_TO_APP_ELECTRON_MIRROR;
       }
-      
+
       if (penv.HTML_TO_APP_ELECTRON_BUILDER_BINARIES_MIRROR) {
         buildEnv.ELECTRON_BUILDER_BINARIES_MIRROR = penv.HTML_TO_APP_ELECTRON_BUILDER_BINARIES_MIRROR;
       }
-      
+
       // 代理配置
       if (penv.HTML_TO_APP_HTTP_PROXY) {
         buildEnv.HTTP_PROXY = penv.HTML_TO_APP_HTTP_PROXY;
         buildEnv.http_proxy = penv.HTML_TO_APP_HTTP_PROXY;
       }
-      
+
       if (penv.HTML_TO_APP_HTTPS_PROXY) {
         buildEnv.HTTPS_PROXY = penv.HTML_TO_APP_HTTPS_PROXY;
         buildEnv.https_proxy = penv.HTML_TO_APP_HTTPS_PROXY;
       }
-      
-      logger.info?.('html_to_app: 使用环境配置', { 
+
+      logger.info?.('html_to_app: 使用环境配置', {
         electronMirror: buildEnv.ELECTRON_MIRROR || 'default',
         binariesMirror: buildEnv.ELECTRON_BUILDER_BINARIES_MIRROR || 'default',
         httpProxy: buildEnv.HTTP_PROXY || 'none',
         httpsProxy: buildEnv.HTTPS_PROXY || 'none'
       });
-      
+
       buildResult = await buildApp(projectPath, effectivePackageManager, buildEnv);
       emit({ type: 'log', stage: 'build', message: 'build finished', detail: { success: !!buildResult?.success } });
-      
+
       if (buildResult.success) {
         buildFiles = await findBuildOutput(projectPath);
         logger.info?.('html_to_app: 打包完成', { filesCount: buildFiles.length });
@@ -1320,7 +1320,7 @@ export default async function handler(args = {}, options = {}) {
         const manualBuildCmd = buildResult?.builderPath
           ? quoteCmd(buildResult.builderPath)
           : 'electron-builder';
-        logger.warn?.('html_to_app: 打包失败', { 
+        logger.warn?.('html_to_app: 打包失败', {
           error: buildResult.error,
           stdout: buildResult.stdout?.slice(0, 500),
           stderr: buildResult.stderr?.slice(0, 500),
@@ -1328,17 +1328,17 @@ export default async function handler(args = {}, options = {}) {
         });
       }
     }
-    
+
     if (buildResult?.success && autoZip) {
       logger.info?.('html_to_app: 开始压缩打包结果', { projectPath });
       emit({ type: 'log', stage: 'zip', message: 'zipping build outputs', detail: { projectPath } });
       const distDir = path.join(projectPath, 'dist');
       const zipPath = path.join(path.dirname(projectPath), `${appName}_build.zip`);
-      
+
       try {
         zipResult = await zipDirectory(distDir, zipPath);
         emit({ type: 'log', stage: 'zip', message: 'zip finished', detail: { success: !!zipResult?.success, zipPath: zipResult?.path } });
-        
+
         // 清理构建文件（可选）
         if (cleanBuild && zipResult.success) {
           try {
@@ -1352,11 +1352,11 @@ export default async function handler(args = {}, options = {}) {
         logger.error?.('html_to_app: 压缩失败', { error: String(e?.message || e) });
       }
     }
-    
+
     // === 6. 生成使用说明 ===
     const automated = autoInstall && autoBuild;
     const instructions = generateInstructions(projectPath, appName, automated, effectivePackageManager);
-    
+
     // === 7. 返回结果 ===
     const data = {
       action: 'html_to_app',
@@ -1387,10 +1387,10 @@ export default async function handler(args = {}, options = {}) {
         build: buildResult ? { success: buildResult.success, files: buildFiles } : null,
         zip: zipResult
           ? {
-              success: true,
-              path_markdown: `[${appName}_build.zip](${toPosix(zipResult.path)})`,
-              size: zipResult.size,
-            }
+            success: true,
+            path_markdown: `[${appName}_build.zip](${toPosix(zipResult.path)})`,
+            size: zipResult.size,
+          }
           : null,
       };
     }

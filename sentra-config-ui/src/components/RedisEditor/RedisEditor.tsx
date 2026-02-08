@@ -161,7 +161,7 @@ export const RedisEditor: React.FC<RedisEditorProps> = React.memo(({ theme, stat
                             fontSize: 13,
                             wordWrap: 'on',
                             find: {
-                                addExtraSpaceOnTop: true,
+                                addExtraSpaceOnTop: false,
                             },
                         }}
                     />

@@ -6,6 +6,7 @@ import styles from './Launchpad.module.css';
 import { IoChevronBack, IoChevronForward, IoSearch } from 'react-icons/io5';
 
 import { useDevice } from '../hooks/useDevice';
+import { getLaunchpadConfig, orderAndPaginateLaunchpadItems } from '../utils/launchpadOrder';
 
 interface LaunchpadProps {
   isOpen: boolean;
@@ -17,6 +18,8 @@ export const Launchpad: React.FC<LaunchpadProps> = ({ isOpen, onClose, items }) 
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(0);
   const { isMobile, isTablet } = useDevice();
+
+  const cfg = getLaunchpadConfig();
 
   const isMobileView = isMobile || isTablet;
 
@@ -57,97 +60,13 @@ export const Launchpad: React.FC<LaunchpadProps> = ({ isOpen, onClose, items }) 
     });
   }, [items, searchTerm]);
 
-  // Helper: split list into pages
-  const chunkBy = (arr: typeof items, size: number) => {
-    const out: typeof items[] = [] as any;
-    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-    return out;
-  };
-
   // Pagination logic
   const pages = useMemo(() => {
-    const size = Math.max(4, pageCapacity);
-
-    // If searching, just paginate the filtered results directly
-    if (searchTerm) {
-      const chunks = chunkBy(filteredItems, size);
-      return chunks.length ? chunks : [[]];
-    }
-
-    // Default view logic (categorized)
-    const coreApps: typeof items = [];
-    const toolsApps: typeof items = [];
-    const qqApps: typeof items = [];
-
-    const builtinToolOrder = ['file-manager', 'terminal-manager', 'presets-editor', 'preset-importer', 'emoji-stickers-manager', 'model-providers-manager', 'mcp-servers-manager', 'dev-center'];
-    const builtinToolSet = new Set(builtinToolOrder);
-    const builtinTools: typeof items = [];
-
-    filteredItems.forEach(item => {
-      const name = item.name.toLowerCase();
-      if (builtinToolSet.has(name)) {
-        builtinTools.push(item);
-        return;
-      }
-      if (
-        name.includes('sentra-prompts') ||
-        name.includes('sentra-mcp') ||
-        name.includes('sentra-emo') ||
-        name.includes('sentra-adapter') ||
-        name.includes('sentra-rag')
-      ) {
-        coreApps.push(item);
-      } else if (name.includes('qq_') || name.includes('qq-')) {
-        qqApps.push(item);
-      } else {
-        toolsApps.push(item);
-      }
+    return orderAndPaginateLaunchpadItems({
+      items: filteredItems,
+      searchTerm,
+      pageCapacity,
     });
-
-    const byName = (a: typeof items[number], b: typeof items[number]) =>
-      getDisplayName(a.name).localeCompare(getDisplayName(b.name), 'zh-Hans-CN');
-    coreApps.sort(byName); toolsApps.sort(byName); qqApps.sort(byName);
-
-    builtinTools.sort((a, b) => {
-      const ia = builtinToolOrder.indexOf(a.name.toLowerCase());
-      const ib = builtinToolOrder.indexOf(b.name.toLowerCase());
-      return ia - ib;
-    });
-
-    // Priority items
-    const isPriority = (it: typeof items[number]) => {
-      const n = it.name.toLowerCase();
-      return n === '.' || n.includes('sentra-config-ui');
-    };
-
-    const priority: typeof items = [] as any;
-    const removePriority = (arr: typeof items) => {
-      const rest: typeof items = [] as any;
-      arr.forEach(it => (isPriority(it) ? priority.push(it) : rest.push(it)));
-      return rest;
-    };
-
-    const c = removePriority(coreApps);
-    const t = removePriority(toolsApps);
-    const q = removePriority(qqApps);
-
-    // Strict Category Pagination:
-    // 1. Core Pages (Priority + Core)
-    const coreList = [...priority, ...c];
-    const corePages = chunkBy(coreList, size);
-
-    // 2. Tools Pages
-    const toolsList = [...builtinTools, ...t];
-    const toolsPages = chunkBy(toolsList, size);
-
-    // 3. QQ Pages
-    const qqList = q;
-    const qqPages = chunkBy(qqList, size);
-
-    // Combine all pages
-    const out = [...corePages, ...toolsPages, ...qqPages];
-
-    return out.length ? out : [[]];
   }, [filteredItems, searchTerm, pageCapacity]);
 
   useEffect(() => {
@@ -156,23 +75,35 @@ export const Launchpad: React.FC<LaunchpadProps> = ({ isOpen, onClose, items }) 
       if (!container) return;
       const h = container.clientHeight;
       const w = container.clientWidth;
-      // Reserve bottom space for pagination / safe-area on mobile
-      const reservedBottom = isMobileView ? 120 : 0;
-      const rowH = isMobileView ? 92 : 120;
+
+      const pageCapCfg = cfg?.layout?.pageCapacity || {};
+      const minCapacity = Number(pageCapCfg?.min) || 4;
+      const defaultCapacity = Number(pageCapCfg?.default) || 20;
+
+      const mobileCfg = cfg?.layout?.mobile || {};
+      const desktopCfg = cfg?.layout?.desktop || {};
+
+      const reservedBottom = isMobileView ? (Number(mobileCfg?.reservedBottom) || 120) : 0;
+      const rowH = isMobileView ? (Number(mobileCfg?.rowHeight) || 92) : (Number(desktopCfg?.rowHeight) || 120);
       let availH = Math.max(0, h - reservedBottom);
-      let rows = Math.max(3, Math.floor(availH / rowH));
-      if (isMobileView) rows = Math.min(rows, 4); // clamp for consistency
+      let rows = Math.max(Number(desktopCfg?.minRows) || 3, Math.floor(availH / rowH));
+      if (isMobileView) {
+        const maxRows = Number(mobileCfg?.maxRows) || 4;
+        rows = Math.min(rows, maxRows);
+      }
 
-      // Calculate columns
-      const cols = isMobileView ? 4 : Math.max(3, Math.floor(w / 130)); // 110px min + gap
+      const cols = isMobileView
+        ? (Number(mobileCfg?.cols) || 4)
+        : Math.max(Number(desktopCfg?.minCols) || 3, Math.floor(w / (Number(desktopCfg?.colWidth) || 130)));
 
+      const cap = Math.max(minCapacity, rows * cols);
       setGridCols(cols);
-      setPageCapacity(rows * cols);
+      setPageCapacity(cap || defaultCapacity);
     };
     calc();
     window.addEventListener('resize', calc);
     return () => window.removeEventListener('resize', calc);
-  }, [isMobileView]);
+  }, [cfg, isMobileView]);
 
   const totalPages = pages.length;
   const activePage = Math.min(currentPage, totalPages - 1);
