@@ -64,14 +64,14 @@ function parseConcurrencyOverrides(prefix) {
 
 function buildConfigFromEnv() {
   // Judge 模型列表（支持逗号分隔的多模型配置）
-  const judgeModelEnv = process.env.JUDGE_MODEL || process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+  const judgeModelEnv = process.env.JUDGE_MODEL || process.env.OPENAI_MODEL || 'grok-4.1';
   const judgeModels = parseCsv(judgeModelEnv);
-  const primaryJudgeModel = judgeModels[0] || 'gpt-4.1-mini';
+  const primaryJudgeModel = judgeModels[0] || 'grok-4.1';
 
   // Plan 阶段 native 模型列表（支持逗号分隔多模型；第一个为主模型）
-  const planModelEnv = process.env.PLAN_MODEL || process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+  const planModelEnv = process.env.PLAN_MODEL || process.env.OPENAI_MODEL || 'grok-4.1';
   const planModels = parseCsv(planModelEnv);
-  const primaryPlanModel = planModels[0] || 'gpt-4.1-mini';
+  const primaryPlanModel = planModels[0] || 'grok-4.1';
 
   // FC Judge 模型列表（仅在 TOOL_STRATEGY=fc 时使用，留空则回退到 FC_MODEL / JUDGE_MODEL）
   const judgeFcModels = parseCsv(process.env.JUDGE_FC_MODEL || '');
@@ -85,7 +85,7 @@ function buildConfigFromEnv() {
     llm: {
       baseURL: process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
       apiKey: process.env.OPENAI_API_KEY || '',
-      model: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+      model: process.env.OPENAI_MODEL || 'grok-4.1',
       temperature: Number(process.env.OPENAI_TEMPERATURE || 0.2),
       maxTokens: int(process.env.OPENAI_MAX_TOKENS, 4096),
       timeoutMs: timeoutMs(process.env.OPENAI_TIMEOUT_MS, 180000),
@@ -104,7 +104,7 @@ function buildConfigFromEnv() {
     fcLlm: {
       baseURL: process.env.FC_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
       apiKey: process.env.FC_API_KEY || process.env.OPENAI_API_KEY || '',
-      model: process.env.FC_MODEL || process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+      model: process.env.FC_MODEL || process.env.OPENAI_MODEL || 'grok-4.1',
       temperature: Number(process.env.FC_TEMPERATURE || process.env.OPENAI_TEMPERATURE || 0.2),
       maxTokens: int(process.env.FC_MAX_TOKENS, -1), // -1 表示省略 max_tokens
       timeoutMs: timeoutMs(process.env.FC_TIMEOUT_MS, timeoutMs(process.env.OPENAI_TIMEOUT_MS, 180000)),
@@ -195,7 +195,7 @@ function buildConfigFromEnv() {
     summarizer: {
       baseURL: process.env.SUMMARIZER_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
       apiKey: process.env.SUMMARIZER_API_KEY || process.env.OPENAI_API_KEY || '',
-      model: process.env.SUMMARIZER_MODEL || process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+      model: process.env.SUMMARIZER_MODEL || process.env.OPENAI_MODEL || 'grok-4.1',
       temperature: Number(process.env.SUMMARIZER_TEMPERATURE || 0.1),
       timeoutMs: timeoutMs(process.env.SUMMARIZER_TIMEOUT_MS, timeoutMs(process.env.OPENAI_TIMEOUT_MS, 180000)),
     },
@@ -237,7 +237,7 @@ function buildConfigFromEnv() {
     reasoner: {
       baseURL: process.env.REASONER_BASE_URL || process.env.OPENAI_BASE_URL || 'https://yuanplus.chat/v1',
       apiKey: process.env.REASONER_API_KEY || process.env.OPENAI_API_KEY || '',
-      model: process.env.REASONER_MODEL || process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+      model: process.env.REASONER_MODEL || process.env.OPENAI_MODEL || 'grok-4.1',
       temperature: Number(process.env.REASONER_TEMPERATURE || process.env.OPENAI_TEMPERATURE || 0.2),
       // -1 或未设置表示“不限制/由服务端决定”，调用时将省略 max_tokens
       maxTokens: int(process.env.REASONER_MAX_TOKENS, -1),
@@ -384,7 +384,7 @@ export function getStageModel(stage) {
     reflection: config.llm?.model,
   };
 
-  return nativeModelMap[stage] || config.llm?.model || 'gpt-4.1-mini';
+  return nativeModelMap[stage] || config.llm?.model || 'grok-4.1';
 }
 
 export function getStageProvider(stage) {

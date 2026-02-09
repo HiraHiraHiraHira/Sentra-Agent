@@ -23,7 +23,7 @@ function getMaxResponseTokens() {
 }
 
 function getTokenCountModel() {
-  return getEnv('TOKEN_COUNT_MODEL', 'gpt-4.1-mini');
+  return getEnv('TOKEN_COUNT_MODEL', 'gpt-4o-mini');
 }
 
 function isStrictFormatCheckEnabled() {

@@ -26,13 +26,7 @@ type TerminalExecutorSession = {
 };
 
 const MAX_BUFFER_CHARS = 240_000;
-const IDLE_KILL_MS = (() => {
-  const raw = process.env.TERMINAL_EXECUTOR_IDLE_KILL_MS;
-  if (raw == null || raw === '') return 5 * 60 * 1000;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return 5 * 60 * 1000;
-  return n;
-})();
+const IDLE_KILL_MS = 5 * 60 * 1000; // 5 minutes
 
 function capBuffer(s: TerminalExecutorSession, nextChunk: string) {
   if (!nextChunk) return;
@@ -193,6 +187,18 @@ class TerminalExecutorManager {
     });
 
     this.sessions.set(id, session);
+    try {
+      console.info('[terminal-executor] createSession', {
+        id,
+        shellType: params.shellType,
+        file: usedFile,
+        cols: (session.pty as any)?.cols,
+        rows: (session.pty as any)?.rows,
+        cwd: params.cwd || process.cwd(),
+      });
+    } catch {
+      // ignore
+    }
     return session;
   }
 
@@ -203,6 +209,12 @@ class TerminalExecutorManager {
   closeSession(id: string) {
     const s = this.sessions.get(id);
     if (!s) return false;
+
+    try {
+      console.info('[terminal-executor] closeSession begin', { id, exited: s.exited, clients: s.clients });
+    } catch {
+      // ignore
+    }
     try {
       if (os.platform() === 'win32') {
         const pid = Number((s.pty as any).pid);
@@ -221,7 +233,14 @@ class TerminalExecutorManager {
     setTimeout(() => {
       const still = this.sessions.get(id);
       if (!still) return;
-      if (still.exited) return;
+      if (!still.exited) {
+        try {
+          console.warn('[terminal-executor] closeSession pending: pty not exited yet, keep session', { id, clients: still.clients });
+        } catch {
+          // ignore
+        }
+        return;
+      }
       this.cleanupSession(id);
     }, 15_000);
 
@@ -258,6 +277,11 @@ class TerminalExecutorManager {
   private cleanupSession(id: string) {
     const s = this.sessions.get(id);
     if (!s) return;
+    try {
+      console.info('[terminal-executor] cleanupSession', { id, exited: s.exited, exitCode: s.exitCode, signal: s.exitSignal, clients: s.clients });
+    } catch {
+      // ignore
+    }
     if (s.killTimer) {
       clearTimeout(s.killTimer);
       s.killTimer = null;

@@ -74,11 +74,11 @@ try {
   socket.on('open', () => {
     try {
       if (socialContextManager && typeof socialContextManager.refresh === 'function') {
-        socialContextManager.refresh(false).catch(() => {});
+        socialContextManager.refresh(false).catch(() => { });
       }
-    } catch {}
+    } catch { }
   });
-} catch {}
+} catch { }
 
 const logger = createLogger('Main');
 logger.info(`连接到 WebSocket 服务: ${WS_URL}`);
@@ -87,58 +87,58 @@ const proactiveQueue = [];
 let proactiveRunning = false;
 
 async function processProactiveQueue() {
-	if (proactiveRunning) return;
-	const next = proactiveQueue.shift();
-	if (!next) return;
-	proactiveRunning = true;
-	try {
-		await runProactiveReply(next);
-	} catch (e) {
-		logger.warn('主动回复队列执行失败', { err: String(e) });
-	} finally {
-		proactiveRunning = false;
-	}
-	if (proactiveQueue.length > 0) {
-		setTimeout(() => {
-			processProactiveQueue().catch((err) => {
-				logger.warn('主动回复队列后续执行失败', { err: String(err) });
-			});
-		}, 0);
-	}
+  if (proactiveRunning) return;
+  const next = proactiveQueue.shift();
+  if (!next) return;
+  proactiveRunning = true;
+  try {
+    await runProactiveReply(next);
+  } catch (e) {
+    logger.warn('主动回复队列执行失败', { err: String(e) });
+  } finally {
+    proactiveRunning = false;
+  }
+  if (proactiveQueue.length > 0) {
+    setTimeout(() => {
+      processProactiveQueue().catch((err) => {
+        logger.warn('主动回复队列后续执行失败', { err: String(err) });
+      });
+    }, 0);
+  }
 }
 
 function enqueueProactiveCandidate(candidate) {
-	const lastMsg = candidate?.lastMsg;
-	const senderId = lastMsg && lastMsg.sender_id != null
-		? String(lastMsg.sender_id)
-		: (candidate?.userId != null ? String(candidate.userId) : '');
+  const lastMsg = candidate?.lastMsg;
+  const senderId = lastMsg && lastMsg.sender_id != null
+    ? String(lastMsg.sender_id)
+    : (candidate?.userId != null ? String(candidate.userId) : '');
 
-	const proactiveWhitelist = checkProactiveWhitelistTarget({
-		chatType: lastMsg && lastMsg.type === 'private' ? 'private' : 'group',
-		groupId: lastMsg && lastMsg.group_id ? `G:${lastMsg.group_id}` : null,
-		userId: senderId || null
-	});
-	if (!proactiveWhitelist.allowed) {
-		if (proactiveWhitelist.logFiltered) {
-			logger.info('主动回复白名单拦截: 候选入队时阻断', {
-				reason: proactiveWhitelist.reason,
-				chatType: proactiveWhitelist.chatType,
-				groupId: proactiveWhitelist.groupId ?? null,
-				userId: proactiveWhitelist.userId ?? null,
-				conversationKey: candidate?.conversationKey || null
-			});
-		}
-		return;
-	}
+  const proactiveWhitelist = checkProactiveWhitelistTarget({
+    chatType: lastMsg && lastMsg.type === 'private' ? 'private' : 'group',
+    groupId: lastMsg && lastMsg.group_id ? `G:${lastMsg.group_id}` : null,
+    userId: senderId || null
+  });
+  if (!proactiveWhitelist.allowed) {
+    if (proactiveWhitelist.logFiltered) {
+      logger.info('主动回复白名单拦截: 候选入队时阻断', {
+        reason: proactiveWhitelist.reason,
+        chatType: proactiveWhitelist.chatType,
+        groupId: proactiveWhitelist.groupId ?? null,
+        userId: proactiveWhitelist.userId ?? null,
+        conversationKey: candidate?.conversationKey || null
+      });
+    }
+    return;
+  }
 
-	try {
-		candidate._proactiveWhitelistChecked = true;
-	} catch {}
+  try {
+    candidate._proactiveWhitelistChecked = true;
+  } catch { }
 
-	proactiveQueue.push(candidate);
-	processProactiveQueue().catch((e) => {
-		logger.warn('主动回复入队执行失败', { err: String(e) });
-	});
+  proactiveQueue.push(candidate);
+  processProactiveQueue().catch((e) => {
+    logger.warn('主动回复入队执行失败', { err: String(e) });
+  });
 }
 
 // senderId -> Map<conversationKey, Map<runId, { startedAt: number }>>
@@ -201,7 +201,7 @@ function cancelRunsForSender(senderId, conversationKey, options = {}) {
     if (!startedAt || startedAt <= cutoffTs) {
       try {
         sdk.cancelRun?.(rid);
-      } catch {}
+      } catch { }
       runs.delete(rid);
     }
   }
@@ -241,7 +241,7 @@ onEnvReload(() => {
     if (Number.isFinite(nextMaxTokens) && nextMaxTokens !== agent.config.maxTokens) agent.config.maxTokens = nextMaxTokens;
     if (Number.isFinite(nextMaxRetries) && nextMaxRetries !== agent.config.maxRetries) agent.config.maxRetries = nextMaxRetries;
     if (Number.isFinite(nextTimeout) && nextTimeout !== agent.config.timeout) agent.config.timeout = nextTimeout;
-  } catch {}
+  } catch { }
 });
 
 let AGENT_PRESET_RAW_TEXT = '';
@@ -397,7 +397,7 @@ const personaManager = new UserPersonaManager({
   updateIntervalMs: getEnvInt('PERSONA_UPDATE_INTERVAL_MS', 600000),
   minMessagesForUpdate: getEnvInt('PERSONA_MIN_MESSAGES', 10),
   maxHistorySize: getEnvInt('PERSONA_MAX_HISTORY', 100),
-  model: getEnv('PERSONA_MODEL', 'gpt-4.1-mini'),
+  model: getEnv('PERSONA_MODEL', 'grok-4.1'),
   baseUrl: getEnv('PERSONA_BASE_URL', getEnv('API_BASE_URL', 'https://yuanplus.chat/v1')),
   apiKey: getEnv('PERSONA_API_KEY', getEnv('API_KEY')),
   recentMessagesCount: getEnvInt('PERSONA_RECENT_MESSAGES', 40),
@@ -533,151 +533,151 @@ async function runProactiveReply(candidate) {
       return;
     }
 
-	let conversationContext = null;
-	let topicHint = '';
-	try {
-	  const ctx = historyManager.getRecentMessagesForDecision(groupIdKey, userid);
-	  if (ctx && typeof ctx === 'object') {
-	    conversationContext = ctx;
-	    const senderMsgs = Array.isArray(ctx.sender_recent_messages) ? ctx.sender_recent_messages : [];
-	    const groupMsgs = Array.isArray(ctx.group_recent_messages) ? ctx.group_recent_messages : [];
-	
-	    const texts = [];
-	    const pickLastTexts = (arr, n) => {
-	      const slice = arr.slice(-n);
-	      return slice
-	        .map((m) => (m && typeof m.text === 'string' ? m.text.trim() : ''))
-	        .filter(Boolean);
-	    };
-	
-	    texts.push(...pickLastTexts(senderMsgs, 3));
-	    if (texts.length === 0) {
-	      texts.push(...pickLastTexts(groupMsgs, 3));
-	    }
-	
-	    if (texts.length > 0) {
-	      topicHint = texts.join(' / ');
-	    }
-	  }
-	} catch (e) {
-	  logger.debug('runProactiveReply: 获取最近话题上下文失败，将回退为最后一条消息', { err: String(e) });
-	}
+    let conversationContext = null;
+    let topicHint = '';
+    try {
+      const ctx = historyManager.getRecentMessagesForDecision(groupIdKey, userid);
+      if (ctx && typeof ctx === 'object') {
+        conversationContext = ctx;
+        const senderMsgs = Array.isArray(ctx.sender_recent_messages) ? ctx.sender_recent_messages : [];
+        const groupMsgs = Array.isArray(ctx.group_recent_messages) ? ctx.group_recent_messages : [];
 
-	if (!topicHint) {
-	  topicHint = (typeof lastMsg.text === 'string' ? lastMsg.text : '');
-	}
+        const texts = [];
+        const pickLastTexts = (arr, n) => {
+          const slice = arr.slice(-n);
+          return slice
+            .map((m) => (m && typeof m.text === 'string' ? m.text.trim() : ''))
+            .filter(Boolean);
+        };
 
-	let plannerTopicHint = topicHint;
-	let plannerTopicFromMemory = false;
+        texts.push(...pickLastTexts(senderMsgs, 3));
+        if (texts.length === 0) {
+          texts.push(...pickLastTexts(groupMsgs, 3));
+        }
 
-	let lastBotMessage = null;
-	try {
-	  if (historyManager && typeof historyManager.getLastAssistantMessageContent === 'function') {
-		lastBotMessage = historyManager.getLastAssistantMessageContent(groupIdKey);
-	  }
-	} catch (e) {
-	  logger.debug('runProactiveReply: 获取最近一次 Bot 回复失败，将忽略该块', { err: String(e) });
-	}
+        if (texts.length > 0) {
+          topicHint = texts.join(' / ');
+        }
+      }
+    } catch (e) {
+      logger.debug('runProactiveReply: 获取最近话题上下文失败，将回退为最后一条消息', { err: String(e) });
+    }
 
-	let personaXml = '';
-	if (personaManager && userid) {
-	  try {
-	    personaXml = personaManager.formatPersonaForContext(userid);
-	  } catch (e) {
-	    logger.debug('runProactiveReply: 加载用户画像失败，将忽略该块', { err: String(e) });
-	  }
-	}
+    if (!topicHint) {
+      topicHint = (typeof lastMsg.text === 'string' ? lastMsg.text : '');
+    }
 
-	let emoXml = '';
-	try {
-	  const emoEnabled = getEnvBool('SENTRA_EMO_ENABLED', false);
-	  if (emoEnabled && emo && userid) {
-	    const ua = await emo.userAnalytics(userid, { days: 7 });
-	    emoXml = buildSentraEmoSection(ua);
-	  }
-	} catch (e) {
-	  logger.debug('runProactiveReply: 加载情绪分析失败，将忽略该块', { err: String(e) });
-	}
+    let plannerTopicHint = topicHint;
+    let plannerTopicFromMemory = false;
 
-	let memoryXml = '';
-	if (runtimeCfg?.contextMemoryEnabled) {
-	  try {
-	    memoryXml = await getDailyContextMemoryXml(groupIdKey);
-	  } catch (e) {
-	    logger.debug('runProactiveReply: 加载上下文记忆失败，将忽略该块', { err: String(e) });
-	  }
-	}
+    let lastBotMessage = null;
+    try {
+      if (historyManager && typeof historyManager.getLastAssistantMessageContent === 'function') {
+        lastBotMessage = historyManager.getLastAssistantMessageContent(groupIdKey);
+      }
+    } catch (e) {
+      logger.debug('runProactiveReply: 获取最近一次 Bot 回复失败，将忽略该块', { err: String(e) });
+    }
 
-	if (memoryXml) {
-	  try {
-	    const matches = Array.from(memoryXml.matchAll(/<summary>([\s\S]*?)<\/summary>/g));
-	    const summaries = matches
-	      .map((m) => (m[1] || '').trim())
-	      .filter(Boolean);
-	    if (summaries.length > 0) {
-	      const joined = summaries.join(' / ');
-	      plannerTopicHint = joined.slice(0, 200);
-	      plannerTopicFromMemory = true;
-	    }
-	  } catch (e) {
-	    logger.debug('runProactiveReply: 从上下文记忆提取高层话题失败，将继续使用原有 topicHint', { err: String(e) });
-	  }
-	}
+    let personaXml = '';
+    if (personaManager && userid) {
+      try {
+        personaXml = personaManager.formatPersonaForContext(userid);
+      } catch (e) {
+        logger.debug('runProactiveReply: 加载用户画像失败，将忽略该块', { err: String(e) });
+      }
+    }
 
-	let userEngagement = null;
-	if (desireManager && typeof desireManager.getUserEngagementSummary === 'function') {
-	  try {
-	    const conversationKey = candidate.conversationKey || groupIdKey;
-	    userEngagement = await desireManager.getUserEngagementSummary(conversationKey, userid);
-	  } catch (e) {
-	    logger.debug('runProactiveReply: 获取用户主动参与度摘要失败，将忽略该块', { err: String(e) });
-	  }
-	}
+    let emoXml = '';
+    try {
+      const emoEnabled = getEnvBool('SENTRA_EMO_ENABLED', false);
+      if (emoEnabled && emo && userid) {
+        const ua = await emo.userAnalytics(userid, { days: 7 });
+        emoXml = buildSentraEmoSection(ua);
+      }
+    } catch (e) {
+      logger.debug('runProactiveReply: 加载情绪分析失败，将忽略该块', { err: String(e) });
+    }
 
-	const isGroupChat = lastMsg.type === 'private' ? false : true;
-	if (isGroupChat && !plannerTopicFromMemory && plannerTopicHint) {
-	  try {
-	    const staleThresholdSec = getEnvInt('DESIRE_GROUP_TOPIC_STALE_SEC', 180);
-	    const timeSinceLastUserSec =
-	      userEngagement && typeof userEngagement.timeSinceLastUserSec === 'number'
-	        ? userEngagement.timeSinceLastUserSec
-	        : null;
-	
-	    if (
-	      Number.isFinite(staleThresholdSec) &&
-	      staleThresholdSec > 0 &&
-	      Number.isFinite(timeSinceLastUserSec) &&
-	      timeSinceLastUserSec >= staleThresholdSec
-	    ) {
-	      logger.debug('runProactiveReply: 群聊话题已过期，将清空 topicHint，仅使用长期记忆/人设', {
-	        groupIdKey,
-	        userId: userid,
-	        timeSinceLastUserSec,
-	        staleThresholdSec
-	      });
-	      plannerTopicHint = '';
-	    }
-	  } catch (e) {
-	    logger.debug('runProactiveReply: 计算话题过期状态失败，将继续使用原有 topicHint', { err: String(e) });
-	  }
-	}
+    let memoryXml = '';
+    if (runtimeCfg?.contextMemoryEnabled) {
+      try {
+        memoryXml = await getDailyContextMemoryXml(groupIdKey);
+      } catch (e) {
+        logger.debug('runProactiveReply: 加载上下文记忆失败，将忽略该块', { err: String(e) });
+      }
+    }
 
-	const rootXml = await buildProactiveRootDirectiveXml({
-	  chatType: lastMsg.type === 'private' ? 'private' : 'group',
-	  groupId: groupIdKey,
-	  userId: userid,
-	  desireScore: candidate.desireScore,
-	  topicHint: plannerTopicHint,
-	  worldbookXml: WORLDBOOK_XML,
-	  presetPlainText: AGENT_PRESET_PLAIN_TEXT,
-	  presetXml: AGENT_PRESET_XML,
-	  personaXml,
-	  emoXml,
-	  memoryXml,
-	  conversationContext,
-	  lastBotMessage,
-	  userEngagement
-	});
+    if (memoryXml) {
+      try {
+        const matches = Array.from(memoryXml.matchAll(/<summary>([\s\S]*?)<\/summary>/g));
+        const summaries = matches
+          .map((m) => (m[1] || '').trim())
+          .filter(Boolean);
+        if (summaries.length > 0) {
+          const joined = summaries.join(' / ');
+          plannerTopicHint = joined.slice(0, 200);
+          plannerTopicFromMemory = true;
+        }
+      } catch (e) {
+        logger.debug('runProactiveReply: 从上下文记忆提取高层话题失败，将继续使用原有 topicHint', { err: String(e) });
+      }
+    }
+
+    let userEngagement = null;
+    if (desireManager && typeof desireManager.getUserEngagementSummary === 'function') {
+      try {
+        const conversationKey = candidate.conversationKey || groupIdKey;
+        userEngagement = await desireManager.getUserEngagementSummary(conversationKey, userid);
+      } catch (e) {
+        logger.debug('runProactiveReply: 获取用户主动参与度摘要失败，将忽略该块', { err: String(e) });
+      }
+    }
+
+    const isGroupChat = lastMsg.type === 'private' ? false : true;
+    if (isGroupChat && !plannerTopicFromMemory && plannerTopicHint) {
+      try {
+        const staleThresholdSec = getEnvInt('DESIRE_GROUP_TOPIC_STALE_SEC', 180);
+        const timeSinceLastUserSec =
+          userEngagement && typeof userEngagement.timeSinceLastUserSec === 'number'
+            ? userEngagement.timeSinceLastUserSec
+            : null;
+
+        if (
+          Number.isFinite(staleThresholdSec) &&
+          staleThresholdSec > 0 &&
+          Number.isFinite(timeSinceLastUserSec) &&
+          timeSinceLastUserSec >= staleThresholdSec
+        ) {
+          logger.debug('runProactiveReply: 群聊话题已过期，将清空 topicHint，仅使用长期记忆/人设', {
+            groupIdKey,
+            userId: userid,
+            timeSinceLastUserSec,
+            staleThresholdSec
+          });
+          plannerTopicHint = '';
+        }
+      } catch (e) {
+        logger.debug('runProactiveReply: 计算话题过期状态失败，将继续使用原有 topicHint', { err: String(e) });
+      }
+    }
+
+    const rootXml = await buildProactiveRootDirectiveXml({
+      chatType: lastMsg.type === 'private' ? 'private' : 'group',
+      groupId: groupIdKey,
+      userId: userid,
+      desireScore: candidate.desireScore,
+      topicHint: plannerTopicHint,
+      worldbookXml: WORLDBOOK_XML,
+      presetPlainText: AGENT_PRESET_PLAIN_TEXT,
+      presetXml: AGENT_PRESET_XML,
+      personaXml,
+      emoXml,
+      memoryXml,
+      conversationContext,
+      lastBotMessage,
+      userEngagement
+    });
 
     // 构造一条“虚拟”的用户消息，标记为主动触发，并通过主流程/MCP 处理
     const proactiveMsg = {
@@ -792,7 +792,7 @@ async function sendAndWaitResult(message) {
             socket.off('message', handler);
             resolve(payload);
           }
-        } catch (e) {}
+        } catch (e) { }
       };
 
       timeout = setTimeout(() => {
@@ -826,8 +826,8 @@ async function sendAndWaitResult(message) {
 
 try {
   socialContextManager = new SocialContextManager({ sendAndWaitResult });
-  socialContextManager.refresh(false).catch(() => {});
-} catch {}
+  socialContextManager.refresh(false).catch(() => { });
+} catch { }
 
 const delayJobRunJob = createDelayJobRunJob({
   HistoryStore,

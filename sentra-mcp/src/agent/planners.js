@@ -509,7 +509,7 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
   const planModelsRaw = Array.isArray(config.plan?.models) ? config.plan.models : [];
   const planModels = planModelsRaw.filter((m) => typeof m === 'string' && m.trim());
   const uniquePlanModels = Array.from(new Set(planModels)).slice(0, 5);
-  const planModel = String(config.plan?.model || config.llm?.model || 'gpt-4.1-mini');
+  const planModel = String(config.plan?.model || config.llm?.model || 'grok-4.1');
 
   // allowedAiNames 已在上文声明，直接复用
   const enableMulti = !!config.planner?.multiEnable && Number(config.planner?.multiCandidates || 0) > 1;

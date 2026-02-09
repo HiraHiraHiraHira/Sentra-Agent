@@ -162,7 +162,7 @@ export function checkProactiveWhitelistTarget(payload = {}) {
 }
 
 function getPlannerConfig() {
-  const model = getEnv('PROACTIVE_DIRECTIVE_MODEL', 'gpt-4.1-mini');
+  const model = getEnv('PROACTIVE_DIRECTIVE_MODEL', 'grok-4.1');
   const maxTokens = getEnvInt('PROACTIVE_DIRECTIVE_MAX_TOKENS', 4096);
   const timeout = getEnvTimeoutMs('PROACTIVE_DIRECTIVE_TIMEOUT', 180000, 900000);
   const maxRetries = getEnvInt('PROACTIVE_DIRECTIVE_MAX_RETRIES', 3);
@@ -222,7 +222,7 @@ onEnvReload(() => {
       sharedAgent.config.apiKey = nextApiKey;
       logger.info('ProactiveDirectivePlanner LLM 配置热更新: apiKey 已更新');
     }
-  } catch {}
+  } catch { }
 });
 
 async function getPlannerAgentPresetXml() {
@@ -253,35 +253,35 @@ async function getPlannerAgentPresetXml() {
 }
 
 function extractObjectiveFromRawReply(text) {
-	if (!text || typeof text !== 'string') return null;
+  if (!text || typeof text !== 'string') return null;
 
-	const trimmed = text.trim();
-	if (!trimmed) return null;
+  const trimmed = text.trim();
+  if (!trimmed) return null;
 
-	const hasSentraTag = trimmed.includes('<sentra-response>');
+  const hasSentraTag = trimmed.includes('<sentra-response>');
 
-	// 优先走标准协议解析路径（包含 <sentra-response> 时）
-	if (hasSentraTag) {
-		try {
-			const parsed = parseSentraResponse(trimmed);
-			if (!parsed || !Array.isArray(parsed.textSegments)) return null;
-			const segments = parsed.textSegments
-				.map((s) => (s || '').trim())
-				.filter(Boolean);
-			if (segments.length === 0) return null;
-			const joined = segments.join('\n');
-			const plain = joined.replace(/\s+/g, '');
-			if (plain.length < 6) return null;
-			return joined;
-		} catch (e) {
-			logger.warn('ProactiveDirectivePlanner: 解析 sentra-response 失败，将尝试使用原文作为 objective', {
-				err: String(e)
-			});
-		}
-	}
+  // 优先走标准协议解析路径（包含 <sentra-response> 时）
+  if (hasSentraTag) {
+    try {
+      const parsed = parseSentraResponse(trimmed);
+      if (!parsed || !Array.isArray(parsed.textSegments)) return null;
+      const segments = parsed.textSegments
+        .map((s) => (s || '').trim())
+        .filter(Boolean);
+      if (segments.length === 0) return null;
+      const joined = segments.join('\n');
+      const plain = joined.replace(/\s+/g, '');
+      if (plain.length < 6) return null;
+      return joined;
+    } catch (e) {
+      logger.warn('ProactiveDirectivePlanner: 解析 sentra-response 失败，将尝试使用原文作为 objective', {
+        err: String(e)
+      });
+    }
+  }
 
-	// 无协议标签或解析失败：不使用原文作为 objective，避免把旁白/英文垃圾引入主动规划
-	return null;
+  // 无协议标签或解析失败：不使用原文作为 objective，避免把旁白/英文垃圾引入主动规划
+  return null;
 }
 
 async function getPlannerSystemPrompt() {
@@ -375,7 +375,7 @@ async function buildTimeContext() {
     dateStr = fmtDate.format(now);
     timeStr = fmtTime.format(now);
     weekday = fmtWeekday.format(now);
-  } catch {}
+  } catch { }
 
   const hour = now.getHours();
   const month = now.getMonth() + 1;

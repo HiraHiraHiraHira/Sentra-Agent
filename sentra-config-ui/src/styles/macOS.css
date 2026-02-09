@@ -168,14 +168,64 @@ body * {
 }
 
 .monaco-editor .find-widget {
-    top: 14px !important;
-    right: 14px !important;
+    top: 8px !important;
+    right: 8px !important;
     z-index: 100000 !important;
     pointer-events: auto !important;
+    background: var(--mac-bg) !important;
+    border: 1px solid var(--mac-border-color, rgba(0, 0, 0, 0.1)) !important;
+    border-radius: 6px !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+    padding: 4px 8px !important;
 }
 
 .monaco-editor .find-widget * {
     pointer-events: auto;
+}
+
+.monaco-editor .find-widget .find-input {
+    background: var(--mac-input-bg, rgba(0, 0, 0, 0.05)) !important;
+    border: 1px solid var(--mac-border-color, rgba(0, 0, 0, 0.1)) !important;
+    border-radius: 4px !important;
+    padding: 2px 6px !important;
+    font-size: 12px !important;
+    min-width: 120px !important;
+}
+
+.monaco-editor .find-widget .find-actions {
+    display: flex !important;
+    gap: 2px !important;
+}
+
+.monaco-editor .find-widget .find-btn {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 3px !important;
+    padding: 2px 4px !important;
+    cursor: pointer !important;
+    opacity: 0.7 !important;
+}
+
+.monaco-editor .find-widget .find-btn:hover {
+    opacity: 1 !important;
+    background: var(--mac-hover-bg, rgba(0, 0, 0, 0.05)) !important;
+}
+
+.monaco-editor .find-widget .find-close {
+    margin-left: 4px !important;
+    padding: 2px 6px !important;
+    background: transparent !important;
+    border: none !important;
+    border-radius: 3px !important;
+    cursor: pointer !important;
+    font-size: 14px !important;
+    line-height: 1 !important;
+    opacity: 0.6 !important;
+}
+
+.monaco-editor .find-widget .find-close:hover {
+    opacity: 1 !important;
+    background: var(--mac-hover-bg, rgba(0, 0, 0, 0.1)) !important;
 }
 
 /* Animations */

@@ -44,11 +44,11 @@ class UserPersonaManager {
     }
     this.enabled = true;
     this.dataDir = options.dataDir || path.join(process.cwd(), 'userData');
-    
+
     this.updateIntervalMs = 600000;
     this.minMessagesForUpdate = 10;
     this.maxHistorySize = 100;
-    this.model = 'gpt-4.1-mini';
+    this.model = 'grok-4.1';
     this.recentMessagesCount = 40;
     this.halfLifeMs = 172800000;
     this.maxTraits = 6;
@@ -57,13 +57,13 @@ class UserPersonaManager {
     this.maxInsights = 6;
 
     this._applyConfig(this._getRuntimeDefaults(), options);
-    
+
     // 内存缓存 - 减少文件读写
     this.cache = new Map(); // sender_id -> { persona, messages, messageCount }
-    
+
     // 待执行更新的标记 - 防止同一时间多次触发
     this.pendingUpdates = new Set(); // sender_id
-    
+
     // 确保数据目录存在
     this._ensureDataDir();
 
@@ -74,8 +74,8 @@ class UserPersonaManager {
         logger.warn('画像配置热更新失败（已忽略）', { err: String(e) });
       }
     });
-    
-    logger.config('用户画像管理器初始化', {
+
+    logger.info('用户画像管理器初始化', {
       '数据目录': this.dataDir,
       '时间间隔': `${this.updateIntervalMs / 60000} 分钟`,
       '消息阈值': `至少 ${this.minMessagesForUpdate} 条新消息`,
@@ -104,7 +104,7 @@ class UserPersonaManager {
       updateIntervalMs: getEnvInt('PERSONA_UPDATE_INTERVAL_MS', 600000),
       minMessagesForUpdate: getEnvInt('PERSONA_MIN_MESSAGES', 10),
       maxHistorySize: getEnvInt('PERSONA_MAX_HISTORY', 100),
-      model: getEnv('PERSONA_MODEL', 'gpt-4.1-mini'),
+      model: getEnv('PERSONA_MODEL', 'grok-4.1'),
       baseUrl: getEnv('PERSONA_BASE_URL', getEnv('API_BASE_URL', 'https://yuanplus.chat/v1')),
       apiKey: getEnv('PERSONA_API_KEY', getEnv('API_KEY')),
       recentMessagesCount: getEnvInt('PERSONA_RECENT_MESSAGES', 40),
@@ -192,7 +192,7 @@ class UserPersonaManager {
     }
 
     const filePath = this._getUserFilePath(senderId);
-    
+
     if (!fs.existsSync(filePath)) {
       // 新用户，创建初始数据结构
       const initialData = {
@@ -227,16 +227,16 @@ class UserPersonaManager {
         data.lastAttemptTime = null;
       }
 
-       let dirty = false;
-       if (data && data.persona && typeof data.persona === 'object' && data.persona._raw_xml) {
-         try {
-           delete data.persona._raw_xml;
-           dirty = true;
-         } catch {}
-       }
-       if (dirty) {
-         this._saveUserData(senderId, data);
-       }
+      let dirty = false;
+      if (data && data.persona && typeof data.persona === 'object' && data.persona._raw_xml) {
+        try {
+          delete data.persona._raw_xml;
+          dirty = true;
+        } catch { }
+      }
+      if (dirty) {
+        this._saveUserData(senderId, data);
+      }
 
       this.cache.set(senderId, data);
       return data;
@@ -251,7 +251,7 @@ class UserPersonaManager {
    */
   _saveUserData(senderId, data) {
     const filePath = this._getUserFilePath(senderId);
-    
+
     try {
       data.updatedAt = new Date().toISOString();
       fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
@@ -309,7 +309,7 @@ class UserPersonaManager {
 
     // 2. 计算新增消息数
     const messagesSinceUpdate = userData.messageCount - userData.lastUpdateCount;
-    
+
     // 3. 检查消息阈值
     if (messagesSinceUpdate < this.minMessagesForUpdate) {
       logger.debug(`[画像] ${senderId} 新增消息数 ${messagesSinceUpdate} < 阈值 ${this.minMessagesForUpdate}，跳过`);
@@ -323,27 +323,27 @@ class UserPersonaManager {
     const effectiveLastTime = (lastAttemptTime && lastAttemptTime > 0)
       ? lastAttemptTime
       : lastUpdateTime;
-    
+
     // 如果不是首次更新，检查时间间隔
     if (effectiveLastTime && effectiveLastTime > 0) {
       const timeSinceUpdate = now - effectiveLastTime;
-      
+
       if (timeSinceUpdate < this.updateIntervalMs) {
         const remainingMinutes = Math.ceil((this.updateIntervalMs - timeSinceUpdate) / 60000);
         logger.debug(`[画像] ${senderId} 距离上次更新仅 ${Math.floor(timeSinceUpdate / 60000)} 分钟，需等待 ${remainingMinutes} 分钟`);
         return;
       }
-      
+
       // 5. 满足条件，触发更新（非首次）
       logger.info(`[画像] ${senderId} 触发更新 - 新增 ${messagesSinceUpdate} 条消息，距上次更新 ${Math.floor(timeSinceUpdate / 60000)} 分钟`);
     } else {
       // 5. 首次更新
       logger.info(`[画像] ${senderId} 触发首次更新 - 累积 ${messagesSinceUpdate} 条消息`);
     }
-    
+
     // 标记为待执行，防止重复触发
     this.pendingUpdates.add(senderId);
-    
+
     // 异步执行，不阻塞主流程
     setImmediate(() => {
       this.updatePersona(senderId).catch(err => {
@@ -388,9 +388,9 @@ class UserPersonaManager {
         userData.lastUpdateCount = userData.messageCount;
         userData.lastUpdateTime = Date.now(); // ✅ 记录更新时间
         userData.lastAttemptTime = userData.lastUpdateTime;
-        
+
         this._saveUserData(senderId, userData);
-        
+
         logger.info(`[画像] ${senderId} 画像更新成功 - 版本 ${userData.version}`);
         logger.info(this._getPersonaSummary(newPersona));
       }
@@ -410,7 +410,7 @@ class UserPersonaManager {
       getEnvTimeoutMs('TIMEOUT', 180000, 900000),
       900000
     );
-    
+
     try {
       const systemPrompt = await this._getSystemPrompt(isFirstTime);
       const response = await this.agent.chat(
@@ -436,15 +436,15 @@ class UserPersonaManager {
 
       // 统一使用 XML 解析
       const responseText = response.content || (typeof response === 'string' ? response : '');
-      
+
       if (!responseText) {
         throw new Error('LLM 返回内容为空');
       }
-      
+
       logger.debug('使用 XML 解析模式');
       const parsed = await this._parsePersonaResponse(responseText, senderId);
       return parsed;
-      
+
     } catch (error) {
       logger.error('LLM 分析失败', error);
       return null;
@@ -501,11 +501,11 @@ class UserPersonaManager {
     } else {
       prompt += '# Persona Refinement\n\n';
       prompt += '**Existing Persona (XML Format)**:\n\n';
-      
+
       // 将已有画像转为 XML 格式显示（直接 XML，不用代码块）
       prompt += this._serializePersonaToXML(existingPersona, senderId);
       prompt += '\n\n';
-      
+
       prompt += '**New Conversation Data**:\n\n';
     }
 
@@ -524,7 +524,7 @@ class UserPersonaManager {
     prompt += '</conversation_history>\n\n';
 
     prompt += '---\n\n';
-    
+
     if (isFirstTime) {
       prompt += '**Your Task**: Analyze the conversation history above and construct an initial user persona using the <sentra-persona> XML format specified in the system prompt.\n\n';
       prompt += '**Focus on**: Observable patterns, recurring themes, communication characteristics, and behavioral tendencies.\n\n';
@@ -545,7 +545,7 @@ class UserPersonaManager {
     try {
       // 提取 <sentra-persona> 块
       let personaXML = extractXMLTag(content, 'sentra-persona');
-      
+
       if (!personaXML) {
         // 尝试从 markdown 代码块中提取
         const xmlMatch = content.match(/```xml\s*([\s\S]*?)\s*```/);
@@ -553,60 +553,60 @@ class UserPersonaManager {
           personaXML = extractXMLTag(xmlMatch[1], 'sentra-persona');
         }
       }
-      
+
       if (!personaXML) {
         logger.error('解析画像失败：未找到 <sentra-persona> 标签');
         return null;
       }
-      
+
       // 解析 XML 结构
       const persona = this._parsePersonaXML(personaXML);
 
       return persona;
-      
+
     } catch (error) {
       logger.error('解析画像异常', error);
       return null;
     }
   }
-  
+
   /**
    * 解析 Sentra XML 格式的画像数据
    */
   _parsePersonaXML(personaXML) {
     const persona = {};
-    
+
     // 提取 summary
     persona.summary = extractXMLTag(personaXML, 'summary')?.trim() || '';
-    
+
     // 提取 traits 块
     const traitsBlock = extractXMLTag(personaXML, 'traits');
     if (traitsBlock) {
       persona.traits = {};
-      
+
       // personality 特征
       const personalityBlock = extractXMLTag(traitsBlock, 'personality');
       if (personalityBlock) {
         persona.traits.personality = extractAllXMLTags(personalityBlock, 'trait');
       }
-      
+
       // communication_style
       persona.traits.communication_style = extractXMLTag(traitsBlock, 'communication_style')?.trim() || '';
-      
+
       // interests
       const interestsBlock = extractXMLTag(traitsBlock, 'interests');
       if (interestsBlock) {
         const interestTags = this._extractTagsWithAttributes(interestsBlock, 'interest');
         persona.traits.interests = interestTags;
       }
-      
+
       // behavioral_patterns
       const patternsBlock = extractXMLTag(traitsBlock, 'behavioral_patterns');
       if (patternsBlock) {
         const patternTags = this._extractTagsWithAttributes(patternsBlock, 'pattern');
         persona.traits.behavioral_patterns = patternTags;
       }
-      
+
       // emotional_profile
       const emotionalBlock = extractXMLTag(traitsBlock, 'emotional_profile');
       if (emotionalBlock) {
@@ -617,13 +617,13 @@ class UserPersonaManager {
         };
       }
     }
-    
+
     // 提取 insights
     const insightsBlock = extractXMLTag(personaXML, 'insights');
     if (insightsBlock) {
       persona.insights = this._extractTagsWithAttributes(insightsBlock, 'insight');
     }
-    
+
     // 提取 evolution（仅在优化后的画像中存在）
     const evolutionBlock = extractXMLTag(personaXML, 'evolution');
     if (evolutionBlock) {
@@ -632,7 +632,7 @@ class UserPersonaManager {
         continuity: extractXMLTag(evolutionBlock, 'continuity')?.trim() || ''
       };
     }
-    
+
     // 提取 metadata
     const metadataBlock = extractXMLTag(personaXML, 'metadata');
     if (metadataBlock) {
@@ -642,7 +642,7 @@ class UserPersonaManager {
         update_priority: extractXMLTag(metadataBlock, 'update_priority')?.trim() || ''
       };
     }
-    
+
     // 兼容性：提取 confidence（如果 metadata 不存在）
     if (!persona.metadata) {
       const confidence = extractXMLTag(personaXML, 'confidence')?.trim();
@@ -650,10 +650,10 @@ class UserPersonaManager {
         persona.confidence = confidence;
       }
     }
-    
+
     return persona;
   }
-  
+
   /**
    * 提取带属性的 XML 标签
    */
@@ -661,11 +661,11 @@ class UserPersonaManager {
     const results = [];
     const regex = new RegExp(`<${tagName}([^>]*)>([\\s\\S]*?)<\/${tagName}>`, 'g');
     let match;
-    
+
     while ((match = regex.exec(xmlBlock)) !== null) {
       const attributesStr = match[1];
       const content = match[2].trim();
-      
+
       // 解析属性
       const attributes = {};
       const attrRegex = /(\w+)="([^"]*)"/g;
@@ -673,23 +673,23 @@ class UserPersonaManager {
       while ((attrMatch = attrRegex.exec(attributesStr)) !== null) {
         attributes[attrMatch[1]] = attrMatch[2];
       }
-      
+
       results.push({
         content,
         attributes
       });
     }
-    
+
     return results;
   }
-  
+
   _serializePersonaToXML(persona, senderId) {
     if (!persona) return '<sentra-persona></sentra-persona>';
     // 若已是 XML 字符串或对象内含原始XML，则直接返回
     if (typeof persona === 'string' && persona.includes('<sentra-persona')) {
       return persona;
     }
-    
+
     const lines = [];
     const s = (v) => (v == null ? '' : String(v));
     const escText = (v) => escapeXml(unescapeXml(s(v)));
@@ -701,12 +701,12 @@ class UserPersonaManager {
       ks.forEach(k => { if (o && o[k]) ps.push(`${k}="${escAttr(o[k])}"`); });
       return ps.length ? ' ' + ps.join(' ') : '';
     };
-    
+
     const senderAttr = senderId ? ` sender_id="${escAttr(senderId)}"` : '';
     lines.push(`<sentra-persona${senderAttr}>`);
-    
+
     if (persona.summary) lines.push(`  <summary>${escText(persona.summary)}</summary>`);
-    
+
     if (persona.traits) {
       lines.push('  <traits>');
       const pers = items(persona.traits.personality);
@@ -740,14 +740,14 @@ class UserPersonaManager {
       }
       lines.push('  </traits>');
     }
-    
+
     const insights = items(persona.insights);
     if (insights.length) {
       lines.push('  <insights>');
       insights.forEach(ins => lines.push(`    <insight${attrs(ins.attributes, ['evidence', 'novelty'])}>${escText(ins.content)}</insight>`));
       lines.push('  </insights>');
     }
-    
+
     if (persona.evolution) {
       const changes = items(persona.evolution.changes);
       const cont = persona.evolution.continuity;
@@ -758,7 +758,7 @@ class UserPersonaManager {
         lines.push('  </evolution>');
       }
     }
-    
+
     const md = persona.metadata || {};
     if (md.confidence || md.data_quality || md.update_priority) {
       lines.push('  <metadata>');
@@ -767,7 +767,7 @@ class UserPersonaManager {
       if (md.update_priority) lines.push(`    <update_priority>${escText(md.update_priority)}</update_priority>`);
       lines.push('  </metadata>');
     }
-    
+
     lines.push('</sentra-persona>');
     return lines.join('\n');
   }
@@ -777,12 +777,12 @@ class UserPersonaManager {
    */
   _getPersonaSummary(persona) {
     if (!persona) return '(无画像)';
-    
+
     if (persona.summary) {
       const confidence = persona.metadata?.confidence || persona.confidence || 'medium';
       return `${persona.summary} [${confidence}]`;
     }
-    
+
     return '  (画像数据异常)';
   }
 
