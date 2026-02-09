@@ -1220,6 +1220,31 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
       for await (const ev of streamIterator) {
         logger.debug('Agent事件', ev);
 
+        const getToolOrderKey = (x) => {
+          try {
+            const planned = (x && typeof x.plannedStepIndex === 'number') ? x.plannedStepIndex : null;
+            const step = (x && typeof x.stepIndex === 'number') ? x.stepIndex : null;
+            const exec = (x && typeof x.executionIndex === 'number') ? x.executionIndex : null;
+            // plannedStepIndex 优先，其次 stepIndex；executionIndex 作为细分排序
+            const a = planned != null ? planned : (step != null ? step : 999999);
+            const b = exec != null ? exec : 999999;
+            return [a, b];
+          } catch {
+            return [999999, 999999];
+          }
+        };
+
+        const sortToolEventsInPlace = (arr) => {
+          if (!Array.isArray(arr) || arr.length <= 1) return;
+          arr.sort((l, r) => {
+            const [la, lb] = getToolOrderKey(l);
+            const [ra, rb] = getToolOrderKey(r);
+            if (la !== ra) return la - ra;
+            if (lb !== rb) return lb - rb;
+            return 0;
+          });
+        };
+
         if (currentTaskId && isTaskCancelled(currentTaskId)) {
           isCancelled = true;
           logger.info(`检测到任务已被取消: ${groupId} taskId=${currentTaskId}`);
@@ -2241,6 +2266,22 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
             const toolResponseForHistory = normalizeAssistantContentForHistory(toolResponse);
             await historyManager.appendToAssistantMessage(groupId, toolResponseForHistory, toolPairId);
 
+            // 关键：把“本次工具调用轨迹”按顺序追加进 conversations，保证后续 tool_result / ToolFinal 上下文不乱序
+            try {
+              if (shouldIncludeBaseUser) {
+                conversations.push({ role: 'user', content: currentUserContent });
+              }
+              if (toolsXml) {
+                conversations.push({ role: 'assistant', content: toolsXml });
+              }
+              if (resultXml) {
+                conversations.push({ role: 'user', content: resultXml });
+              }
+              if (toolResponseForHistory) {
+                conversations.push({ role: 'assistant', content: toolResponseForHistory });
+              }
+            } catch { }
+
             if (!toolNoReply) {
               const swallow = shouldSwallowReplyForConversation(conversationId, hasSupplementDuringTask);
               if (!swallow) {
@@ -2339,6 +2380,8 @@ export async function handleOneMessageCore(ctx, msg, taskId) {
             let toolNoReply = false;
             try {
               if (toolTurnResultEvents.length > 0) {
+                // completed 阶段统一输出 ToolFinal 前，保证 toolTurnResultEvents 顺序稳定（按 plannedStepIndex/executionIndex）
+                sortToolEventsInPlace(toolTurnResultEvents);
                 const toolsXml = toolTurnInvocations.length > 0
                   ? buildSentraToolsBlockFromInvocations(toolTurnInvocations)
                   : '';

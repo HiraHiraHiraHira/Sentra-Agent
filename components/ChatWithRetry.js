@@ -1,10 +1,15 @@
 import { createLogger } from '../utils/logger.js';
 import { tokenCounter } from '../src/token-counter.js';
-import { repairSentraResponse } from '../utils/formatRepair.js';
 import { getEnv, getEnvInt, getEnvBool } from '../utils/envHotReloader.js';
 import { extractAllFullXMLTags } from '../utils/xmlUtils.js';
 import { preprocessPlainModelOutput } from './OutputPreprocessor.js';
 import { parseReplyGateDecisionFromSentraTools, parseSentraResponse } from '../utils/protocolUtils.js';
+import {
+  guardAndNormalizeSentraResponse,
+  shouldAttemptModelFormatFix,
+  attemptModelFormatFixWithAgent,
+  runSentraResponseFixPipeline
+} from '../utils/responseFormatGuard.js';
 
 const logger = createLogger('ChatWithRetry');
 
@@ -107,7 +112,7 @@ function validateResponseFormat(response, expectedOutput = 'sentra_response') {
     const hasUser = normalized.includes('<user_id>') && normalized.includes('</user_id>');
     missingTarget = !hasGroup && !hasUser;
     targetConflict = hasGroup && hasUser;
-  } catch {}
+  } catch { }
 
   // Enforce: output MUST be exactly one <sentra-response> block (no extra text/tags outside)
   try {
@@ -116,7 +121,7 @@ function validateResponseFormat(response, expectedOutput = 'sentra_response') {
     if (trimmed !== normTrimmed) {
       return { valid: false, reason: '检测到 <sentra-response> 外存在额外内容（不允许）' };
     }
-  } catch {}
+  } catch { }
 
   const forbiddenTags = [
     '<sentra-tools>',
@@ -271,10 +276,50 @@ export async function chatWithRetry(agent, conversations, modelOrOptions, groupI
       if (typeof response === 'string') {
         response = preprocessPlainModelOutput(response);
       }
+
+      // 本地格式守卫：优先提取/截断为第一段 <sentra-response>，减少无意义重试
+      if (expectedOutput === 'sentra_response' && typeof response === 'string' && response.trim()) {
+        const guarded = guardAndNormalizeSentraResponse(response);
+        if (guarded && guarded.ok && typeof guarded.normalized === 'string' && guarded.normalized.trim()) {
+          response = guarded.normalized;
+        }
+      }
       lastResponse = response;
 
+      let modelFormatFixTried = false;
+
       if (strictFormatCheck) {
-        const formatCheck = validateResponseFormat(response, expectedOutput);
+        let formatCheck = validateResponseFormat(response, expectedOutput);
+
+        // 在进入重试前，优先用 root directive 让模型“就地修复格式”，减少无意义重试
+        if (!formatCheck.valid && expectedOutput === 'sentra_response') {
+          const allowFix = shouldAttemptModelFormatFix({
+            expectedOutput,
+            lastErrorReason: formatCheck.reason,
+            alreadyTried: modelFormatFixTried
+          });
+
+          if (allowFix) {
+            modelFormatFixTried = true;
+            try {
+              const fixed = await attemptModelFormatFixWithAgent({
+                agent,
+                conversations: convThisTry,
+                model: chatOptions.model,
+                timeout: chatOptions.timeout,
+                groupId,
+                lastErrorReason: formatCheck.reason,
+                candidateOutput: response
+              });
+              if (fixed && typeof fixed === 'string' && fixed.trim()) {
+                response = fixed;
+                lastResponse = response;
+                formatCheck = validateResponseFormat(response, expectedOutput);
+              }
+            } catch { }
+          }
+        }
+
         if (!formatCheck.valid) {
           lastFormatReason = formatCheck.reason || '';
           logger.warn(`[${groupId}] 格式验证失败: ${formatCheck.reason}`);
@@ -290,16 +335,24 @@ export async function chatWithRetry(agent, conversations, modelOrOptions, groupI
           const isToolsOnly = expectedOutput === 'reply_gate_decision_tools';
           if (!isToolsOnly && formatRepairEnabled && typeof response === 'string' && response.trim()) {
             try {
-              const repaired = await repairSentraResponse(response, {
+              const repaired = await runSentraResponseFixPipeline({
                 agent,
-                model: getEnv('REPAIR_AI_MODEL', undefined)
+                conversations: convThisTry,
+                model: chatOptions.model,
+                timeout: chatOptions.timeout,
+                groupId,
+                expectedOutput,
+                lastErrorReason: formatCheck.reason,
+                candidateOutput: response
               });
-              const repairedCheck = validateResponseFormat(repaired, expectedOutput);
-              if (repairedCheck.valid) {
-                logger.success(`[${groupId}] 格式已自动修复`);
-                return { response: repaired, rawResponse: repaired, retries, success: true };
+              if (repaired && typeof repaired === 'string' && repaired.trim()) {
+                const repairedCheck = validateResponseFormat(repaired, expectedOutput);
+                if (repairedCheck.valid) {
+                  logger.success(`[${groupId}] 格式已自动修复`);
+                  return { response: repaired, rawResponse: repaired, retries, success: true };
+                }
+                logger.debug(`[${groupId}] 修复后仍不合规，修复响应片段: ${getResponsePreview(repaired)}`);
               }
-              logger.debug(`[${groupId}] 修复后仍不合规，修复响应片段: ${getResponsePreview(repaired)}`);
             } catch (e) {
               logger.warn(`[${groupId}] 格式修复失败: ${e.message}`);
             }

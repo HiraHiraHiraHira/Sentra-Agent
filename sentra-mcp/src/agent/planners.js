@@ -641,7 +641,41 @@ export async function generatePlan(objective, mcpcore, context = {}, conversatio
     }
   } else {
     // 原有单计划路径
-    const one = await generateSingleNativePlan({ messages: baseMessages, tools, allowedAiNames, temperature: Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1), model: planModel });
+    const isValid = (x) => Array.isArray(x?.steps) && x.steps.length > 0;
+    const temperature = Math.max(0.1, (config.llm.temperature ?? 0.2) - 0.1);
+    const t0 = now();
+    if (config.flags.enableVerboseSteps) {
+      logger.info('Native 规划：LLM plan begin', { label: 'PLAN', mode: 'race2', model: planModel });
+    }
+    const tasks = [0, 1].map((i) => {
+      const ti = now();
+      return generateSingleNativePlan({ messages: baseMessages, tools, allowedAiNames, temperature, model: planModel })
+        .then((res) => ({ ok: true, res, i, ms: now() - ti }))
+        .catch((err) => ({ ok: false, res: null, i, ms: now() - ti, error: String(err || '') }));
+    });
+
+    let pick = await Promise.race(tasks);
+    if (!pick?.ok || !isValid(pick?.res)) {
+      try {
+        const other = await tasks[1 - (Number(pick?.i) || 0)];
+        if (other?.ok && isValid(other?.res)) {
+          pick = other;
+        }
+      } catch { }
+    }
+
+    const one = pick?.ok ? (pick?.res || {}) : {};
+    if (config.flags.enableVerboseSteps) {
+      logger.info('Native 规划：LLM plan end', {
+        label: 'PLAN',
+        mode: 'race2',
+        model: planModel,
+        ms: now() - t0,
+        picked: Number.isInteger(pick?.i) ? pick.i : -1,
+        pickedMs: Number.isFinite(pick?.ms) ? pick.ms : -1,
+        steps: Array.isArray(one?.steps) ? one.steps.length : 0,
+      });
+    }
     steps = one.steps || [];
     removedUnknown = !!one.removedUnknown;
     parsed = one.parsed;

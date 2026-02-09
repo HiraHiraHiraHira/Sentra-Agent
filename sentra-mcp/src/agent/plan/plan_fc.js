@@ -85,7 +85,7 @@ async function generateSinglePlan({
             errors: JSON.stringify(lastSchemaErrors || [], null, 2),
             previous_xml: String(lastContent || '').slice(0, 4000),
           });
-        } catch {}
+        } catch { }
       }
 
       // 若没有结构化错误信息可用，则退回到通用强化提示
@@ -98,16 +98,16 @@ async function generateSinglePlan({
             attempt: String(attempt),
             max_retries: String(maxRetries),
           });
-        } catch {}
+        } catch { }
       }
     }
     const attemptMessages = attempt === 1
       ? baseMessages
       : compactMessages([
-          ...baseMessages,
-          { role: 'user', content: reinforce },
-          { role: 'user', content: [policyText, planInstrText].join('\n\n') },
-        ]);
+        ...baseMessages,
+        { role: 'user', content: reinforce },
+        { role: 'user', content: [policyText, planInstrText].join('\n\n') },
+      ]);
 
     const planModel = model || getStageModel('plan');
     const provider = getStageProvider('plan');
@@ -158,7 +158,7 @@ async function generateSinglePlan({
         draftArgs: s?.draftArgs || {},
         dependsOnStepIds: Array.isArray(s?.dependsOnStepIds) ? s.dependsOnStepIds : undefined,
       }));
-    } catch {}
+    } catch { }
 
     const filtered = validNames.size ? candidate.filter((s) => s.aiName && validNames.has(s.aiName)) : candidate;
 
@@ -268,7 +268,7 @@ async function selectBestPlan({ objective, manifest, candidates, context }) {
       const parsed = call?.arguments || {};
       idx = Number(parsed?.best);
       reason = String(parsed?.reason || '');
-    } catch {}
+    } catch { }
     if (!Number.isFinite(idx)) idx = 0;
     idx = Math.max(0, Math.min(candidates.length - 1, idx));
     return { index: idx, audit: reason };
@@ -282,6 +282,8 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
   let manifest = buildPlanningManifest(mcpcore);
   const usePT = !!config.flags?.planUsePreThought;
   const preThought = usePT ? (await getPreThought(objective, manifest, conversation)) : '';
+
+  const nowMs = () => Date.now();
 
   // Judge 白名单过滤：如果 Judge 已经明确选择了需要调用的工具，则优先收敛到这部分工具。
   // 目的：减少规划阶段看到全量工具导致的“污染/跑偏”，并提升速度与稳定性。
@@ -306,12 +308,19 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
   // 中文：在 FC 规划前执行工具重排序（仅使用 objective）
   try {
     if (objective && (config.rerank?.enable !== false)) {
-      const ranked = await rerankManifest({ 
-        manifest, 
-        objective, 
-        candidateK: config.rerank?.candidateK, 
-        topN: config.rerank?.topN 
+      const tRerank0 = nowMs();
+      if (config.flags.enableVerboseSteps) {
+        logger.info('FC 规划：RERANK begin', { label: 'RERANK' });
+      }
+      const ranked = await rerankManifest({
+        manifest,
+        objective,
+        candidateK: config.rerank?.candidateK,
+        topN: config.rerank?.topN
       });
+      if (config.flags.enableVerboseSteps) {
+        logger.info('FC 规划：RERANK end', { label: 'RERANK', ms: nowMs() - tRerank0 });
+      }
       if (Array.isArray(ranked?.manifest) && ranked.manifest.length) {
         manifest = ranked.manifest;
         if (config.flags.enableVerboseSteps) {
@@ -332,7 +341,14 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
   let planMemoryMsgs = [];
   if (config.memory?.enable) {
     try {
+      const tMem0 = nowMs();
+      if (config.flags.enableVerboseSteps) {
+        logger.info('FC 规划：MEM search begin', { label: 'MEM' });
+      }
       const mems = await searchPlanMemories({ objective });
+      if (config.flags.enableVerboseSteps) {
+        logger.info('FC 规划：MEM search end', { label: 'MEM', ms: nowMs() - tMem0 });
+      }
       if (Array.isArray(mems) && mems.length) {
         const lines = mems.map((m, idx) => `#${idx + 1} (score=${m.score.toFixed(2)}):\n${m.text}`).join('\n\n');
         planMemoryMsgs.push({ role: 'assistant', content: `历史规划参考:\n${lines}` });
@@ -340,10 +356,17 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
           logger.info('检索到历史规划参考', { label: 'MEM', hits: mems.length, topScore: Number(mems[0]?.score?.toFixed?.(2) || 0), minScore: config.memory.minScore });
         }
       }
-    } catch {}
+    } catch { }
   }
 
+  const tPrompt0 = nowMs();
+  if (config.flags.enableVerboseSteps) {
+    logger.info('FC 规划：loadPrompt(emit_plan) begin', { label: 'PLAN' });
+  }
   const ep = await loadPrompt('emit_plan');
+  if (config.flags.enableVerboseSteps) {
+    logger.info('FC 规划：loadPrompt(emit_plan) end', { label: 'PLAN', ms: nowMs() - tPrompt0 });
+  }
   const overlays = (context?.promptOverlays || context?.overlays || {});
   const overlayGlobal = overlays.global?.system || overlays.global || '';
   const overlayPlan = overlays.plan?.system || overlays.emit_plan?.system || overlays.plan || overlays.emit_plan || '';
@@ -353,13 +376,20 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
   ].filter(Boolean).join('\n\n');
   const policyText = await buildFCPolicy();
   const planInstrText = await buildPlanFunctionCallInstruction({ allowedAiNames, locale: 'zh-CN' });
-  
+
   // 从相同 runId 复用执行历史（Sentra XML），避免在上游拼接历史
   let historyMessages = [];
   try {
     const runId = context?.runId;
     if (runId) {
+      const tHist0 = nowMs();
+      if (config.flags.enableVerboseSteps) {
+        logger.info('FC 规划：HistoryStore.list begin', { label: 'HISTORY', runId });
+      }
       const history = await HistoryStore.list(runId, 0, -1);
+      if (config.flags.enableVerboseSteps) {
+        logger.info('FC 规划：HistoryStore.list end', { label: 'HISTORY', runId, ms: nowMs() - tHist0, items: Array.isArray(history) ? history.length : 0 });
+      }
       const toolResults = (history || []).filter(h => h.type === 'tool_result');
       if (toolResults.length > 0) {
         const xml = toolResults.map(h => formatSentraResult({
@@ -375,7 +405,7 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
         }
       }
     }
-  } catch {}
+  } catch { }
   const messages = compactMessages([
     { role: 'system', content: sys },
     ...(Array.isArray(conversation) ? conversation : []),
@@ -419,19 +449,52 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
       return { manifest, steps: [] };
     }
 
-    const one = await generateSinglePlan({
-      baseMessages: messages,
-      allowedAiNames,
-      fc,
-      planningTemp,
-      top_p,
-      maxRetries,
-      policyText,
-      planInstrText,
-      model: modelName,
+    const isValid = (x) => Array.isArray(x?.steps) && x.steps.length > 0;
+    const tPlan0 = nowMs();
+    if (config.flags.enableVerboseSteps) {
+      logger.info('FC 规划：LLM plan begin', { label: 'PLAN', mode: 'race2', model: modelName });
+    }
+    const tasks = [0, 1].map((i) => {
+      const t0 = nowMs();
+      return generateSinglePlan({
+        baseMessages: messages,
+        allowedAiNames,
+        fc,
+        planningTemp,
+        top_p,
+        maxRetries,
+        policyText,
+        planInstrText,
+        model: modelName,
+      })
+        .then((res) => ({ ok: true, res, i, ms: nowMs() - t0 }))
+        .catch((err) => ({ ok: false, res: null, i, ms: nowMs() - t0, error: String(err || '') }));
     });
-    steps = Array.isArray(one.steps) ? one.steps : [];
-    lastContent = one.raw || '';
+
+    let pick = await Promise.race(tasks);
+    if (!pick?.ok || !isValid(pick?.res)) {
+      try {
+        const other = await tasks[1 - (Number(pick?.i) || 0)];
+        if (other?.ok && isValid(other?.res)) {
+          pick = other;
+        }
+      } catch { }
+    }
+
+    const one = pick?.ok ? (pick?.res || {}) : {};
+    if (config.flags.enableVerboseSteps) {
+      logger.info('FC 规划：LLM plan end', {
+        label: 'PLAN',
+        mode: 'race2',
+        model: modelName,
+        ms: nowMs() - tPlan0,
+        picked: Number.isInteger(pick?.i) ? pick.i : -1,
+        pickedMs: Number.isFinite(pick?.ms) ? pick.ms : -1,
+        steps: Array.isArray(one?.steps) ? one.steps.length : 0,
+      });
+    }
+    steps = Array.isArray(one?.steps) ? one.steps : [];
+    lastContent = one?.raw || '';
 
     if (runId && isRunCancelled(runId)) {
       if (config.flags.enableVerboseSteps) {
@@ -469,6 +532,11 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
     });
 
     const results = await Promise.all(tasks);
+
+    if (config.flags.enableVerboseSteps) {
+      const summary = (results || []).map((r) => ({ model: r.model, ok: !!r.ok, ms: r.ms })).slice(0, 20);
+      logger.info('FC 多模型规划：LLM plan all done', { label: 'PLAN', totalModels: uniqueModels.length, summary });
+    }
 
     if (runId && isRunCancelled(runId)) {
       if (config.flags.enableVerboseSteps) {
@@ -513,7 +581,14 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
       steps = candidates[0].steps;
       lastContent = candidates[0].raw;
     } else {
+      const tPick0 = nowMs();
+      if (config.flags.enableVerboseSteps) {
+        logger.info('FC 多模型规划：selectBestPlan begin', { label: 'PLAN', candidates: candidates.length });
+      }
       const pick = await selectBestPlan({ objective, manifest, candidates, context });
+      if (config.flags.enableVerboseSteps) {
+        logger.info('FC 多模型规划：selectBestPlan end', { label: 'PLAN', candidates: candidates.length, ms: nowMs() - tPick0 });
+      }
       const idx = Math.max(0, Math.min(candidates.length - 1, Number(pick.index) || 0));
       const best = candidates[idx];
       if (config.flags.enableVerboseSteps) {
@@ -537,7 +612,7 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
             reason: String(pick.audit || ''),
           });
         }
-      } catch {}
+      } catch { }
     }
   }
 
@@ -560,7 +635,7 @@ export async function generatePlanViaFC(objective, mcpcore, context = {}, conver
 
   // 记忆
   if (config.memory?.enable) {
-    try { await upsertPlanMemory({ runId: context?.runId || 'unknown', objective, plan: { steps } }); } catch {}
+    try { await upsertPlanMemory({ runId: context?.runId || 'unknown', objective, plan: { steps } }); } catch { }
   }
 
   return { manifest, steps };

@@ -244,9 +244,13 @@ class TerminalExecutorManager {
     if (!s) return;
     s.clients = Math.max(0, s.clients - 1);
     s.lastClientAt = Date.now();
-    if (s.clients === 0 && !s.killTimer && IDLE_KILL_MS > 0) {
+    // Do NOT kill a running terminal just because the UI temporarily disconnected.
+    // Browser tab switching / page backgrounding can pause timers and cause WS reconnect,
+    // which would otherwise incorrectly terminate the session.
+    // Only cleanup after the PTY has already exited (so we don't leak sessions forever).
+    if (s.clients === 0 && s.exited && !s.killTimer && IDLE_KILL_MS > 0) {
       s.killTimer = setTimeout(() => {
-        this.closeSession(id);
+        this.cleanupSession(id);
       }, IDLE_KILL_MS);
     }
   }
