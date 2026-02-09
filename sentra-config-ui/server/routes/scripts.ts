@@ -118,6 +118,7 @@ export async function scriptRoutes(fastify: FastifyInstance) {
             exitCode: process.exitCode,
             startTime: process.startTime,
             endTime: process.endTime,
+            lastOutputAt: (process as any).lastOutputAt ?? null,
             baseCursor: (process as any).outputBaseCursor ?? 0,
             cursor: (process as any).totalCursor ?? (Array.isArray(process.output) ? process.output.length : 0),
             output: process.output,

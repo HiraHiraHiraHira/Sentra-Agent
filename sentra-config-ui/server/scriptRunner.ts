@@ -14,6 +14,7 @@ interface ScriptProcess {
     output: string[];
     outputBaseCursor: number;
     totalCursor: number;
+    lastOutputAt: number;
     exitCode: number | null;
     startTime: Date;
     endTime: Date | null;
@@ -26,6 +27,7 @@ const MAX_OUTPUT_CHUNKS = 2000;
 function appendOutput(p: ScriptProcess, text: string) {
     const chunk = String(text ?? '');
     if (!chunk) return;
+    p.lastOutputAt = Date.now();
     p.totalCursor += 1;
     p.output.push(chunk);
     if (p.output.length > MAX_OUTPUT_CHUNKS) {
@@ -253,6 +255,7 @@ export class ScriptRunner {
             output: [],
             outputBaseCursor: 0,
             totalCursor: 0,
+            lastOutputAt: Date.now(),
             exitCode: null,
             startTime: new Date(),
             endTime: null,
@@ -400,6 +403,7 @@ export class ScriptRunner {
             output: [],
             outputBaseCursor: 0,
             totalCursor: 0,
+            lastOutputAt: Date.now(),
             exitCode: null,
             startTime: new Date(),
             endTime: null,

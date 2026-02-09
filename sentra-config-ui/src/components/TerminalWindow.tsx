@@ -490,14 +490,6 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({ processId, theme
                     return 'not_found';
                 }
 
-                // Additional check: if we have output but no recent activity, might be a zombie
-                const now = Date.now();
-                const lastActivity = st?.lastActivityTime || st?.startTime;
-                if (lastActivity && (now - new Date(lastActivity).getTime()) > 5 * 60 * 1000) {
-                    // No activity for 5 minutes, treat as ended
-                    return 'not_found';
-                }
-
                 return 'alive';
             } catch {
                 return 'alive';
